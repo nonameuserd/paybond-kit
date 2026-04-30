@@ -51,7 +51,7 @@
   "dependencies": {
     "@noble/ed25519": "^2.2.1",
     "blake3": "^2.1.7",
-    "uuid": "^11.0.3"
+    "uuid": "^14.0.0"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
