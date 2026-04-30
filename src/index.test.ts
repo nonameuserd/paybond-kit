@@ -2,8 +2,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GatewayAuthError,
   GatewayHarborTokenProvider,
+  GatewaySignalClient,
   HarborClient,
   HarborHttpError,
+  ServiceAccountSignalSession,
 } from "./index.js";
 
 describe("HarborClient", () => {
@@ -158,5 +160,65 @@ describe("GatewayHarborTokenProvider", () => {
       apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     await expect(p.ensureInitial()).rejects.toBeInstanceOf(GatewayAuthError);
+  });
+});
+
+describe("GatewaySignalClient", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("rejects tenant drift on portfolio summary", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            schema_version: 1,
+            tenant_id: "other",
+            score_model_version: "1.0",
+            scoring_model: "paybond.signal.v1",
+            checkpoint_last_ledger_seq: 1,
+            operator_count: 0,
+            average_score: 0,
+            total_terminal_intents: 0,
+            total_receipted_volume_cents: 0,
+            operators_under_review: 0,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const c = new GatewaySignalClient("https://gw.test", "tenant-a", {
+      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    await expect(c.getPortfolioSummary()).rejects.toThrow(/signal tenant mismatch/);
+  });
+});
+
+describe("ServiceAccountSignalSession", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("binds the tenant from gateway principal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            tenant_id: "realm-z",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const session = await ServiceAccountSignalSession.open({
+      gatewayBaseUrl: "https://gw.test",
+      apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    expect(session.signal.tenantId).toBe("realm-z");
   });
 });

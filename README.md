@@ -1,8 +1,6 @@
 # `@paybond/kit`
 
-Paybond Kit for TypeScript provides a tenant-bound Harbor client, gateway-backed service-account sessions, capability verification, canonical signing helpers for intent creation and evidence submission, and tenant-scoped ledger provenance reads.
-
-It does **not** currently expose a first-class Signal client or Signal analytics/reputation API surface. Signal remains a separate platform surface today.
+Paybond Kit for TypeScript provides a tenant-bound Harbor client, gateway-backed service-account sessions, capability verification, canonical signing helpers for intent creation and evidence submission, tenant-scoped ledger provenance reads, and tenant-scoped Signal analytics and reputation reads.
 
 Install the public package with:
 
@@ -22,7 +20,7 @@ npm install @paybond/kit
 
 ## Tenant isolation
 
-Every session is bound to the tenant realm echoed by the gateway `POST /v1/auth/harbor-access` exchange.
+Every session is bound to the tenant realm echoed by gateway-authenticated service-account introspection and Harbor access exchange flows.
 
 - Do not pass tenant ids by hand for normal SDK usage.
 - Construct one `Paybond` session per tenant/service account.
@@ -59,6 +57,8 @@ try {
 
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
 - `HarborClient` for capability verification, intent creation, evidence submission, and ledger reads
+- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads
+- `paybond.signal` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-signed intent creation and payee-signed evidence submission
 - Low-level signing helpers exported for advanced callers
 
@@ -66,8 +66,6 @@ try {
 
 ## What it does not include
 
-- No first-class `SignalClient`
-- No Signal reputation or analytics fetch API
 - No operator-tier settlement or console workflows
 
 ## Docs

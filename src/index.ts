@@ -60,6 +60,23 @@ export class GatewayAuthError extends Error {
   }
 }
 
+/**
+ * Structured HTTP failure from gateway Signal read routes.
+ */
+export class SignalHttpError extends Error {
+  readonly statusCode: number;
+  readonly url: string;
+  readonly bodyText: string;
+
+  constructor(message: string, init: { statusCode: number; url: string; bodyText: string }) {
+    super(message);
+    this.name = "SignalHttpError";
+    this.statusCode = init.statusCode;
+    this.url = init.url;
+    this.bodyText = init.bodyText;
+  }
+}
+
 function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
@@ -632,6 +649,265 @@ export class HarborClient {
   }
 }
 
+type GatewaySignalClientOptions = {
+  staticGatewayBearerToken: string;
+  maxRetries?: number;
+};
+
+const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
+
+function assertJSONObject(value: unknown): Record<string, unknown> {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("expected JSON object");
+  }
+  return value as Record<string, unknown>;
+}
+
+/**
+ * Tenant-bound reader for gateway Signal routes.
+ */
+export class GatewaySignalClient {
+  private readonly base: string;
+  readonly tenantId: string;
+  private readonly bearerToken: string;
+  private readonly maxRetries: number;
+
+  constructor(gatewayBaseUrl: string, tenantId: string, options: GatewaySignalClientOptions) {
+    this.base = normalizeBase(gatewayBaseUrl) + "/";
+    this.tenantId = tenantId.trim();
+    this.bearerToken = options.staticGatewayBearerToken.trim();
+    this.maxRetries = Math.max(1, options.maxRetries ?? 3);
+  }
+
+  private async fetchGetWithRetries(url: string): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${this.bearerToken}`,
+          },
+        });
+      } catch (e) {
+        lastErr = e;
+        if (attempt + 1 >= this.maxRetries) throw e;
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        continue;
+      }
+      if ([429, 500, 502, 503, 504].includes(res.status)) {
+        if (attempt + 1 >= this.maxRetries) {
+          return res;
+        }
+        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
+        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      return res;
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  private assertTenant(body: Record<string, unknown>, url: string): void {
+    const tid = String(body.tenant_id ?? "");
+    if (tid !== this.tenantId) {
+      throw new Error(
+        `signal tenant mismatch: client=${this.tenantId} gateway=${tid} url=${url}`,
+      );
+    }
+  }
+
+  private scoreQuery(scoreVersion?: string): string {
+    if (!scoreVersion || !scoreVersion.trim()) {
+      return "";
+    }
+    return `?score_version=${encodeURIComponent(scoreVersion.trim())}`;
+  }
+
+  async getReputationReceipt(operatorDid: string, scoreVersion?: string): Promise<Record<string, unknown> | null> {
+    const enc = encodeURIComponent(operatorDid);
+    const url = `${this.base}reputation/${enc}${this.scoreQuery(scoreVersion)}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (res.status === 404) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new SignalHttpError(`Signal receipt HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    const receipt = assertJSONObject(body.receipt);
+    const tenant = String(receipt.tenant_id ?? "");
+    const echoedOperator = String(receipt.operator_did ?? "");
+    if (tenant !== this.tenantId) {
+      throw new Error(`signal receipt tenant mismatch: client=${this.tenantId} gateway=${tenant}`);
+    }
+    if (echoedOperator !== operatorDid) {
+      throw new Error(`signal receipt operator mismatch: requested=${operatorDid} gateway=${echoedOperator}`);
+    }
+    return body;
+  }
+
+  async getPortfolioSummary(scoreVersion?: string): Promise<Record<string, unknown>> {
+    const url = `${this.base}signal/v1/portfolio/summary${this.scoreQuery(scoreVersion)}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new SignalHttpError(`Signal portfolio summary HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    return body;
+  }
+
+  async getOperatorExplanation(operatorDid: string, scoreVersion?: string): Promise<Record<string, unknown> | null> {
+    const enc = encodeURIComponent(operatorDid);
+    const url = `${this.base}signal/v1/operators/${enc}/explanation${this.scoreQuery(scoreVersion)}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (res.status === 404) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new SignalHttpError(`Signal explanation HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    if (String(body.operator_did ?? "") !== operatorDid) {
+      throw new Error(`signal explanation operator mismatch: requested=${operatorDid} gateway=${String(body.operator_did ?? "")}`);
+    }
+    return body;
+  }
+
+  async getOperatorReviewStatus(operatorDid: string, scoreVersion?: string): Promise<Record<string, unknown> | null> {
+    const enc = encodeURIComponent(operatorDid);
+    const url = `${this.base}signal/v1/operators/${enc}/review-status${this.scoreQuery(scoreVersion)}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (res.status === 404) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new SignalHttpError(`Signal review status HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    if (String(body.operator_did ?? "") !== operatorDid) {
+      throw new Error(`signal review operator mismatch: requested=${operatorDid} gateway=${String(body.operator_did ?? "")}`);
+    }
+    return body;
+  }
+}
+
+export type ServiceAccountSignalSessionInit = {
+  gatewayBaseUrl: string;
+  apiKey: string;
+  principalPath?: string;
+  maxRetries?: number;
+};
+
+async function resolveGatewayTenantId(
+  gatewayBaseUrl: string,
+  apiKey: string,
+  principalPath: string,
+  maxRetries: number,
+): Promise<string> {
+  const base = normalizeBase(gatewayBaseUrl);
+  const path = principalPath.startsWith("/") ? principalPath : `/${principalPath}`;
+  const url = `${base}${path}`;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method: "GET",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${apiKey.trim()}`,
+        },
+      });
+    } catch (e) {
+      lastErr = e;
+      if (attempt + 1 >= maxRetries) {
+        throw e;
+      }
+      await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+      continue;
+    }
+    const text = await res.text();
+    if (!res.ok) {
+      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < maxRetries) {
+        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
+        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      throw new GatewayAuthError(`gateway principal HTTP ${res.status}`, {
+        statusCode: res.status,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    const tenant = String(body.tenant_id ?? "").trim();
+    if (!tenant) {
+      throw new GatewayAuthError("gateway principal JSON missing tenant_id", {
+        bodyText: text,
+      });
+    }
+    return tenant;
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+/**
+ * Read-only tenant-bound Signal session for one service-account API key.
+ */
+export class ServiceAccountSignalSession {
+  readonly signal: GatewaySignalClient;
+
+  private constructor(signal: GatewaySignalClient) {
+    this.signal = signal;
+  }
+
+  static async open(init: ServiceAccountSignalSessionInit): Promise<ServiceAccountSignalSession> {
+    const tenantId = await resolveGatewayTenantId(
+      init.gatewayBaseUrl,
+      init.apiKey,
+      init.principalPath ?? DEFAULT_PRINCIPAL_PATH,
+      Math.max(1, init.maxRetries ?? 3),
+    );
+    return new ServiceAccountSignalSession(
+      new GatewaySignalClient(init.gatewayBaseUrl, tenantId, {
+        staticGatewayBearerToken: init.apiKey,
+        maxRetries: init.maxRetries ?? 3,
+      }),
+    );
+  }
+
+  async aclose(): Promise<void> {
+    await Promise.resolve();
+  }
+}
+
 /** Parameters for {@link PaybondIntents.create} (tenant is taken from the bound Harbor client). */
 export type PaybondCreateIntentParams = Omit<BuildSignedCreateIntentParams, "tenantId" | "intentId"> & {
   intentId?: string;
@@ -682,19 +958,25 @@ export class PaybondIntents {
  */
 export class Paybond {
   readonly harbor: HarborClient;
+  readonly signal: GatewaySignalClient;
   readonly intents: PaybondIntents;
   private readonly session: ServiceAccountHarborSession;
 
-  private constructor(session: ServiceAccountHarborSession) {
+  private constructor(session: ServiceAccountHarborSession, signal: GatewaySignalClient) {
     this.session = session;
     this.harbor = session.harbor;
+    this.signal = signal;
     this.intents = new PaybondIntents(session.harbor);
   }
 
   /** Open a tenant-bound session via gateway `harbor-access` exchange. */
   static async open(init: ServiceAccountHarborSessionInit): Promise<Paybond> {
     const session = await ServiceAccountHarborSession.open(init);
-    return new Paybond(session);
+    const signal = new GatewaySignalClient(init.gatewayBaseUrl, session.harbor.tenantId, {
+      staticGatewayBearerToken: init.apiKey,
+      maxRetries: init.maxRetries ?? 3,
+    });
+    return new Paybond(session, signal);
   }
 
   async rotateHarborToken(): Promise<void> {
