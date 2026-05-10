@@ -3,7 +3,11 @@
  * and gateway service-account token exchange (`POST /v1/auth/harbor-access`).
  */
 
-import { buildSignedCreateIntentBody, type BuildSignedCreateIntentParams } from "./principal-intent.js";
+import {
+  buildSignedCreateIntentBody,
+  type BuildSignedCreateIntentParams,
+  type SettlementRail,
+} from "./principal-intent.js";
 import { signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
 
 export type VerifyCapabilityResult = {
@@ -20,6 +24,46 @@ export type SubmitEvidenceResult = {
   tenant: string;
   state: string;
   predicatePassed?: boolean;
+};
+
+export type IntentFundingResult = {
+  settlementRail: SettlementRail;
+  harborFundEndpoint?: string;
+  status?: string;
+  paymentSessionId?: string;
+  paymentUrl?: string;
+  asset?: string;
+  network?: string;
+  authorizationId?: string;
+  captureId?: string;
+  voidId?: string;
+  refundId?: string;
+  sourceAddress?: string;
+  targetAddress?: string;
+  authorizationExpiresAt?: string;
+  captureExpiresAt?: string;
+  refundExpiresAt?: string;
+  onchainTransactionHashes?: {
+    authorizations?: string[];
+    captures?: string[];
+    voids?: string[];
+    refunds?: string[];
+  };
+};
+
+export type FundIntentResult = {
+  statusCode: 200 | 202 | 402;
+  paymentRequired?: string;
+  paymentResponse?: string;
+  intentId: string;
+  tenant: string;
+  state: string;
+  settlementRail: SettlementRail;
+  currency: string;
+  amountCents: number;
+  funded: boolean;
+  capabilityToken?: string;
+  funding?: IntentFundingResult;
 };
 
 /** Async supplier for short-lived Harbor JWTs minted by the Paybond gateway. */
@@ -372,7 +416,10 @@ export class HarborClient {
   private async fetchWithRetries(
     url: string,
     init: RequestInit,
-    { retryBody }: { retryBody: unknown },
+    {
+      retryBody,
+      retryBodyText,
+    }: { retryBody?: unknown; retryBodyText?: string },
   ): Promise<Response> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
@@ -397,10 +444,17 @@ export class HarborClient {
         const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
         const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
         await new Promise((r) => setTimeout(r, delayMs));
-        init = {
-          ...init,
-          body: JSON.stringify(retryBody),
-        };
+        if (retryBodyText !== undefined) {
+          init = {
+            ...init,
+            body: retryBodyText,
+          };
+        } else if (retryBody !== undefined) {
+          init = {
+            ...init,
+            body: JSON.stringify(retryBody),
+          };
+        }
         continue;
       }
       return res;
@@ -510,6 +564,91 @@ export class HarborClient {
       });
     }
     return JSON.parse(text) as Record<string, unknown>;
+  }
+
+  /**
+   * POST `/intents/{intentId}/fund` for x402 / USDC-on-Base funding.
+   *
+   * Harbor returns:
+   * - `402` with `paymentRequired` details when a facilitator or wallet must sign
+   * - `202` while authorization is pending
+   * - `200` once the intent is funded and any capability token is available
+   *
+   * @throws HarborHttpError for non-funding HTTP errors
+   * @throws Error when Harbor echoes a different tenant or intent than requested
+   */
+  async fundIntent(
+    intentId: string,
+    options?: { paymentSignature?: string; idempotencyKey?: string },
+  ): Promise<FundIntentResult> {
+    const url = `${this.base}intents/${intentId}/fund`;
+    const headers: Record<string, string> = {
+      "x-tenant-id": this.tenantId,
+    };
+    if (options?.idempotencyKey?.trim()) {
+      headers["idempotency-key"] = options.idempotencyKey.trim();
+    }
+    if (options?.paymentSignature?.trim()) {
+      headers["payment-signature"] = options.paymentSignature.trim();
+    }
+    const res = await this.fetchWithRetries(
+      url,
+      {
+        method: "POST",
+        headers,
+        body: "",
+      },
+      { retryBodyText: "" },
+    );
+    const text = await res.text();
+    if (![200, 202, 402].includes(res.status)) {
+      throw new HarborHttpError(`Harbor fund intent HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+
+    const body = assertJSONObject(JSON.parse(text));
+    const tenant = String(body.tenant ?? "");
+    if (tenant !== this.tenantId) {
+      throw new Error(`fund tenant mismatch: client=${this.tenantId} harbor=${tenant}`);
+    }
+    const echoedIntentId = String(body.intent_id ?? "");
+    if (echoedIntentId !== intentId) {
+      throw new Error(`fund intent mismatch: requested=${intentId} harbor=${echoedIntentId}`);
+    }
+    if (typeof body.state !== "string" || !body.state.trim()) {
+      throw new Error("fund response missing state");
+    }
+    if (typeof body.currency !== "string" || !body.currency.trim()) {
+      throw new Error("fund response missing currency");
+    }
+    const amountCents = Number(body.amount_cents);
+    if (!Number.isFinite(amountCents)) {
+      throw new Error("fund response missing amount_cents");
+    }
+
+    return {
+      statusCode: res.status as 200 | 202 | 402,
+      paymentRequired: res.headers.get("payment-required") ?? undefined,
+      paymentResponse: res.headers.get("payment-response") ?? undefined,
+      intentId: echoedIntentId,
+      tenant,
+      state: body.state,
+      settlementRail: readSettlementRailValue(body.settlement_rail, "fund settlement_rail"),
+      currency: body.currency,
+      amountCents,
+      funded: Boolean(body.funded),
+      capabilityToken:
+        typeof body.capability_token === "string" && body.capability_token.trim()
+          ? body.capability_token
+          : undefined,
+      funding:
+        body.funding === undefined || body.funding === null
+          ? undefined
+          : parseIntentFundingResult(body.funding),
+    };
   }
 
   /**
@@ -655,12 +794,79 @@ type GatewaySignalClientOptions = {
 };
 
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
+const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "x402_usdc_base"]);
 
 function assertJSONObject(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("expected JSON object");
   }
   return value as Record<string, unknown>;
+}
+
+function readSettlementRailValue(value: unknown, field: string): SettlementRail {
+  if (typeof value !== "string" || !SETTLEMENT_RAIL_VALUES.has(value as SettlementRail)) {
+    throw new Error(`invalid ${field}`);
+  }
+  return value as SettlementRail;
+}
+
+function readStringArrayValue(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new Error(`invalid ${field}`);
+  }
+  return [...value];
+}
+
+function parseIntentFundingResult(value: unknown): IntentFundingResult {
+  const body = assertJSONObject(value);
+  const onchainRaw = body.onchain_transaction_hashes;
+  const onchain =
+    onchainRaw === undefined || onchainRaw === null
+      ? undefined
+      : (() => {
+          const parsed = assertJSONObject(onchainRaw);
+          return {
+            authorizations:
+              parsed.authorizations === undefined
+                ? undefined
+                : readStringArrayValue(parsed.authorizations, "funding.onchain_transaction_hashes.authorizations"),
+            captures:
+              parsed.captures === undefined
+                ? undefined
+                : readStringArrayValue(parsed.captures, "funding.onchain_transaction_hashes.captures"),
+            voids:
+              parsed.voids === undefined
+                ? undefined
+                : readStringArrayValue(parsed.voids, "funding.onchain_transaction_hashes.voids"),
+            refunds:
+              parsed.refunds === undefined
+                ? undefined
+                : readStringArrayValue(parsed.refunds, "funding.onchain_transaction_hashes.refunds"),
+          };
+        })();
+  const readOptionalString = (field: string): string | undefined => {
+    const raw = body[field];
+    return typeof raw === "string" && raw.trim() ? raw : undefined;
+  };
+  return {
+    settlementRail: readSettlementRailValue(body.settlement_rail, "funding.settlement_rail"),
+    harborFundEndpoint: readOptionalString("harbor_fund_endpoint"),
+    status: readOptionalString("status"),
+    paymentSessionId: readOptionalString("payment_session_id"),
+    paymentUrl: readOptionalString("payment_url"),
+    asset: readOptionalString("asset"),
+    network: readOptionalString("network"),
+    authorizationId: readOptionalString("authorization_id"),
+    captureId: readOptionalString("capture_id"),
+    voidId: readOptionalString("void_id"),
+    refundId: readOptionalString("refund_id"),
+    sourceAddress: readOptionalString("source_address"),
+    targetAddress: readOptionalString("target_address"),
+    authorizationExpiresAt: readOptionalString("authorization_expires_at"),
+    captureExpiresAt: readOptionalString("capture_expires_at"),
+    refundExpiresAt: readOptionalString("refund_expires_at"),
+    onchainTransactionHashes: onchain,
+  };
 }
 
 /**
@@ -908,7 +1114,11 @@ export class ServiceAccountSignalSession {
   }
 }
 
-/** Parameters for {@link PaybondIntents.create} (tenant is taken from the bound Harbor client). */
+/**
+ * Parameters for {@link PaybondIntents.create} (tenant is taken from the bound Harbor client).
+ * `settlementRail`, when set, requests one allowed rail; Harbor still resolves the destination
+ * from tenant-owned settlement config.
+ */
 export type PaybondCreateIntentParams = Omit<BuildSignedCreateIntentParams, "tenantId" | "intentId"> & {
   intentId?: string;
 };
@@ -917,13 +1127,14 @@ export type PaybondCreateIntentParams = Omit<BuildSignedCreateIntentParams, "ten
 export type PaybondSubmitEvidenceParams = Omit<SignPayeeEvidenceParams, "tenantId">;
 
 /**
- * Ergonomic intent helpers: principal-signed intent create and payee-signed evidence.
+ * Ergonomic intent helpers: principal-signed intent create, x402 funding, and payee-signed evidence.
  */
 export class PaybondIntents {
   constructor(private readonly harbor: HarborClient) {}
 
   /**
-   * Build a principal-signed `POST /intents` body and submit it. `principalSigningSeed` must be 32 bytes.
+   * Build a principal-signed `POST /intents` body and submit it. `principalSigningSeed` must be
+   * 32 bytes. `settlementRail` only requests an allowed rail; destinations stay server-owned.
    */
   async create(
     params: PaybondCreateIntentParams & { idempotencyKey?: string },
@@ -936,6 +1147,18 @@ export class PaybondIntents {
       ...fields,
     });
     return this.harbor.createIntent(body, { idempotencyKey });
+  }
+
+  /**
+   * Advance Harbor `/intents/{id}/fund` for x402 / USDC-on-Base intents.
+   */
+  async fund(
+    params: { intentId: string; paymentSignature?: string; idempotencyKey?: string },
+  ): Promise<FundIntentResult> {
+    return this.harbor.fundIntent(params.intentId, {
+      paymentSignature: params.paymentSignature,
+      idempotencyKey: params.idempotencyKey,
+    });
   }
 
   /**
@@ -994,5 +1217,6 @@ export {
   buildSignedCreateIntentBody,
   intentCreationSignBytesRaw,
   type BuildSignedCreateIntentParams,
+  type SettlementRail,
 } from "./principal-intent.js";
 export { artifactsDigest, signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";

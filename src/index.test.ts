@@ -63,6 +63,53 @@ describe("HarborClient", () => {
     }
   });
 
+  it("returns structured x402 fund challenge on 402", async () => {
+    const intent = "550e8400-e29b-41d4-a716-446655440010";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            intent_id: intent,
+            tenant: "tenant-a",
+            state: "open",
+            settlement_rail: "x402_usdc_base",
+            currency: "usd",
+            amount_cents: 2000,
+            funded: false,
+            funding: {
+              settlement_rail: "x402_usdc_base",
+              harbor_fund_endpoint: `/intents/${intent}/fund`,
+              status: "authorization_pending",
+              payment_session_id: "paymentSession_test",
+              payment_url: "https://pay.coinbase.com/payment-sessions/paymentSession_test",
+              asset: "usdc",
+              network: "base",
+            },
+          }),
+          {
+            status: 402,
+            headers: {
+              "content-type": "application/json",
+              "payment-required": "x402-requirements",
+            },
+          },
+        ),
+      ),
+    );
+    const c = new HarborClient("https://harbor.test", "tenant-a");
+    await expect(c.fundIntent(intent)).resolves.toMatchObject({
+      statusCode: 402,
+      paymentRequired: "x402-requirements",
+      settlementRail: "x402_usdc_base",
+      funded: false,
+      funding: {
+        settlementRail: "x402_usdc_base",
+        paymentSessionId: "paymentSession_test",
+      },
+    });
+  });
+
   it("getLedgerTip rejects ledger tenant echo mismatch", async () => {
     vi.stubGlobal(
       "fetch",

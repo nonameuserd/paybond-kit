@@ -7,6 +7,18 @@ import { sign, getPublicKey } from "@noble/ed25519";
 import { parse as parseUuid } from "uuid";
 import { jsonValueDigest } from "./json-digest.js";
 
+/** Tenant-configured settlement rail names. Clients may request a rail, not a destination. */
+export type SettlementRail = "stripe_connect" | "x402_usdc_base";
+
+const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "x402_usdc_base"]);
+
+function validateSettlementRail(value: string): SettlementRail {
+  if (!SETTLEMENT_RAIL_VALUES.has(value as SettlementRail)) {
+    throw new Error(`settlementRail must be one of ${[...SETTLEMENT_RAIL_VALUES].join(", ")}`);
+  }
+  return value as SettlementRail;
+}
+
 function concatBytes(...parts: Uint8Array[]): Uint8Array {
   const n = parts.reduce((a, p) => a + p.length, 0);
   const out = new Uint8Array(n);
@@ -143,10 +155,13 @@ export type BuildSignedCreateIntentParams = {
   deadlineRfc3339: string;
   allowedTools: string[];
   predicateRef?: string;
+  /** Optional rail request for the new intent. Harbor resolves the destination server-side. */
+  settlementRail?: SettlementRail;
 };
 
 /**
  * Build a Harbor `POST /intents` JSON body with principal Ed25519 detached signature.
+ * `settlementRail` only requests an allowed rail; destinations remain tenant-owned server-side.
  */
 export function buildSignedCreateIntentBody(params: BuildSignedCreateIntentParams): Record<string, unknown> {
   if (params.principalSigningSeed.length !== 32) {
@@ -155,6 +170,9 @@ export function buildSignedCreateIntentBody(params: BuildSignedCreateIntentParam
   if (params.allowedTools.length === 0) {
     throw new Error("allowedTools must be non-empty");
   }
+  const settlementRail = params.settlementRail
+    ? validateSettlementRail(params.settlementRail)
+    : undefined;
   const predicateRef = params.predicateRef ?? "";
   const msg = intentCreationSignBytesRaw({
     tenantId: params.tenantId,
@@ -190,6 +208,9 @@ export function buildSignedCreateIntentBody(params: BuildSignedCreateIntentParam
   };
   if (predicateRef.trim() !== "") {
     body.predicate_ref = predicateRef;
+  }
+  if (settlementRail) {
+    body.settlement_rail = settlementRail;
   }
   return body;
 }

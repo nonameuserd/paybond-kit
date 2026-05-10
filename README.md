@@ -1,6 +1,6 @@
 # `@paybond/kit`
 
-Paybond Kit for TypeScript provides a tenant-bound Harbor client, gateway-backed service-account sessions, capability verification, canonical signing helpers for intent creation and evidence submission, tenant-scoped ledger provenance reads, and tenant-scoped Signal analytics and reputation reads.
+Paybond Kit for TypeScript provides a tenant-bound Harbor client, gateway-backed service-account sessions, capability verification, canonical signing helpers for intent creation and evidence submission, x402 / USDC-on-Base intent funding helpers, tenant-scoped ledger provenance reads, and tenant-scoped Signal analytics and reputation reads.
 
 Install the public package with:
 
@@ -56,13 +56,15 @@ try {
 ## What the package includes
 
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
-- `HarborClient` for capability verification, intent creation, evidence submission, and ledger reads
+- `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads
 - `paybond.signal` on `Paybond` sessions opened from one service-account API key
-- `PaybondIntents` helpers for principal-signed intent creation and payee-signed evidence submission
+- `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
 - Low-level signing helpers exported for advanced callers
 
 `allowedTools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
+
+`settlementRail` on intent creation is only a rail request. Stripe destinations and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
 
 ## What it does not include
 

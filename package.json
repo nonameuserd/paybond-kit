@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Paybond Kit for TypeScript: tenant-bound Harbor sessions, capability verification, and signed intent/evidence flows.",
   "license": "Apache-2.0",
   "type": "module",
@@ -22,7 +22,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/nonameuserd/paybond-kit.git"
+    "url": "git+https://github.com/nonameuserd/paybond-kit.git"
   },
   "homepage": "https://github.com/nonameuserd/paybond-kit",
   "bugs": {
