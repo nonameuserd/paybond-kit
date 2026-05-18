@@ -57,22 +57,30 @@ try {
 
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
-- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads
+- Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
+- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
 - `paybond.signal` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
+- `paybond-mcp-server` for tenant-bound MCP tool exposure to any MCP-compatible host
 - Low-level signing helpers exported for advanced callers
 
 `allowedTools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
 `settlementRail` on intent creation is only a rail request. Stripe destinations and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
 
+The protocol-v2 surface is trust-first: signed mandates, recognition proofs, and receipts work across supported settlement adapters instead of treating any single rail as the product boundary.
+
+Gateway-backed protocol helpers throw `ProtocolHttpError` with parsed `errorCode` and `errorMessage` fields when the gateway returns a JSON error envelope. Recognition-gated flows surface `unregistered_key`, `revoked_key`, `mandate_agent_key_mismatch`, and `protocol_binding_mismatch` explicitly.
+
 ## What it does not include
 
 - No operator-tier settlement or console workflows
+- No model-provider-specific MCP wrapper; the MCP server is host-agnostic and works with any MCP-compatible runtime
 
 ## Docs
 
 - Long-form docs: `docs/kit/`
+- MCP server guide: `docs/kit/mcp-server.md`
 - Agents SDK tutorial: `docs/kit/openai-agents.md`
 - TypeScript quickstart: `docs/kit/quickstart-typescript.md`
 - TypeScript SDK reference: `docs/kit/sdk-reference-typescript.md`

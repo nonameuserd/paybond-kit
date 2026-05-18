@@ -10,6 +10,12 @@ import {
 } from "./principal-intent.js";
 import { signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
 
+declare const Buffer: {
+  from(input: string, encoding?: string): {
+    toString(encoding?: string): string;
+  };
+};
+
 export type VerifyCapabilityResult = {
   allow: boolean;
   auditId: string;
@@ -119,6 +125,431 @@ export class SignalHttpError extends Error {
     this.url = init.url;
     this.bodyText = init.bodyText;
   }
+}
+
+export type SignalMetrics = {
+  terminal_intents: number;
+  released: number;
+  refunded: number;
+  disputed: number;
+  success_rate_bps: number;
+  dispute_rate_bps: number;
+  refund_rate_bps: number;
+  mean_latency_nanos: number;
+  latency_sample_count: number;
+  receipted_volume_cents: number;
+};
+
+export type SignalConfidence = {
+  band: string;
+  support_score: number;
+  summary: string;
+};
+
+export type SignalSupportDepth = {
+  band: string;
+  terminal_intents: number;
+  receipted_volume_cents: number;
+  history_depth: number;
+  latency_sample_count: number;
+};
+
+export type SignalExplanationMetricDelta = {
+  metric: string;
+  previous: number;
+  current: number;
+  delta: number;
+};
+
+export type SignalExplanationDelta = {
+  basis: string;
+  previous_score: number;
+  score_delta: number;
+  previous_ledger_watermark_seq: number;
+  changed_metrics: SignalExplanationMetricDelta[];
+  reason_codes_added: string[];
+  reason_codes_removed: string[];
+  summary: string;
+};
+
+export type SignalSignedReceipt = {
+  schema_version: number;
+  receipt_version: string;
+  tenant_id: string;
+  operator_did: string;
+  score_version: string;
+  scoring_model: string;
+  scoring_narrative: string;
+  explanation_summary: string;
+  ledger_watermark_seq: number;
+  reason_codes: string[];
+  confidence?: SignalConfidence;
+  support_depth?: SignalSupportDepth;
+  review_state?: string;
+  explanation_delta?: SignalExplanationDelta;
+  metrics: SignalMetrics;
+  score: number;
+  signing_algorithm: string;
+  message_digest_hex: string;
+  signing_public_key_hex: string;
+  signature_hex: string;
+};
+
+export type SignalReceiptEnvelope = {
+  schema_version: number;
+  updated_at: string;
+  receipt: SignalSignedReceipt;
+};
+
+export type SignalPortfolioOperator = {
+  operator_did: string;
+  receipt_version?: string;
+  score: number;
+  ledger_watermark_seq: number;
+  receipt_message_digest_hex: string;
+  confidence?: SignalConfidence;
+  support_depth?: SignalSupportDepth;
+  review_state?: string;
+  explanation_delta?: SignalExplanationDelta;
+};
+
+export type SignalSignedPortfolioArtifact = {
+  schema_version: number;
+  artifact_version: string;
+  kind: string;
+  tenant_id: string;
+  score_model_version: string;
+  scoring_model: string;
+  checkpoint_last_ledger_seq: number;
+  operators: SignalPortfolioOperator[];
+  signing_algorithm: string;
+  message_digest_hex: string;
+  signing_public_key_hex: string;
+  signature_hex: string;
+};
+
+export type SignalPortfolioSummary = {
+  schema_version: number;
+  tenant_id: string;
+  score_model_version: string;
+  scoring_model: string;
+  checkpoint_last_ledger_seq: number;
+  operator_count: number;
+  average_score: number;
+  total_terminal_intents: number;
+  total_receipted_volume_cents: number;
+  operators_under_review: number;
+};
+
+export type A2AAgentCard = {
+  name: string;
+  description: string;
+  supportedInterfaces: Array<{
+    url: string;
+    protocolBinding: string;
+    protocolVersion: string;
+    tenant?: string;
+  }>;
+  provider?: {
+    url: string;
+    organization: string;
+  };
+  version: string;
+  documentationUrl?: string;
+  capabilities: {
+    streaming?: boolean;
+    pushNotifications?: boolean;
+    extendedAgentCard?: boolean;
+    extensions?: Array<{
+      uri?: string;
+      description?: string;
+      required?: boolean;
+      params?: Record<string, unknown>;
+    }>;
+  };
+  securitySchemes?: Record<string, unknown>;
+  defaultInputModes: string[];
+  defaultOutputModes: string[];
+  skills: Array<{
+    id: string;
+    name: string;
+    description: string;
+    tags: string[];
+    examples?: string[];
+    inputModes?: string[];
+    outputModes?: string[];
+    securityRequirements?: Array<Record<string, string[]>>;
+  }>;
+};
+
+export type A2ATaskField = {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+};
+
+export type A2ATaskParticipant = {
+  role: string;
+  required: boolean;
+  description: string;
+};
+
+export type A2ATaskExample = {
+  name: string;
+  description: string;
+  sampleInput?: Record<string, unknown>;
+  sampleResponse?: Record<string, unknown>;
+};
+
+export type A2ASettlementTaskContractV1 = {
+  schemaVersion: number;
+  kind: string;
+  id: string;
+  name: string;
+  description: string;
+  url: string;
+  routeBindings: string[];
+  requiredTrustArtifacts: string[];
+  settlementPhases: string[];
+  participants: A2ATaskParticipant[];
+  inputModes: string[];
+  outputModes: string[];
+  taskMetadataFields?: A2ATaskField[];
+  inputFields: A2ATaskField[];
+  resultFields: A2ATaskField[];
+  examples?: A2ATaskExample[];
+};
+
+export type A2ATaskContractCatalogV1 = {
+  schemaVersion: number;
+  kind: string;
+  agentCardUrl: string;
+  documentationUrl?: string;
+  contracts: A2ASettlementTaskContractV1[];
+};
+
+export type AgentMandateAuthorization = {
+  kind: string;
+  tenant_id: string;
+  principal_subject?: string;
+  principal_type?: string;
+};
+
+export type AgentMandateAgentIdentity = {
+  subject: string;
+  issuer?: string;
+  key_id?: string;
+  display_name?: string;
+};
+
+export type AgentMandateSpendCeiling = {
+  amount_minor: number;
+  currency: string;
+};
+
+export type AgentMandateSettlementRailPolicy = {
+  default_rail: string;
+  allowed_rails: string[];
+};
+
+export type AgentMandateConstraintReference = {
+  kind: string;
+  id?: string;
+  version?: string;
+  digest_sha256_hex?: string;
+  uri?: string;
+};
+
+export type AgentMandateV1 = {
+  schema_version: number;
+  kind: string;
+  authorization: AgentMandateAuthorization;
+  agent: AgentMandateAgentIdentity;
+  allowed_actions: string[];
+  allowed_tools: string[];
+  spend_ceiling: AgentMandateSpendCeiling;
+  settlement: AgentMandateSettlementRailPolicy;
+  constraint: AgentMandateConstraintReference;
+  expires_at: string;
+  nonce: string;
+  human_presence_mode: string;
+};
+
+export type SignedAgentMandateV1 = AgentMandateV1 & {
+  signing_algorithm: string;
+  message_digest_sha256_hex: string;
+  signing_public_key_ed25519_hex: string;
+  ed25519_signature_hex: string;
+};
+
+export type AgentRecognitionVerifierContext = {
+  tenant_id: string;
+  verifier_id: string;
+};
+
+export type AgentRecognitionRequestEnvelope = {
+  method: string;
+  path: string;
+  body_digest_sha256_hex: string;
+};
+
+export type AgentRecognitionProofV1 = {
+  schema_version?: number;
+  kind?: string;
+  key_id: string;
+  signature_algorithm?: string;
+  issued_at: string;
+  expires_at: string;
+  nonce: string;
+  purpose: string;
+  verifier_context: AgentRecognitionVerifierContext;
+  request_envelope: AgentRecognitionRequestEnvelope;
+  message_digest_sha256_hex?: string;
+  signing_public_key_ed25519_hex?: string;
+  ed25519_signature_hex?: string;
+};
+
+export type ProtocolTransportBindingV1 = {
+  source_protocol?: string;
+  partner_platform?: string;
+  external_authorization_id?: string;
+  request_id?: string;
+};
+
+export type ProtocolAuthorizationReceiptV1 = {
+  schema_version: number;
+  kind: string;
+  receipt_version: string;
+  receipt_id: string;
+  issued_at: string;
+  status: string;
+  intent_id: string;
+  tenant_id: string;
+  verifier_id: string;
+  transport_binding: ProtocolTransportBindingV1;
+  mandate_digest_sha256_hex: string;
+  imported_mandate_signing_public_key_ed25519_hex: string;
+  authorization: AgentMandateAuthorization;
+  agent: AgentMandateAgentIdentity;
+  allowed_actions: string[];
+  allowed_tools: string[];
+  spend_ceiling: AgentMandateSpendCeiling;
+  settlement: AgentMandateSettlementRailPolicy;
+  constraint: AgentMandateConstraintReference;
+  expires_at: string;
+  nonce: string;
+  human_presence_mode: string;
+  signing_algorithm: string;
+  message_digest_sha256_hex: string;
+  signing_public_key_ed25519_hex: string;
+  ed25519_signature_hex: string;
+};
+
+export type ProtocolSettlementReceiptV1 = {
+  schema_version: number;
+  kind: string;
+  receipt_version: string;
+  receipt_id: string;
+  issued_at: string;
+  intent_id: string;
+  tenant_id: string;
+  verifier_id: string;
+  transport_binding: ProtocolTransportBindingV1;
+  authorization_receipt_id: string;
+  mandate_digest_sha256_hex: string;
+  harbor_state: string;
+  predicate_passed?: boolean;
+  settlement_rail: string;
+  settlement_mode: string;
+  principal_did: string;
+  payee_did: string;
+  currency: string;
+  amount_cents: number;
+  terminal_observed_at: string;
+  signing_algorithm: string;
+  message_digest_sha256_hex: string;
+  signing_public_key_ed25519_hex: string;
+  ed25519_signature_hex: string;
+};
+
+export type ImportAgentMandateV1Result = {
+  valid: boolean;
+  intent_id: string;
+  mandate_digest_sha256_hex: string;
+  mandate: AgentMandateV1;
+  authorization_receipt: ProtocolAuthorizationReceiptV1;
+};
+
+export type VerifyProtocolReceiptV1Result = {
+  valid: boolean;
+  kind: string;
+  receipt_id: string;
+  tenant_id: string;
+  receipt: ProtocolAuthorizationReceiptV1 | ProtocolSettlementReceiptV1 | Record<string, unknown>;
+};
+
+const agentRecognitionProofHeader = "x-paybond-agent-recognition-proof";
+
+export class A2AHttpError extends Error {
+  readonly statusCode: number;
+  readonly url: string;
+  readonly bodyText: string;
+
+  constructor(message: string, init: { statusCode: number; url: string; bodyText: string }) {
+    super(message);
+    this.name = "A2AHttpError";
+    this.statusCode = init.statusCode;
+    this.url = init.url;
+    this.bodyText = init.bodyText;
+  }
+}
+
+export class ProtocolHttpError extends Error {
+  readonly statusCode: number;
+  readonly url: string;
+  readonly bodyText: string;
+  readonly errorCode?: string;
+  readonly errorMessage?: string;
+
+  constructor(
+    message: string,
+    init: { statusCode: number; url: string; bodyText: string; errorCode?: string; errorMessage?: string },
+  ) {
+    super(message);
+    this.name = "ProtocolHttpError";
+    this.statusCode = init.statusCode;
+    this.url = init.url;
+    this.bodyText = init.bodyText;
+    const parsed = parseGatewayErrorEnvelope(init.bodyText);
+    this.errorCode = init.errorCode ?? parsed.errorCode;
+    this.errorMessage = init.errorMessage ?? parsed.errorMessage;
+  }
+}
+
+function parseGatewayErrorEnvelope(text: string): { errorCode?: string; errorMessage?: string } {
+  if (!text.trim().startsWith("{")) {
+    return {};
+  }
+  try {
+    const body = JSON.parse(text);
+    if (body === null || Array.isArray(body) || typeof body !== "object") {
+      return {};
+    }
+    const errorCode = typeof body.error === "string" && body.error.trim() ? body.error.trim() : undefined;
+    const errorMessage = typeof body.message === "string" && body.message.trim() ? body.message.trim() : undefined;
+    return { errorCode, errorMessage };
+  } catch {
+    return {};
+  }
+}
+
+function protocolHTTPErrorMessage(prefix: string, statusCode: number, bodyText: string): string {
+  const parsed = parseGatewayErrorEnvelope(bodyText);
+  if (parsed.errorCode) {
+    return `${prefix} HTTP ${statusCode} (${parsed.errorCode}): ${parsed.errorMessage ?? bodyText}`;
+  }
+  return `${prefix} HTTP ${statusCode}: ${bodyText}`;
 }
 
 function normalizeBase(url: string): string {
@@ -933,7 +1364,7 @@ export class GatewaySignalClient {
     return `?score_version=${encodeURIComponent(scoreVersion.trim())}`;
   }
 
-  async getReputationReceipt(operatorDid: string, scoreVersion?: string): Promise<Record<string, unknown> | null> {
+  async getReputationReceipt(operatorDid: string, scoreVersion?: string): Promise<SignalReceiptEnvelope | null> {
     const enc = encodeURIComponent(operatorDid);
     const url = `${this.base}reputation/${enc}${this.scoreQuery(scoreVersion)}`;
     const res = await this.fetchGetWithRetries(url);
@@ -958,10 +1389,10 @@ export class GatewaySignalClient {
     if (echoedOperator !== operatorDid) {
       throw new Error(`signal receipt operator mismatch: requested=${operatorDid} gateway=${echoedOperator}`);
     }
-    return body;
+    return body as unknown as SignalReceiptEnvelope;
   }
 
-  async getPortfolioSummary(scoreVersion?: string): Promise<Record<string, unknown>> {
+  async getPortfolioSummary(scoreVersion?: string): Promise<SignalPortfolioSummary> {
     const url = `${this.base}signal/v1/portfolio/summary${this.scoreQuery(scoreVersion)}`;
     const res = await this.fetchGetWithRetries(url);
     const text = await res.text();
@@ -974,7 +1405,23 @@ export class GatewaySignalClient {
     }
     const body = assertJSONObject(JSON.parse(text));
     this.assertTenant(body, url);
-    return body;
+    return body as unknown as SignalPortfolioSummary;
+  }
+
+  async getSignedPortfolioArtifact(scoreVersion?: string): Promise<SignalSignedPortfolioArtifact> {
+    const url = `${this.base}signal/v1/portfolio/signed-export${this.scoreQuery(scoreVersion)}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new SignalHttpError(`Signal signed portfolio artifact HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    return body as unknown as SignalSignedPortfolioArtifact;
   }
 
   async getOperatorExplanation(operatorDid: string, scoreVersion?: string): Promise<Record<string, unknown> | null> {
@@ -1022,6 +1469,352 @@ export class GatewaySignalClient {
     }
     return body;
   }
+}
+
+type GatewayA2AClientOptions = {
+  staticGatewayBearerToken?: string;
+  maxRetries?: number;
+};
+
+/**
+ * Public or optionally authenticated reader for the gateway's A2A discovery surface.
+ */
+export class GatewayA2AClient {
+  private readonly base: string;
+  private readonly bearerToken?: string;
+  private readonly maxRetries: number;
+
+  constructor(gatewayBaseUrl: string, options?: GatewayA2AClientOptions) {
+    this.base = normalizeBase(gatewayBaseUrl) + "/";
+    this.bearerToken = options?.staticGatewayBearerToken?.trim() || undefined;
+    this.maxRetries = Math.max(1, options?.maxRetries ?? 3);
+  }
+
+  private async fetchGetWithRetries(url: string): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      let res: Response;
+      try {
+        const headers = new Headers({
+          accept: "application/json",
+        });
+        if (this.bearerToken) {
+          headers.set("authorization", `Bearer ${this.bearerToken}`);
+        }
+        res = await fetch(url, {
+          method: "GET",
+          headers,
+        });
+      } catch (e) {
+        lastErr = e;
+        if (attempt + 1 >= this.maxRetries) throw e;
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        continue;
+      }
+      if ([429, 500, 502, 503, 504].includes(res.status)) {
+        if (attempt + 1 >= this.maxRetries) {
+          return res;
+        }
+        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
+        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      return res;
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  async getAgentCard(): Promise<A2AAgentCard> {
+    const url = `${this.base}.well-known/agent-card.json`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new A2AHttpError(`A2A agent card HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return assertJSONObject(JSON.parse(text)) as unknown as A2AAgentCard;
+  }
+
+  async getTaskContracts(): Promise<A2ATaskContractCatalogV1> {
+    const url = `${this.base}protocol/v2/a2a/task-contracts`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new A2AHttpError(`A2A task contracts HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return assertJSONObject(JSON.parse(text)) as unknown as A2ATaskContractCatalogV1;
+  }
+
+  async getTaskContract(contractId: string): Promise<A2ASettlementTaskContractV1> {
+    const enc = encodeURIComponent(contractId);
+    const url = `${this.base}protocol/v2/a2a/task-contracts/${enc}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new A2AHttpError(`A2A task contract HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return assertJSONObject(JSON.parse(text)) as unknown as A2ASettlementTaskContractV1;
+  }
+}
+
+export class GatewayProtocolClient {
+  readonly tenantId: string;
+  private readonly base: string;
+  private readonly staticGatewayBearerToken: string | null;
+  private readonly maxRetries: number;
+
+  constructor(
+    gatewayBaseUrl: string,
+    tenantId: string,
+    init?: {
+      staticGatewayBearerToken?: string;
+      maxRetries?: number;
+    },
+  ) {
+    this.base = `${normalizeBase(gatewayBaseUrl)}/`;
+    this.tenantId = tenantId.trim();
+    this.staticGatewayBearerToken = init?.staticGatewayBearerToken?.trim() || null;
+    this.maxRetries = Math.max(1, init?.maxRetries ?? 3);
+  }
+
+  private async fetchWithRetries(
+    url: string,
+    init: RequestInit,
+  ): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(url, init);
+      } catch (e) {
+        lastErr = e;
+        if (attempt + 1 >= this.maxRetries) {
+          throw e;
+        }
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        continue;
+      }
+      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < this.maxRetries) {
+        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
+        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      return res;
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  private headers(extra?: HeadersInit): Headers {
+    const headers = new Headers(extra);
+    headers.set("accept", "application/json");
+    headers.set("x-tenant-id", this.tenantId);
+    if (this.staticGatewayBearerToken) {
+      headers.set("authorization", `Bearer ${this.staticGatewayBearerToken}`);
+    }
+    return headers;
+  }
+
+  private async postJSON(
+    path: string,
+    payload: Record<string, unknown>,
+    extraHeaders?: HeadersInit,
+  ): Promise<Record<string, unknown>> {
+    const url = `${this.base}${path.replace(/^\/+/, "")}`;
+    const res = await this.fetchWithRetries(url, {
+      method: "POST",
+      headers: this.headers({
+        "content-type": "application/json",
+        ...(extraHeaders ?? {}),
+      }),
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const parsed = parseGatewayErrorEnvelope(text);
+      throw new ProtocolHttpError(protocolHTTPErrorMessage(`gateway POST ${path}`, res.status, text), {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+      });
+    }
+    return assertJSONObject(JSON.parse(text));
+  }
+
+  async importAgentMandateV1(init: {
+    signedMandate: SignedAgentMandateV1;
+    intentId: string;
+    transportBinding?: ProtocolTransportBindingV1;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+  }): Promise<ImportAgentMandateV1Result> {
+    const url = `${this.base}protocol/v2/mandates`;
+    const res = await this.fetchWithRetries(url, {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify({
+        signed_mandate: init.signedMandate,
+        intent_id: init.intentId,
+        transport_binding: init.transportBinding ?? {},
+        recognition_proof: init.recognitionProof,
+      }),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const parsed = parseGatewayErrorEnvelope(text);
+      throw new ProtocolHttpError(protocolHTTPErrorMessage("protocol mandate import", res.status, text), {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text)) as unknown as ImportAgentMandateV1Result;
+    if (String(body.intent_id ?? "").trim() !== init.intentId) {
+      throw new Error(`protocol intent mismatch: requested=${init.intentId} gateway=${String(body.intent_id ?? "")}`);
+    }
+    if (String(body.mandate?.authorization?.tenant_id ?? "").trim() !== this.tenantId) {
+      throw new Error(
+        `protocol mandate tenant mismatch: client=${this.tenantId} gateway=${String(body.mandate?.authorization?.tenant_id ?? "")}`,
+      );
+    }
+    return body;
+  }
+
+  async getSettlementReceiptV1(receiptId: string): Promise<ProtocolSettlementReceiptV1> {
+    const enc = encodeURIComponent(receiptId);
+    const url = `${this.base}protocol/v2/receipts/${enc}`;
+    const res = await this.fetchWithRetries(url, {
+      method: "GET",
+      headers: this.headers(),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const parsed = parseGatewayErrorEnvelope(text);
+      throw new ProtocolHttpError(protocolHTTPErrorMessage("protocol settlement receipt", res.status, text), {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text)) as unknown as ProtocolSettlementReceiptV1;
+    if (String(body.receipt_id ?? "").trim() !== receiptId) {
+      throw new Error(`protocol receipt mismatch: requested=${receiptId} gateway=${String(body.receipt_id ?? "")}`);
+    }
+    if (String(body.tenant_id ?? "").trim() !== this.tenantId) {
+      throw new Error(`protocol receipt tenant mismatch: client=${this.tenantId} gateway=${String(body.tenant_id ?? "")}`);
+    }
+    return body;
+  }
+
+  async verifyProtocolReceiptV1(
+    receipt: ProtocolAuthorizationReceiptV1 | ProtocolSettlementReceiptV1 | Record<string, unknown>,
+  ): Promise<VerifyProtocolReceiptV1Result> {
+    const url = `${this.base}protocol/v2/receipts/verify`;
+    const res = await this.fetchWithRetries(url, {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify(receipt),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const parsed = parseGatewayErrorEnvelope(text);
+      throw new ProtocolHttpError(protocolHTTPErrorMessage("protocol receipt verify", res.status, text), {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+      });
+    }
+    return assertJSONObject(JSON.parse(text)) as unknown as VerifyProtocolReceiptV1Result;
+  }
+
+  async createHarborIntent(init: {
+    body: Record<string, unknown>;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+    idempotencyKey?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.postJSON("/harbor/intents", init.body, gatewayMutationHeaders(init.recognitionProof, {
+      ...(init.idempotencyKey?.trim() ? { "idempotency-key": init.idempotencyKey.trim() } : {}),
+    }));
+  }
+
+  async fundHarborIntent(init: {
+    intentId: string;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+    paymentSignature?: string;
+    idempotencyKey?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.postJSON(
+      `/harbor/intents/${encodeURIComponent(init.intentId)}/fund`,
+      {},
+      gatewayMutationHeaders(init.recognitionProof, {
+        ...(init.paymentSignature?.trim() ? { "payment-signature": init.paymentSignature.trim() } : {}),
+        ...(init.idempotencyKey?.trim() ? { "idempotency-key": init.idempotencyKey.trim() } : {}),
+      }),
+    );
+  }
+
+  async submitHarborEvidence(init: {
+    intentId: string;
+    body: Record<string, unknown>;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+    idempotencyKey?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.postJSON(
+      `/harbor/intents/${encodeURIComponent(init.intentId)}/evidence`,
+      init.body,
+      gatewayMutationHeaders(init.recognitionProof, {
+        ...(init.idempotencyKey?.trim() ? { "idempotency-key": init.idempotencyKey.trim() } : {}),
+      }),
+    );
+  }
+
+  async confirmHarborSettlement(init: {
+    intentId: string;
+    body: Record<string, unknown>;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+    idempotencyKey?: string;
+  }): Promise<Record<string, unknown>> {
+    return this.postJSON(
+      `/harbor/intents/${encodeURIComponent(init.intentId)}/settlement/confirm`,
+      init.body,
+      gatewayMutationHeaders(init.recognitionProof, {
+        ...(init.idempotencyKey?.trim() ? { "idempotency-key": init.idempotencyKey.trim() } : {}),
+      }),
+    );
+  }
+}
+
+function gatewayMutationHeaders(
+  recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>,
+  headers?: Record<string, string>,
+): Record<string, string> {
+  return {
+    ...(headers ?? {}),
+    [agentRecognitionProofHeader]: encodeRecognitionProofHeader(recognitionProof),
+  };
+}
+
+function encodeRecognitionProofHeader(proof: AgentRecognitionProofV1 | Record<string, unknown>): string {
+  return Buffer.from(JSON.stringify(proof), "utf8").toString("base64url");
 }
 
 export type ServiceAccountSignalSessionInit = {
@@ -1182,13 +1975,22 @@ export class PaybondIntents {
 export class Paybond {
   readonly harbor: HarborClient;
   readonly signal: GatewaySignalClient;
+  readonly a2a: GatewayA2AClient;
+  readonly protocol: GatewayProtocolClient;
   readonly intents: PaybondIntents;
   private readonly session: ServiceAccountHarborSession;
 
-  private constructor(session: ServiceAccountHarborSession, signal: GatewaySignalClient) {
+  private constructor(
+    session: ServiceAccountHarborSession,
+    signal: GatewaySignalClient,
+    a2a: GatewayA2AClient,
+    protocol: GatewayProtocolClient,
+  ) {
     this.session = session;
     this.harbor = session.harbor;
     this.signal = signal;
+    this.a2a = a2a;
+    this.protocol = protocol;
     this.intents = new PaybondIntents(session.harbor);
   }
 
@@ -1199,7 +2001,15 @@ export class Paybond {
       staticGatewayBearerToken: init.apiKey,
       maxRetries: init.maxRetries ?? 3,
     });
-    return new Paybond(session, signal);
+    const a2a = new GatewayA2AClient(init.gatewayBaseUrl, {
+      staticGatewayBearerToken: init.apiKey,
+      maxRetries: init.maxRetries ?? 3,
+    });
+    const protocol = new GatewayProtocolClient(init.gatewayBaseUrl, session.harbor.tenantId, {
+      staticGatewayBearerToken: init.apiKey,
+      maxRetries: init.maxRetries ?? 3,
+    });
+    return new Paybond(session, signal, a2a, protocol);
   }
 
   async rotateHarborToken(): Promise<void> {
