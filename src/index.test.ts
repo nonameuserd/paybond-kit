@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GatewayA2AClient,
   GatewayAuthError,
+  GatewayFraudClient,
   GatewayHarborTokenProvider,
   GatewayProtocolClient,
   GatewaySignalClient,
   HarborClient,
   HarborHttpError,
   ProtocolHttpError,
+  ServiceAccountFraudSession,
   ServiceAccountSignalSession,
 } from "./index.js";
 
@@ -291,6 +293,289 @@ describe("GatewaySignalClient", () => {
         },
       ],
     });
+  });
+});
+
+describe("GatewayFraudClient", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("fetches a tenant-bound fraud assessment from review status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        expect(input.toString()).toBe(
+          "https://gw.test/signal/v1/operators/did%3Aexample%3Aalpha/review-status?score_version=1.0",
+        );
+        return new Response(
+          JSON.stringify({
+            schema_version: 1,
+            tenant_id: "tenant-a",
+            operator_did: "did:example:alpha",
+            score_model_version: "1.0",
+            review_state: "open",
+            review_reasons: ["FRAUD_REVIEW"],
+            fraud_signals: [
+              {
+                code: "REPEATED_FAILED_PREDICATES",
+                severity: "high",
+                category: "manipulation",
+                window: "7d",
+                evidence_count: 3,
+                summary: "failed predicates clustered",
+                affects_score: false,
+                signal_source: "signal_model",
+                first_seen_at: "2026-05-23T17:00:00Z",
+                last_seen_at: "2026-05-23T18:00:00Z",
+                evidence_binding_strength: "intent_bound",
+                intent_refs: ["intent-1"],
+              },
+            ],
+            fraud_assessment: {
+              fraud_signal_version: "1.0.4",
+              level: "high",
+              highest_severity: "high",
+              review_priority: "high",
+              signal_count: 1,
+              severe_signal_count: 1,
+              summary: "level=high",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
+      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    await expect(c.getFraudAssessment("did:example:alpha", "1.0")).resolves.toMatchObject({
+      tenant_id: "tenant-a",
+      operator_did: "did:example:alpha",
+      fraud_assessment: { level: "high" },
+      fraud_signals: [{ signal_source: "signal_model", intent_refs: ["intent-1"] }],
+    });
+  });
+
+  it("rejects fraud assessment tenant drift", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            schema_version: 1,
+            tenant_id: "other",
+            operator_did: "did:example:alpha",
+            score_model_version: "1.0",
+            review_state: "open",
+            review_reasons: [],
+            fraud_signals: [],
+            fraud_assessment: {
+              fraud_signal_version: "1.0.4",
+              level: "none",
+              highest_severity: "none",
+              review_priority: "normal",
+              signal_count: 0,
+              severe_signal_count: 0,
+              summary: "level=none",
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
+      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    await expect(c.getFraudAssessment("did:example:alpha")).rejects.toThrow(/fraud tenant mismatch/);
+  });
+
+  it("lists the fraud-filtered review queue", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        expect(input.toString()).toBe(
+          "https://gw.test/signal/v1/review-queue?state=all&fraud_severity=high&limit=25&score_version=1.0",
+        );
+        return new Response(
+          JSON.stringify({
+            schema_version: 1,
+            tenant_id: "tenant-a",
+            score_model_version: "1.0",
+            items: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
+      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    await expect(
+      c.listFraudReviewQueue({ state: "all", severity: "high", limit: 25, scoreVersion: "1.0" }),
+    ).resolves.toMatchObject({ tenant_id: "tenant-a", items: [] });
+  });
+
+  it("fetches tenant-bound fraud metrics", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        expect(input.toString()).toBe("https://gw.test/signal/v1/fraud/metrics?window=7d");
+        return new Response(
+          JSON.stringify({
+            schema_version: 1,
+            tenant_id: "tenant-a",
+            score_model_version: "1.0",
+            fraud_signal_version: "1.0.4",
+            window: "7d",
+            window_started_at: "2026-05-16T00:00:00Z",
+            window_ended_at: "2026-05-23T00:00:00Z",
+            generated_at: "2026-05-23T00:00:00Z",
+            flagged_operator_count: 2,
+            critical_signal_count: 1,
+            high_signal_count: 1,
+            elevated_signal_count: 0,
+            review_open_count: 1,
+            review_load_count: 1,
+            reviewed_count: 2,
+            labeled_outcome_count: 1,
+            confirmed_risk_count: 1,
+            false_positive_count: 0,
+            needs_more_evidence_count: 1,
+            review_precision_bps: 10000,
+            false_positive_rate_bps: 0,
+            confirmed_risk_rate_bps: 5000,
+            labeled_coverage_bps: 5000,
+            median_time_to_review_seconds: 300,
+            refund_burst_count: 1,
+            dispute_cluster_count: 0,
+            replay_appeal_abuse_count: 0,
+            critical_signal_hold_candidate_count: 1,
+            provider_signal_count: 0,
+            stale_label_gap_seconds: 900,
+            stale_signal_family_label_gap_count: 0,
+            backtest_summary: "precision_bps=10000",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+    const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
+      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    await expect(c.getFraudMetrics({ window: "7d" })).resolves.toMatchObject({
+      tenant_id: "tenant-a",
+      flagged_operator_count: 2,
+    });
+  });
+
+  it("reads and updates the fraud release gate mode", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (init?.method === "PUT") {
+        expect(url).toBe("https://gw.test/signal/v1/fraud/release-gate");
+        expect(init.body).toBe(JSON.stringify({ mode: "critical_hold" }));
+      } else {
+        expect(url).toBe("https://gw.test/signal/v1/fraud/release-gate?score_version=1.0");
+      }
+      return new Response(
+        JSON.stringify({
+          schema_version: 1,
+          tenant_id: "tenant-a",
+          score_model_version: "1.0",
+          fraud_signal_version: "1.0.7",
+          generated_at: "2026-05-23T00:00:00Z",
+          config: { mode: init?.method === "PUT" ? "critical_hold" : "review_only" },
+          metrics_reliability: {
+            reliable: true,
+            reviewed_count: 10,
+            labeled_outcome_count: 5,
+            review_precision_bps: 9000,
+            min_reviewed_count: 10,
+            min_labeled_outcome_count: 5,
+            min_review_precision_bps: 8000,
+            reasons: [],
+            summary: "reliable",
+          },
+        }),
+        { status: init?.method === "PUT" ? 202 : 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
+      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+
+    await expect(c.getFraudReleaseGateConfig("1.0")).resolves.toMatchObject({
+      tenant_id: "tenant-a",
+      config: { mode: "review_only" },
+    });
+    await expect(c.setFraudReleaseGateMode("critical_hold")).resolves.toMatchObject({
+      tenant_id: "tenant-a",
+      config: { mode: "critical_hold" },
+    });
+    await expect(c.setFraudReleaseGateMode("enforce_all")).rejects.toThrow(/release gate mode/);
+  });
+
+  it("records only supported fraud review event types", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(input.toString()).toBe("https://gw.test/signal/v1/operators/did%3Aexample%3Aalpha/review-events");
+      expect(init?.method).toBe("POST");
+      expect(init?.body).toBe(
+        JSON.stringify({
+          event_type: "review_outcome_recorded",
+          review_outcome: "confirmed_risk",
+          signal_code: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
+          intent_id: "00000000-0000-4000-8000-000000000123",
+          provider_event_id: "evt_review_signal",
+          summary: "Developer supplied appeal context",
+        }),
+      );
+      return new Response(
+        JSON.stringify({
+          schema_version: 1,
+          tenant_id: "tenant-a",
+          operator_did: "did:example:alpha",
+          score_model_version: "1.0",
+          requested_event_type: "review_outcome_recorded",
+          recorded_event_type: "review_outcome_recorded",
+          review_outcome: "confirmed_risk",
+          signal_code: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
+          intent_id: "00000000-0000-4000-8000-000000000123",
+          provider_event_id: "evt_review_signal",
+          accepted: true,
+          friction: { band: "normal" },
+        }),
+        { status: 202, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
+      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    await expect(
+      c.recordFraudReviewEvent("did:example:alpha", {
+        eventType: "confirmed_risk",
+        signalCode: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
+        intentId: "00000000-0000-4000-8000-000000000123",
+        providerEventId: "evt_review_signal",
+        summary: "Developer supplied appeal context",
+      }),
+    ).resolves.toMatchObject({
+      tenant_id: "tenant-a",
+      accepted: true,
+      signal_code: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
+      intent_id: "00000000-0000-4000-8000-000000000123",
+      provider_event_id: "evt_review_signal",
+    });
+    await expect(
+      c.recordFraudReviewEvent("did:example:alpha", {
+        eventType: "settlement_refunded",
+        summary: "not a review event",
+      }),
+    ).rejects.toThrow(/fraud review eventType/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -715,5 +1000,31 @@ describe("ServiceAccountSignalSession", () => {
       apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     expect(session.signal.tenantId).toBe("realm-z");
+  });
+});
+
+describe("ServiceAccountFraudSession", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("binds the tenant from gateway principal", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            tenant_id: "realm-z",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+    const session = await ServiceAccountFraudSession.open({
+      gatewayBaseUrl: "https://gw.test",
+      apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+    });
+    expect(session.fraud.tenantId).toBe("realm-z");
   });
 });

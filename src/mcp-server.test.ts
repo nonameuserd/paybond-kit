@@ -21,6 +21,8 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_get_a2a_agent_card")).toBe(true);
     expect(names.has("paybond_get_principal")).toBe(true);
     expect(names.has("paybond_get_signed_portfolio_artifact")).toBe(true);
+    expect(names.has("paybond_get_fraud_assessment")).toBe(true);
+    expect(names.has("paybond_get_fraud_metrics")).toBe(true);
     expect(names.has("paybond_verify_agent_mandate_v1")).toBe(true);
     expect(names.has("paybond_import_agent_mandate_v1")).toBe(true);
     expect(names.has("paybond_get_settlement_receipt_v1")).toBe(true);
@@ -134,6 +136,125 @@ describe("PaybondMCPServer", () => {
       tenant_id: "tenant-a",
       checkpoint_last_ledger_seq: 55,
       kind: "paybond.signal.portfolio_snapshot",
+    });
+  });
+
+  it("returns the fraud assessment through the MCP tool", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/v1/auth/principal")) {
+          return new Response(JSON.stringify({ tenant_id: "tenant-a" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.endsWith("/signal/v1/operators/did%3Aexample%3Aalpha/review-status")) {
+          return new Response(
+            JSON.stringify({
+              schema_version: 1,
+              tenant_id: "tenant-a",
+              operator_did: "did:example:alpha",
+              score_model_version: "1.0",
+              review_state: "open",
+              review_reasons: ["FRAUD_REVIEW"],
+              fraud_signals: [],
+              fraud_assessment: {
+                fraud_signal_version: "1.0.4",
+                level: "high",
+                highest_severity: "high",
+                review_priority: "high",
+                signal_count: 1,
+                severe_signal_count: 1,
+                summary: "level=high",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        throw new Error(`unexpected url ${url}`);
+      }),
+    );
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+    const result = await server.callTool("paybond_get_fraud_assessment", {
+      operator_did: "did:example:alpha",
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      tenant_id: "tenant-a",
+      operator_did: "did:example:alpha",
+      fraud_assessment: { level: "high" },
+    });
+  });
+
+  it("returns fraud metrics through the MCP tool", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url.endsWith("/v1/auth/principal")) {
+          return new Response(JSON.stringify({ tenant_id: "tenant-a" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        if (url.endsWith("/signal/v1/fraud/metrics?window=7d")) {
+          return new Response(
+            JSON.stringify({
+              schema_version: 1,
+              tenant_id: "tenant-a",
+              score_model_version: "1.0",
+              fraud_signal_version: "1.0.4",
+              window: "7d",
+              window_started_at: "2026-05-16T00:00:00Z",
+              window_ended_at: "2026-05-23T00:00:00Z",
+              generated_at: "2026-05-23T00:00:00Z",
+              flagged_operator_count: 2,
+              critical_signal_count: 1,
+              high_signal_count: 1,
+              elevated_signal_count: 0,
+              review_open_count: 1,
+              review_load_count: 1,
+              reviewed_count: 2,
+              labeled_outcome_count: 1,
+              confirmed_risk_count: 1,
+              false_positive_count: 0,
+              needs_more_evidence_count: 1,
+              review_precision_bps: 10000,
+              false_positive_rate_bps: 0,
+              confirmed_risk_rate_bps: 5000,
+              labeled_coverage_bps: 5000,
+              median_time_to_review_seconds: 300,
+              refund_burst_count: 1,
+              dispute_cluster_count: 0,
+              replay_appeal_abuse_count: 0,
+              critical_signal_hold_candidate_count: 1,
+              provider_signal_count: 0,
+              stale_label_gap_seconds: 900,
+              stale_signal_family_label_gap_count: 0,
+              backtest_summary: "precision_bps=10000",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        throw new Error(`unexpected url ${url}`);
+      }),
+    );
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+    const result = await server.callTool("paybond_get_fraud_metrics", {
+      window: "7d",
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      tenant_id: "tenant-a",
+      flagged_operator_count: 2,
     });
   });
 

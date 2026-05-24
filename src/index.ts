@@ -241,6 +241,224 @@ export type SignalPortfolioSummary = {
   operators_under_review: number;
 };
 
+export type SignalFraudSeverity = "elevated" | "high" | "critical";
+
+export type SignalReviewState = "none" | "open" | "in_review" | "closed" | "all";
+
+export type SignalFraudSignal = {
+  code: string;
+  severity: SignalFraudSeverity | string;
+  category: string;
+  window: string;
+  evidence_count: number;
+  summary: string;
+  affects_score: false;
+  signal_source?: string;
+  first_seen_at?: string;
+  last_seen_at?: string;
+  evidence_binding_strength?: string;
+  provider_event_refs?: string[];
+  intent_refs?: string[];
+};
+
+export type SignalFraudAssessment = {
+  fraud_signal_version: string;
+  level: "none" | SignalFraudSeverity | string;
+  highest_severity: "none" | SignalFraudSeverity | string;
+  review_priority: "normal" | "elevated" | "high" | "urgent" | string;
+  signal_count: number;
+  severe_signal_count: number;
+  summary: string;
+};
+
+export type SignalFraudReleaseGateMode = "review_only" | "critical_hold";
+
+export type SignalFraudReleaseGateConfig = {
+  mode: SignalFraudReleaseGateMode | string;
+};
+
+export type SignalFraudSignalFamilyReliability = {
+  signal_family: string;
+  reliable: boolean;
+  stale: boolean;
+  sparse: boolean;
+  reviewed_count: number;
+  labeled_outcome_count: number;
+  review_precision_bps: number;
+  min_signal_family_labeled_outcome_count: number;
+  last_labeled_at?: string;
+  reasons: string[];
+  summary: string;
+};
+
+export type SignalFraudReleaseGateMetricsReliability = {
+  reliable: boolean;
+  stale: boolean;
+  sparse: boolean;
+  reviewed_count: number;
+  labeled_outcome_count: number;
+  review_precision_bps: number;
+  min_reviewed_count: number;
+  min_labeled_outcome_count: number;
+  min_signal_family_labeled_outcome_count: number;
+  min_review_precision_bps: number;
+  last_labeled_at?: string;
+  signal_families?: SignalFraudSignalFamilyReliability[];
+  reasons: string[];
+  summary: string;
+};
+
+export type SignalFraudReleaseGateDecision = {
+  mode: SignalFraudReleaseGateMode | string;
+  enforcement_enabled: boolean;
+  metrics_reliable: boolean;
+  release_allowed: boolean;
+  hold_required: boolean;
+  critical_signal_count: number;
+  critical_signal_codes: string[];
+  blocking_signal_codes?: string[];
+  blocking_evidence_refs?: string[];
+  reliability_reasons?: string[];
+  reasons: string[];
+  summary: string;
+};
+
+export type SignalFraudAssessmentResponse = {
+  schema_version: number;
+  tenant_id: string;
+  operator_did: string;
+  score_model_version: string;
+  review_state: string;
+  review_outcome: string;
+  review_reasons: string[];
+  fraud_signals: SignalFraudSignal[];
+  fraud_assessment: SignalFraudAssessment;
+  release_gate?: SignalFraudReleaseGateDecision;
+  [key: string]: unknown;
+};
+
+export type SignalFraudReviewQueueItem = {
+  operator_did: string;
+  review_state: string;
+  review_outcome: string;
+  review_reasons: string[];
+  anomaly_flagged: boolean;
+  opened_at: string;
+  reviewed_at: string;
+  updated_at: string;
+  last_receipt_message_digest_hex: string;
+  fraud_signals: SignalFraudSignal[];
+  fraud_assessment: SignalFraudAssessment;
+  release_gate?: SignalFraudReleaseGateDecision;
+  [key: string]: unknown;
+};
+
+export type SignalFraudReviewQueueResponse = {
+  schema_version: number;
+  tenant_id: string;
+  score_model_version: string;
+  items: SignalFraudReviewQueueItem[];
+};
+
+export type SignalFraudMetricsWindow = "24h" | "7d" | "30d";
+
+export type SignalFraudMetricsResponse = {
+  schema_version: number;
+  tenant_id: string;
+  score_model_version: string;
+  fraud_signal_version: string;
+  window: SignalFraudMetricsWindow | string;
+  window_started_at: string;
+  window_ended_at: string;
+  generated_at: string;
+  flagged_operator_count: number;
+  critical_signal_count: number;
+  high_signal_count: number;
+  elevated_signal_count: number;
+  review_open_count: number;
+  review_load_count: number;
+  reviewed_count: number;
+  labeled_outcome_count: number;
+  confirmed_risk_count: number;
+  false_positive_count: number;
+  needs_more_evidence_count: number;
+  review_precision_bps: number;
+  false_positive_rate_bps: number;
+  confirmed_risk_rate_bps: number;
+  labeled_coverage_bps: number;
+  median_time_to_review_seconds: number;
+  refund_burst_count: number;
+  dispute_cluster_count: number;
+  replay_appeal_abuse_count: number;
+  critical_signal_hold_candidate_count: number;
+  provider_signal_count: number;
+  stale_label_gap_seconds: number;
+  stale_signal_family_label_gap_count: number;
+  backtest_summary: string;
+  release_gate_config?: SignalFraudReleaseGateConfig;
+  release_gate_metrics_reliability?: SignalFraudReleaseGateMetricsReliability;
+};
+
+export type SignalFraudReleaseGateConfigResponse = {
+  schema_version: number;
+  tenant_id: string;
+  score_model_version: string;
+  fraud_signal_version: string;
+  generated_at: string;
+  config: SignalFraudReleaseGateConfig;
+  metrics_reliability: SignalFraudReleaseGateMetricsReliability;
+};
+
+export type SignalFraudReviewEventType =
+  | "review_open_requested"
+  | "appeal_requested"
+  | "replay_requested"
+  | "review_outcome_recorded"
+  | SignalFraudReviewOutcome;
+
+export type SignalFraudReviewOutcome = "confirmed_risk" | "false_positive" | "needs_more_evidence";
+
+export type SignalFraudReviewEventInput = {
+  eventType: SignalFraudReviewEventType | string;
+  reviewOutcome?: SignalFraudReviewOutcome | string;
+  review_outcome?: SignalFraudReviewOutcome | string;
+  signalCode?: string;
+  signal_code?: string;
+  intentId?: string;
+  intent_id?: string;
+  providerEventId?: string;
+  provider_event_id?: string;
+  summary: string;
+};
+
+export type SignalFraudReviewEventResponse = {
+  schema_version: number;
+  tenant_id: string;
+  operator_did: string;
+  score_model_version: string;
+  requested_event_type: string;
+  recorded_event_type: string;
+  review_outcome?: string;
+  signal_code?: string;
+  intent_id?: string;
+  provider_event_id?: string;
+  accepted: boolean;
+  next_eligible_at?: string;
+  [key: string]: unknown;
+};
+
+export type ListFraudReviewQueueOptions = {
+  state?: SignalReviewState | string;
+  severity?: SignalFraudSeverity | string;
+  limit?: number;
+  scoreVersion?: string;
+};
+
+export type GetFraudMetricsOptions = {
+  window?: SignalFraudMetricsWindow | string;
+  scoreVersion?: string;
+};
+
 export type A2AAgentCard = {
   name: string;
   description: string;
@@ -1224,8 +1442,23 @@ type GatewaySignalClientOptions = {
   maxRetries?: number;
 };
 
+type GatewayFraudClientOptions = {
+  staticGatewayBearerToken: string;
+  maxRetries?: number;
+};
+
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "x402_usdc_base"]);
+const FRAUD_REVIEW_EVENT_TYPES = new Set<string>([
+  "review_open_requested",
+  "appeal_requested",
+  "replay_requested",
+  "review_outcome_recorded",
+  "confirmed_risk",
+  "false_positive",
+  "needs_more_evidence",
+]);
+const FRAUD_REVIEW_OUTCOMES = new Set<string>(["confirmed_risk", "false_positive", "needs_more_evidence"]);
 
 function assertJSONObject(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -1468,6 +1701,315 @@ export class GatewaySignalClient {
       throw new Error(`signal review operator mismatch: requested=${operatorDid} gateway=${String(body.operator_did ?? "")}`);
     }
     return body;
+  }
+}
+
+/**
+ * Tenant-bound client for gateway fraud review and metrics routes.
+ */
+export class GatewayFraudClient {
+  private readonly base: string;
+  readonly tenantId: string;
+  private readonly bearerToken: string;
+  private readonly maxRetries: number;
+
+  constructor(gatewayBaseUrl: string, tenantId: string, options: GatewayFraudClientOptions) {
+    this.base = normalizeBase(gatewayBaseUrl) + "/";
+    this.tenantId = tenantId.trim();
+    this.bearerToken = options.staticGatewayBearerToken.trim();
+    this.maxRetries = Math.max(1, options.maxRetries ?? 3);
+  }
+
+  private async fetchGetWithRetries(url: string): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: "GET",
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${this.bearerToken}`,
+          },
+        });
+      } catch (e) {
+        lastErr = e;
+        if (attempt + 1 >= this.maxRetries) throw e;
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        continue;
+      }
+      if ([429, 500, 502, 503, 504].includes(res.status)) {
+        if (attempt + 1 >= this.maxRetries) {
+          return res;
+        }
+        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
+        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      return res;
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  private async fetchPostJSON(url: string, payload: Record<string, unknown>): Promise<Response> {
+    return fetch(url, {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${this.bearerToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  private async fetchPutJSON(url: string, payload: Record<string, unknown>): Promise<Response> {
+    return fetch(url, {
+      method: "PUT",
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${this.bearerToken}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  private assertTenant(body: Record<string, unknown>, url: string): void {
+    const tid = String(body.tenant_id ?? "");
+    if (tid !== this.tenantId) {
+      throw new Error(`fraud tenant mismatch: client=${this.tenantId} gateway=${tid} url=${url}`);
+    }
+  }
+
+  private assertOperator(body: Record<string, unknown>, operatorDid: string, label: string): void {
+    const echoedOperator = String(body.operator_did ?? "");
+    if (echoedOperator !== operatorDid) {
+      throw new Error(`fraud ${label} operator mismatch: requested=${operatorDid} gateway=${echoedOperator}`);
+    }
+  }
+
+  private query(params: Record<string, string | number | undefined>): string {
+    const qs = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (typeof value === "number") {
+        qs.set(key, String(value));
+        continue;
+      }
+      if (typeof value === "string" && value.trim()) {
+        qs.set(key, value.trim());
+      }
+    }
+    const raw = qs.toString();
+    return raw ? `?${raw}` : "";
+  }
+
+  private normalizedSeverity(severity?: string): string | undefined {
+    const normalized = severity?.trim();
+    if (!normalized) {
+      return undefined;
+    }
+    if (!["elevated", "high", "critical"].includes(normalized)) {
+      throw new Error("fraud severity must be one of elevated, high, or critical");
+    }
+    return normalized;
+  }
+
+  private normalizedWindow(window?: string): string | undefined {
+    const normalized = window?.trim();
+    if (!normalized) {
+      return undefined;
+    }
+    if (!["24h", "7d", "30d"].includes(normalized)) {
+      throw new Error("fraud metrics window must be one of 24h, 7d, or 30d");
+    }
+    return normalized;
+  }
+
+  private normalizedReleaseGateMode(mode: string): SignalFraudReleaseGateMode {
+    const normalized = mode.trim();
+    if (!["review_only", "critical_hold"].includes(normalized)) {
+      throw new Error("fraud release gate mode must be one of review_only or critical_hold");
+    }
+    return normalized as SignalFraudReleaseGateMode;
+  }
+
+  private normalizedReviewEventType(eventType: string): SignalFraudReviewEventType {
+    const normalized = eventType.trim();
+    if (!FRAUD_REVIEW_EVENT_TYPES.has(normalized)) {
+      throw new Error(
+        "fraud review eventType must be one of review_open_requested, appeal_requested, replay_requested, review_outcome_recorded, confirmed_risk, false_positive, or needs_more_evidence",
+      );
+    }
+    return normalized as SignalFraudReviewEventType;
+  }
+
+  private normalizedReviewOutcome(outcome: string): SignalFraudReviewOutcome {
+    const normalized = outcome.trim();
+    if (!FRAUD_REVIEW_OUTCOMES.has(normalized)) {
+      throw new Error("fraud review outcome must be one of confirmed_risk, false_positive, or needs_more_evidence");
+    }
+    return normalized as SignalFraudReviewOutcome;
+  }
+
+  private optionalReviewContext(value: string | undefined): string | undefined {
+    const normalized = value?.trim();
+    return normalized || undefined;
+  }
+
+  async getFraudAssessment(
+    operatorDid: string,
+    scoreVersion?: string,
+  ): Promise<SignalFraudAssessmentResponse | null> {
+    const enc = encodeURIComponent(operatorDid);
+    const url = `${this.base}signal/v1/operators/${enc}/review-status${this.query({
+      score_version: scoreVersion,
+    })}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (res.status === 404) {
+      return null;
+    }
+    if (!res.ok) {
+      throw new SignalHttpError(`Fraud assessment HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    this.assertOperator(body, operatorDid, "assessment");
+    return body as SignalFraudAssessmentResponse;
+  }
+
+  async listFraudReviewQueue(
+    options: ListFraudReviewQueueOptions = {},
+  ): Promise<SignalFraudReviewQueueResponse> {
+    let rawLimit: number | undefined;
+    if (options.limit !== undefined) {
+      if (!Number.isFinite(options.limit)) {
+        throw new Error("fraud review queue limit must be a finite number");
+      }
+      rawLimit = Math.max(1, Math.min(Math.floor(options.limit), 500));
+    }
+    const url = `${this.base}signal/v1/review-queue${this.query({
+      state: options.state,
+      fraud_severity: this.normalizedSeverity(options.severity),
+      limit: rawLimit,
+      score_version: options.scoreVersion,
+    })}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new SignalHttpError(`Fraud review queue HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    return body as SignalFraudReviewQueueResponse;
+  }
+
+  async getFraudMetrics(options: GetFraudMetricsOptions = {}): Promise<SignalFraudMetricsResponse> {
+    const url = `${this.base}signal/v1/fraud/metrics${this.query({
+      window: this.normalizedWindow(options.window),
+      score_version: options.scoreVersion,
+    })}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new SignalHttpError(`Fraud metrics HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    return body as SignalFraudMetricsResponse;
+  }
+
+  async getFraudReleaseGateConfig(scoreVersion?: string): Promise<SignalFraudReleaseGateConfigResponse> {
+    const url = `${this.base}signal/v1/fraud/release-gate${this.query({
+      score_version: scoreVersion,
+    })}`;
+    const res = await this.fetchGetWithRetries(url);
+    const text = await res.text();
+    if (!res.ok) {
+      throw new SignalHttpError(`Fraud release gate HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    return body as SignalFraudReleaseGateConfigResponse;
+  }
+
+  async setFraudReleaseGateMode(mode: SignalFraudReleaseGateMode | string): Promise<SignalFraudReleaseGateConfigResponse> {
+    const normalized = this.normalizedReleaseGateMode(mode);
+    const url = `${this.base}signal/v1/fraud/release-gate`;
+    const res = await this.fetchPutJSON(url, { mode: normalized });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new SignalHttpError(`Fraud release gate update HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    return body as SignalFraudReleaseGateConfigResponse;
+  }
+
+  async recordFraudReviewEvent(
+    operatorDid: string,
+    event: SignalFraudReviewEventInput,
+    scoreVersion?: string,
+  ): Promise<SignalFraudReviewEventResponse> {
+    let eventType = this.normalizedReviewEventType(event.eventType);
+    let reviewOutcome = event.reviewOutcome ?? event.review_outcome;
+    if (FRAUD_REVIEW_OUTCOMES.has(eventType)) {
+      reviewOutcome = eventType;
+      eventType = "review_outcome_recorded";
+    }
+    const normalizedOutcome = reviewOutcome === undefined ? undefined : this.normalizedReviewOutcome(reviewOutcome);
+    if (eventType === "review_outcome_recorded" && normalizedOutcome === undefined) {
+      throw new Error("fraud review outcome must be one of confirmed_risk, false_positive, or needs_more_evidence");
+    }
+    const signalCode = this.optionalReviewContext(event.signalCode ?? event.signal_code);
+    const intentId = this.optionalReviewContext(event.intentId ?? event.intent_id);
+    const providerEventId = this.optionalReviewContext(event.providerEventId ?? event.provider_event_id);
+    const enc = encodeURIComponent(operatorDid);
+    const url = `${this.base}signal/v1/operators/${enc}/review-events${this.query({
+      score_version: scoreVersion,
+    })}`;
+    const res = await this.fetchPostJSON(url, {
+      event_type: eventType,
+      ...(normalizedOutcome ? { review_outcome: normalizedOutcome } : {}),
+      ...(signalCode ? { signal_code: signalCode } : {}),
+      ...(intentId ? { intent_id: intentId } : {}),
+      ...(providerEventId ? { provider_event_id: providerEventId } : {}),
+      summary: event.summary,
+    });
+    const text = await res.text();
+    if (!res.ok && res.status !== 429) {
+      throw new SignalHttpError(`Fraud review event HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text));
+    this.assertTenant(body, url);
+    this.assertOperator(body, operatorDid, "review event");
+    return body as SignalFraudReviewEventResponse;
   }
 }
 
@@ -1824,6 +2366,8 @@ export type ServiceAccountSignalSessionInit = {
   maxRetries?: number;
 };
 
+export type ServiceAccountFraudSessionInit = ServiceAccountSignalSessionInit;
+
 async function resolveGatewayTenantId(
   gatewayBaseUrl: string,
   apiKey: string,
@@ -1908,6 +2452,36 @@ export class ServiceAccountSignalSession {
 }
 
 /**
+ * Tenant-bound fraud review and metrics session for one service-account API key.
+ */
+export class ServiceAccountFraudSession {
+  readonly fraud: GatewayFraudClient;
+
+  private constructor(fraud: GatewayFraudClient) {
+    this.fraud = fraud;
+  }
+
+  static async open(init: ServiceAccountFraudSessionInit): Promise<ServiceAccountFraudSession> {
+    const tenantId = await resolveGatewayTenantId(
+      init.gatewayBaseUrl,
+      init.apiKey,
+      init.principalPath ?? DEFAULT_PRINCIPAL_PATH,
+      Math.max(1, init.maxRetries ?? 3),
+    );
+    return new ServiceAccountFraudSession(
+      new GatewayFraudClient(init.gatewayBaseUrl, tenantId, {
+        staticGatewayBearerToken: init.apiKey,
+        maxRetries: init.maxRetries ?? 3,
+      }),
+    );
+  }
+
+  async aclose(): Promise<void> {
+    await Promise.resolve();
+  }
+}
+
+/**
  * Parameters for {@link PaybondIntents.create} (tenant is taken from the bound Harbor client).
  * `settlementRail`, when set, requests one allowed rail; Harbor still resolves the destination
  * from tenant-owned settlement config.
@@ -1975,6 +2549,7 @@ export class PaybondIntents {
 export class Paybond {
   readonly harbor: HarborClient;
   readonly signal: GatewaySignalClient;
+  readonly fraud: GatewayFraudClient;
   readonly a2a: GatewayA2AClient;
   readonly protocol: GatewayProtocolClient;
   readonly intents: PaybondIntents;
@@ -1983,12 +2558,14 @@ export class Paybond {
   private constructor(
     session: ServiceAccountHarborSession,
     signal: GatewaySignalClient,
+    fraud: GatewayFraudClient,
     a2a: GatewayA2AClient,
     protocol: GatewayProtocolClient,
   ) {
     this.session = session;
     this.harbor = session.harbor;
     this.signal = signal;
+    this.fraud = fraud;
     this.a2a = a2a;
     this.protocol = protocol;
     this.intents = new PaybondIntents(session.harbor);
@@ -2001,6 +2578,10 @@ export class Paybond {
       staticGatewayBearerToken: init.apiKey,
       maxRetries: init.maxRetries ?? 3,
     });
+    const fraud = new GatewayFraudClient(init.gatewayBaseUrl, session.harbor.tenantId, {
+      staticGatewayBearerToken: init.apiKey,
+      maxRetries: init.maxRetries ?? 3,
+    });
     const a2a = new GatewayA2AClient(init.gatewayBaseUrl, {
       staticGatewayBearerToken: init.apiKey,
       maxRetries: init.maxRetries ?? 3,
@@ -2009,7 +2590,7 @@ export class Paybond {
       staticGatewayBearerToken: init.apiKey,
       maxRetries: init.maxRetries ?? 3,
     });
-    return new Paybond(session, signal, a2a, protocol);
+    return new Paybond(session, signal, fraud, a2a, protocol);
   }
 
   async rotateHarborToken(): Promise<void> {

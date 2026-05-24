@@ -2,6 +2,7 @@
 
 import {
   GatewayAuthError,
+  GatewayFraudClient,
   GatewaySignalClient,
   HarborHttpError,
   ServiceAccountHarborSession,
@@ -29,7 +30,7 @@ declare const Buffer: {
 };
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.4.0";
+const SERVER_VERSION = "0.5.0";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_HARBOR_ACCESS_PATH = "/v1/auth/harbor-access";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
@@ -208,6 +209,7 @@ class PaybondMCPRuntime {
   private readonly gateway: GatewayAPIClient;
   private principalValue: Promise<Record<string, unknown>> | null = null;
   private signalValue: Promise<GatewaySignalClient> | null = null;
+  private fraudValue: Promise<GatewayFraudClient> | null = null;
   private harborValue: Promise<ServiceAccountHarborSession> | null = null;
 
   constructor(settings: PaybondMCPSettings) {
@@ -248,6 +250,15 @@ class PaybondMCPRuntime {
         maxRetries: this.settings.maxRetries,
       }))();
     return this.signalValue;
+  }
+
+  async fraud(): Promise<GatewayFraudClient> {
+    this.fraudValue ??= (async () =>
+      new GatewayFraudClient(this.settings.gatewayBaseUrl, await this.tenantId(), {
+        staticGatewayBearerToken: this.settings.apiKey,
+        maxRetries: this.settings.maxRetries,
+      }))();
+    return this.fraudValue;
   }
 
   async harbor(): Promise<ServiceAccountHarborSession> {
@@ -750,6 +761,35 @@ export class PaybondMCPServer {
         }),
         call: async (args) =>
           (await this.runtime.signal()).getSignedPortfolioArtifact(optionalString(args.score_version)),
+      },
+      {
+        name: "paybond_get_fraud_assessment",
+        description: "Fetch the read-only fraud assessment for one tenant-scoped operator DID.",
+        inputSchema: objectSchema(
+          {
+            operator_did: { type: "string" },
+            score_version: { type: "string" },
+          },
+          ["operator_did"],
+        ),
+        call: async (args) =>
+          (await this.runtime.fraud()).getFraudAssessment(
+            stringArg(args.operator_did, "operator_did"),
+            optionalString(args.score_version),
+          ),
+      },
+      {
+        name: "paybond_get_fraud_metrics",
+        description: "Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a supported active window.",
+        inputSchema: objectSchema({
+          window: { type: "string", enum: ["24h", "7d", "30d"] },
+          score_version: { type: "string" },
+        }),
+        call: async (args) =>
+          (await this.runtime.fraud()).getFraudMetrics({
+            window: optionalString(args.window),
+            scoreVersion: optionalString(args.score_version),
+          }),
       },
       {
         name: "paybond_get_a2a_agent_card",

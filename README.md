@@ -1,12 +1,14 @@
 # `@paybond/kit`
 
-Paybond Kit for TypeScript provides a tenant-bound Harbor client, gateway-backed service-account sessions, capability verification, canonical signing helpers for intent creation and evidence submission, x402 / USDC-on-Base intent funding helpers, tenant-scoped ledger provenance reads, and tenant-scoped Signal analytics and reputation reads.
+Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations. It opens gateway-authenticated Harbor sessions, verifies capability tokens, signs intent and evidence payloads, funds x402 / USDC-on-Base intents, and reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data.
 
-Install the public package with:
+## Install
 
 ```bash
 npm install @paybond/kit
 ```
+
+`@paybond/kit` is an ESM-only package for modern Node.js runtimes. Use `import` from a Node ESM / `NodeNext` project or a compatible bundler.
 
 ## Open source
 
@@ -17,6 +19,23 @@ npm install @paybond/kit
 - Node.js 22+
 - A `paybond_sk_...` service-account API key
 - Reachable Gateway and Harbor base URLs
+- For capability verification: a funded intent id and a capability token minted for that intent
+- For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
+
+Minimal environment for the quick start:
+
+```bash
+export PAYBOND_GATEWAY_URL="https://gateway.example.com"
+export PAYBOND_HARBOR_URL="https://harbor.example.com"
+export PAYBOND_API_KEY="paybond_sk_..."
+```
+
+Optional, if you want the quick start to verify a capability:
+
+```bash
+export PAYBOND_INTENT_ID="00000000-0000-0000-0000-000000000000"
+export PAYBOND_CAPABILITY="base64-biscuit-token"
+```
 
 ## Tenant isolation
 
@@ -31,22 +50,37 @@ Every session is bound to the tenant realm echoed by gateway-authenticated servi
 ```ts
 import { Paybond } from "@paybond/kit";
 
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`missing ${name}`);
+  }
+  return value;
+}
+
 const paybond = await Paybond.open({
-  gatewayBaseUrl: "https://gateway.example.com",
-  apiKey: process.env.PAYBOND_API_KEY!,
-  harborBaseUrl: "https://harbor.example.com",
+  gatewayBaseUrl: requiredEnv("PAYBOND_GATEWAY_URL"),
+  apiKey: requiredEnv("PAYBOND_API_KEY"),
+  harborBaseUrl: requiredEnv("PAYBOND_HARBOR_URL"),
 });
 
 try {
-  const verified = await paybond.harbor.verifyCapability({
-    intentId: process.env.PAYBOND_INTENT_ID!,
-    token: process.env.PAYBOND_CAPABILITY!,
-    operation: "payments.capture",
-    requestedSpendCents: 18_700,
-  });
+  console.log("tenant realm:", paybond.harbor.tenantId);
 
-  if (!verified.allow) {
-    throw new Error(`verify denied: ${verified.code ?? "deny"} ${verified.message ?? ""}`);
+  const intentId = process.env.PAYBOND_INTENT_ID;
+  const capability = process.env.PAYBOND_CAPABILITY;
+  if (intentId && capability) {
+    const verified = await paybond.harbor.verifyCapability({
+      intentId,
+      token: capability,
+      operation: "payments.capture",
+      requestedSpendCents: 18_700,
+    });
+
+    if (!verified.allow) {
+      throw new Error(`verify denied: ${verified.code ?? "deny"} ${verified.message ?? ""}`);
+    }
+    console.log("capability verified:", verified.auditId);
   }
 } finally {
   await paybond.aclose();
@@ -55,14 +89,25 @@ try {
 
 ## What the package includes
 
+Core SDK:
+
 - `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
-- Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
-- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
-- `paybond.signal` on `Paybond` sessions opened from one service-account API key
+- `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
+
+Gateway and trust helpers:
+
+- `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
+- `GatewayFraudClient` and `ServiceAccountFraudSession` for tenant-scoped fraud assessments, review queues, review events, metrics, and release-gate config
+- Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
 - `paybond-mcp-server` for tenant-bound MCP tool exposure to any MCP-compatible host
-- Low-level signing helpers exported for advanced callers
+
+Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
+
+Advanced exports:
+
+- Low-level signing helpers for callers that need to pre-build signed request bodies or evidence payloads
 
 `allowedTools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
@@ -75,21 +120,21 @@ Gateway-backed protocol helpers throw `ProtocolHttpError` with parsed `errorCode
 ## What it does not include
 
 - No operator-tier settlement or console workflows
+- No model-provider-specific TypeScript agent wrapper; use the documented app-side wrapper pattern with `PaybondCapabilityBinding`
 - No model-provider-specific MCP wrapper; the MCP server is host-agnostic and works with any MCP-compatible runtime
 
 ## Docs
 
-- Long-form docs: `docs/kit/`
-- MCP server guide: `docs/kit/mcp-server.md`
-- Agents SDK tutorial: `docs/kit/openai-agents.md`
-- TypeScript quickstart: `docs/kit/quickstart-typescript.md`
-- TypeScript SDK reference: `docs/kit/sdk-reference-typescript.md`
-- Example app: `examples/paybond-kit-typescript/`
-- OpenAI Agents example: `examples/paybond-kit-openai-agents-typescript/`
+- Long-form docs: https://paybond.ai/docs/kit
+- TypeScript quickstart: https://paybond.ai/docs/kit/quickstart-typescript
+- TypeScript SDK reference: https://paybond.ai/docs/kit/sdk-reference-typescript
+- MCP server guide: https://paybond.ai/docs/kit/mcp-server
+- Agent runtime tutorial: https://paybond.ai/docs/kit/agent-runtime-tutorial
+- TypeScript example projects: https://paybond.ai/docs/kit/examples-typescript
 
 ## Release verification
 
-From `kit/ts`:
+For maintainers working from a source checkout, release verification lives in this package directory:
 
 ```bash
 npm run verify:release
