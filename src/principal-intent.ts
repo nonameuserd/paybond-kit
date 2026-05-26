@@ -5,6 +5,7 @@
 
 import { sign, getPublicKey } from "@noble/ed25519";
 import { parse as parseUuid } from "uuid";
+import { ensureEd25519Sha512Sync } from "./ed25519-sync.js";
 import { jsonValueDigest } from "./json-digest.js";
 
 /** Tenant-configured settlement rail names. Clients may request a rail, not a destination. */
@@ -176,6 +177,7 @@ export function buildSignedCreateIntentBody(params: BuildSignedCreateIntentParam
   }
   const settlementRail = validateSettlementRail(params.settlementRail);
   const predicateRef = params.predicateRef ?? "";
+  ensureEd25519Sha512Sync();
   const msg = intentCreationSignBytesRaw({
     tenantId: params.tenantId,
     intentId: params.intentId,

@@ -5,6 +5,7 @@
 import { sign, getPublicKey } from "@noble/ed25519";
 import { createHash } from "blake3";
 import { parse as parseUuid } from "uuid";
+import { ensureEd25519Sha512Sync } from "./ed25519-sync.js";
 import { jsonValueDigest } from "./json-digest.js";
 
 function concatBytes(...parts: Uint8Array[]): Uint8Array {
@@ -98,6 +99,7 @@ export function signPayeeEvidenceBinding(params: SignPayeeEvidenceParams): Recor
   if (params.payeeSigningSeed.length !== 32) {
     throw new Error("payeeSigningSeed must be 32 bytes");
   }
+  ensureEd25519Sha512Sync();
   const artifactBin: Uint8Array[] = params.artifactsBlake3Hex.map((h) => hexToBytes(h));
   const payloadDigest = jsonValueDigest(params.payload);
   const artDigest = artifactsDigest(artifactBin);

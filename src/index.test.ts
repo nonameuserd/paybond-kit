@@ -8,6 +8,7 @@ import {
   GatewaySignalClient,
   HarborClient,
   HarborHttpError,
+  PaybondIntents,
   ProtocolHttpError,
   ServiceAccountFraudSession,
   ServiceAccountSignalSession,
@@ -212,6 +213,37 @@ describe("GatewayHarborTokenProvider", () => {
       apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     await expect(p.ensureInitial()).rejects.toBeInstanceOf(GatewayAuthError);
+  });
+});
+
+describe("PaybondIntents", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("defaults evidence artifacts and submitted-at timestamp", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const submitEvidence = vi.spyOn(harbor, "submitEvidence").mockResolvedValue({
+      intentId,
+      tenant: "tenant-a",
+      state: "evidence_submitted",
+      predicatePassed: true,
+    });
+
+    const intents = new PaybondIntents(harbor);
+    await intents.submitEvidence({
+      intentId,
+      payeeDid: "did:web:example.com#payee",
+      payeeSigningSeed: new Uint8Array(32),
+      payload: { ok: true },
+    });
+
+    expect(submitEvidence).toHaveBeenCalledTimes(1);
+    const [calledIntentId, body] = submitEvidence.mock.calls[0]!;
+    expect(calledIntentId).toBe(intentId);
+    expect(body.artifacts).toEqual([]);
+    expect(body.submitted_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
 });
 

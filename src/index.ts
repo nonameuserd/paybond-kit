@@ -2491,7 +2491,17 @@ export type PaybondCreateIntentParams = Omit<BuildSignedCreateIntentParams, "ten
 };
 
 /** Parameters for {@link PaybondIntents.submitEvidence} (tenant is taken from the bound Harbor client). */
-export type PaybondSubmitEvidenceParams = Omit<SignPayeeEvidenceParams, "tenantId">;
+export type PaybondSubmitEvidenceParams = Omit<
+  SignPayeeEvidenceParams,
+  "tenantId" | "artifactsBlake3Hex" | "submittedAtRfc3339"
+> & {
+  artifactsBlake3Hex?: string[];
+  submittedAtRfc3339?: string;
+};
+
+function nowRfc3339Seconds(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
 
 /**
  * Ergonomic intent helpers: principal-signed intent create, x402 funding, and payee-signed evidence.
@@ -2534,9 +2544,16 @@ export class PaybondIntents {
   async submitEvidence(
     params: PaybondSubmitEvidenceParams & { idempotencyKey?: string },
   ): Promise<SubmitEvidenceResult> {
-    const { idempotencyKey, ...rest } = params;
+    const {
+      idempotencyKey,
+      artifactsBlake3Hex = [],
+      submittedAtRfc3339 = nowRfc3339Seconds(),
+      ...rest
+    } = params;
     const wire = signPayeeEvidenceBinding({
       tenantId: this.harbor.tenantId,
+      artifactsBlake3Hex,
+      submittedAtRfc3339,
       ...rest,
     });
     return this.harbor.submitEvidence(rest.intentId, wire, { idempotencyKey });
