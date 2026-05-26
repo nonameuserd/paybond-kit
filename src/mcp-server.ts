@@ -30,7 +30,7 @@ declare const Buffer: {
 };
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.5.0";
+const SERVER_VERSION = "0.6.0";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_HARBOR_ACCESS_PATH = "/v1/auth/harbor-access";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";

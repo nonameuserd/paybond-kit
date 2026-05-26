@@ -2483,8 +2483,8 @@ export class ServiceAccountFraudSession {
 
 /**
  * Parameters for {@link PaybondIntents.create} (tenant is taken from the bound Harbor client).
- * `settlementRail`, when set, requests one allowed rail; Harbor still resolves the destination
- * from tenant-owned settlement config.
+ * `settlementRail` is principal-signed and requests one allowed rail; Harbor still resolves the
+ * destination from tenant-owned settlement config.
  */
 export type PaybondCreateIntentParams = Omit<BuildSignedCreateIntentParams, "tenantId" | "intentId"> & {
   intentId?: string;
@@ -2501,7 +2501,7 @@ export class PaybondIntents {
 
   /**
    * Build a principal-signed `POST /intents` body and submit it. `principalSigningSeed` must be
-   * 32 bytes. `settlementRail` only requests an allowed rail; destinations stay server-owned.
+   * 32 bytes. `settlementRail` is signed as the requested rail; destinations stay server-owned.
    */
   async create(
     params: PaybondCreateIntentParams & { idempotencyKey?: string },
