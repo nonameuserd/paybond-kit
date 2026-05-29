@@ -671,6 +671,33 @@ export class PaybondMCPServer {
           }),
       },
       {
+        name: "paybond_authorize_agent_spend",
+        description:
+          "Authorize delegated agent spend before a side-effecting tool, paid API, vendor action, or settlement workflow executes.",
+        inputSchema: objectSchema(
+          {
+            intent_id: { type: "string", description: "Canonical Harbor intent UUID." },
+            token: { type: "string", description: "Capability token to verify." },
+            operation: { type: "string", description: "Delegated operation or tool name." },
+            requested_spend_cents: {
+              type: "integer",
+              description: "Optional requested spend in cents for this tool call.",
+            },
+          },
+          ["intent_id", "token", "operation"],
+        ),
+        call: async (args) =>
+          this.runtime.verifyCapability({
+            intentId: uuidArg(args.intent_id, "intent_id"),
+            token: stringArg(args.token, "token"),
+            operation: stringArg(args.operation, "operation"),
+            requestedSpendCents:
+              args.requested_spend_cents === undefined
+                ? 0
+                : intArg(args.requested_spend_cents, "requested_spend_cents"),
+          }),
+      },
+      {
         name: "paybond_list_intents",
         description:
           "List tenant-scoped Harbor intents through the gateway operator view with optional filters.",
@@ -889,6 +916,25 @@ export class PaybondMCPServer {
           }),
       },
       {
+        name: "paybond_create_spend_intent",
+        description:
+          "Create a signed Paybond spend intent through the gateway /harbor route. Use this when an agent workflow needs bounded budget, allowed operations, evidence, and settlement review.",
+        inputSchema: objectSchema(
+          {
+            body: { type: "object", additionalProperties: true },
+            recognition_proof: { type: "object", additionalProperties: true },
+            idempotency_key: { type: "string" },
+          },
+          ["body", "recognition_proof"],
+        ),
+        call: async (args) =>
+          this.runtime.createHarborIntent({
+            body: ensureObject(args.body, "body"),
+            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            idempotencyKey: optionalString(args.idempotency_key),
+          }),
+      },
+      {
         name: "paybond_fund_intent",
         description:
           "Advance Harbor funding through the gateway /harbor path with a replay-safe recognition proof.",
@@ -913,6 +959,27 @@ export class PaybondMCPServer {
         name: "paybond_submit_evidence",
         description:
           "Submit payee evidence through the gateway /harbor path with a replay-safe recognition proof.",
+        inputSchema: objectSchema(
+          {
+            intent_id: { type: "string" },
+            body: { type: "object", additionalProperties: true },
+            recognition_proof: { type: "object", additionalProperties: true },
+            idempotency_key: { type: "string" },
+          },
+          ["intent_id", "body", "recognition_proof"],
+        ),
+        call: async (args) =>
+          this.runtime.submitHarborEvidence({
+            intentId: uuidArg(args.intent_id, "intent_id"),
+            body: ensureObject(args.body, "body"),
+            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            idempotencyKey: optionalString(args.idempotency_key),
+          }),
+      },
+      {
+        name: "paybond_submit_spend_evidence",
+        description:
+          "Submit signed evidence for a Paybond spend intent so release, refund, review, and receipt generation use the same audit-ready record.",
         inputSchema: objectSchema(
           {
             intent_id: { type: "string" },

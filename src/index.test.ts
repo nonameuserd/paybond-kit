@@ -8,7 +8,10 @@ import {
   HarborClient,
   HarborHttpError,
   Paybond,
+  PaybondCapabilityBinding,
   PaybondIntents,
+  PaybondSpendDeniedError,
+  PaybondSpendGuard,
   ProtocolHttpError,
   ServiceAccountFraudSession,
   ServiceAccountSignalSession,
@@ -187,6 +190,82 @@ describe("PaybondIntents", () => {
     expect(calledIntentId).toBe(intentId);
     expect(body.artifacts).toEqual([]);
     expect(body.submitted_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+
+  it("exposes createSpendIntent as an alias for create", async () => {
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const create = vi.spyOn(PaybondIntents.prototype, "create").mockResolvedValue({
+      intent_id: "550e8400-e29b-41d4-a716-446655440000",
+    });
+    const intents = new PaybondIntents(harbor);
+    await expect(
+      intents.createSpendIntent({
+        principalDid: "did:web:example.com#principal",
+        principalSigningSeed: new Uint8Array(32),
+        recognitionProof: {},
+        payeeDid: "did:web:example.com#payee",
+        budget: { currency: "usd", max_spend_usd: 200 },
+        predicate: { version: 1, root: { op: "true" } },
+        currency: "usd",
+        amountCents: 20_000,
+        evidenceSchema: { type: "object" },
+        deadlineRfc3339: "2030-12-31T23:59:59Z",
+        allowedTools: ["travel.book_hotel"],
+        settlementRail: "stripe_connect",
+      }),
+    ).resolves.toMatchObject({
+      intent_id: "550e8400-e29b-41d4-a716-446655440000",
+    });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("PaybondSpendGuard", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("guards a tool after spend authorization allows", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
+      allow: true,
+      auditId: "550e8400-e29b-41d4-a716-446655440001",
+      tenant: "tenant-a",
+      intentId,
+    });
+    const guard = new PaybondSpendGuard(
+      new PaybondCapabilityBinding(harbor, intentId, "cap-token"),
+    );
+    const tool = vi.fn(async (city: string) => ({ city }));
+    await expect(
+      guard.guardTool(
+        { operation: "travel.book_hotel", requestedSpendCents: 20_000 },
+        tool,
+      )("NYC"),
+    ).resolves.toEqual({ city: "NYC" });
+    expect(tool).toHaveBeenCalledWith("NYC");
+  });
+
+  it("does not call the tool when spend authorization denies", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
+      allow: false,
+      auditId: "550e8400-e29b-41d4-a716-446655440001",
+      tenant: "tenant-a",
+      intentId,
+      code: "policy_mismatch",
+      message: "budget exceeded",
+    });
+    const guard = new PaybondSpendGuard(
+      new PaybondCapabilityBinding(harbor, intentId, "cap-token"),
+    );
+    const tool = vi.fn(async () => "ok");
+    await expect(
+      guard.guardTool({ operation: "travel.book_hotel" }, tool)(),
+    ).rejects.toBeInstanceOf(PaybondSpendDeniedError);
+    expect(tool).not.toHaveBeenCalled();
   });
 });
 

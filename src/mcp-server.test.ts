@@ -27,8 +27,11 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_import_agent_mandate_v1")).toBe(true);
     expect(names.has("paybond_get_settlement_receipt_v1")).toBe(true);
     expect(names.has("paybond_verify_protocol_receipt_v1")).toBe(true);
+    expect(names.has("paybond_authorize_agent_spend")).toBe(true);
     expect(names.has("paybond_create_intent")).toBe(true);
+    expect(names.has("paybond_create_spend_intent")).toBe(true);
     expect(names.has("paybond_submit_evidence")).toBe(true);
+    expect(names.has("paybond_submit_spend_evidence")).toBe(true);
     expect(names.has("paybond_create_intent_legacy")).toBe(false);
   });
 

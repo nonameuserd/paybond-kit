@@ -1,12 +1,13 @@
 {
   "name": "@paybond/kit",
-  "version": "0.7.1",
-  "description": "Paybond Kit for TypeScript: hosted Gateway sessions, capability verification, signed intent/evidence flows, and Stripe Connect or x402 / USDC-on-Base settlement.",
+  "version": "0.8.0",
+  "description": "Paybond Kit for TypeScript: agent spend controls, hosted Gateway sessions, capability verification, signed intent/evidence flows, and Stripe Connect or x402 / USDC-on-Base settlement.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
+    "paybond-init": "dist/init.js",
     "paybond-mcp-server": "dist/mcp-server.js"
   },
   "exports": {
@@ -41,6 +42,15 @@
     "kit",
     "agents",
     "agent-runtime",
+    "agent-spend-controls",
+    "ai-agent-budget",
+    "delegated-spend",
+    "spend-guardrails",
+    "tool-call-spend-limits",
+    "openai-agents",
+    "gemini",
+    "claude",
+    "anthropic",
     "agent-payments",
     "escrow",
     "intent-escrow",

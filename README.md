@@ -1,6 +1,6 @@
 # `@paybond/kit`
 
-Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations. It opens hosted Gateway sessions, verifies capability tokens, signs intent and evidence payloads, uses Stripe Connect or x402 / USDC-on-Base settlement rails, and reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data.
+Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
 ## Install
 
@@ -59,6 +59,27 @@ try {
 }
 ```
 
+## Agent spend controls
+
+Use Paybond Kit when an agent workflow needs delegated spend guardrails, tool-call budget checks, paid API or vendor action approval, evidence, release/refund logic, disputes, or audit-ready receipts.
+
+```ts
+import { PaybondCapabilityBinding, PaybondSpendGuard } from "@paybond/kit";
+
+const binding = new PaybondCapabilityBinding(paybond.harbor, intentId, capabilityToken);
+const guard = new PaybondSpendGuard(binding);
+const guardedTool = guard.guardTool(
+  { operation: "travel.book_hotel", requestedSpendCents: 20_000 },
+  async (input) => bookHotel(input),
+);
+```
+
+Scaffold a wrapper:
+
+```bash
+npx -p @paybond/kit paybond-init --framework provider-agnostic --out paybond-spend-guard.ts
+```
+
 ## What the package includes
 
 Core SDK:
@@ -67,6 +88,8 @@ Core SDK:
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
+- `PaybondSpendGuard`, `authorizeSpend`, and `guardTool` for spend-named wrappers around capability verification
+- Provider and framework aliases: `paybondOpenAIToolSpendGuard`, `paybondGeminiToolSpendGuard`, `paybondClaudeToolSpendGuard`, `paybondAnthropicToolSpendGuard`, `paybondGoogleAIToolSpendGuard`, `paybondVercelAIToolSpendGuard`, `paybondLangGraphToolSpendGuard`, and `paybondMCPToolSpendGuard`
 
 Gateway and trust helpers:
 
@@ -74,6 +97,7 @@ Gateway and trust helpers:
 - `GatewayFraudClient` and `ServiceAccountFraudSession` for tenant-scoped fraud assessments, review queues, review events, metrics, and release-gate config
 - Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
 - `paybond-mcp-server` for tenant-bound MCP tool exposure to any MCP-compatible host
+- `paybond-init` for generating a small spend guard wrapper
 
 Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
 

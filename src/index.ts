@@ -832,7 +832,98 @@ export class PaybondCapabilityBinding {
     public readonly intentId: string,
     public readonly capabilityToken: string,
   ) {}
+
+  async verifySpendCapability(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
+    return this.harbor.verifyCapability({
+      intentId: this.intentId,
+      token: this.capabilityToken,
+      operation: input.operation,
+      requestedSpendCents: input.requestedSpendCents,
+    });
+  }
+
+  async authorizeSpend(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
+    return this.verifySpendCapability(input);
+  }
 }
+
+export type PaybondSpendAuthorizationInput = {
+  operation: string;
+  requestedSpendCents?: number;
+};
+
+export class PaybondSpendDeniedError extends Error {
+  readonly result: VerifyCapabilityResult;
+
+  constructor(result: VerifyCapabilityResult) {
+    const reason = result.message ?? result.code ?? "denied";
+    super(`Paybond spend authorization denied: ${reason}`);
+    this.name = "PaybondSpendDeniedError";
+    this.result = result;
+  }
+}
+
+export type PaybondToolHandler<TArgs extends unknown[], TResult> = (
+  ...args: TArgs
+) => TResult | Promise<TResult>;
+
+export type PaybondGuardedToolHandler<TArgs extends unknown[], TResult> = (
+  ...args: TArgs
+) => Promise<Awaited<TResult>>;
+
+export class PaybondSpendGuard {
+  constructor(public readonly binding: PaybondCapabilityBinding) {}
+
+  async verifySpendCapability(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
+    return this.binding.verifySpendCapability(input);
+  }
+
+  async authorizeSpend(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
+    return this.binding.authorizeSpend(input);
+  }
+
+  async assertSpendAuthorized(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
+    const result = await this.authorizeSpend(input);
+    if (!result.allow) {
+      throw new PaybondSpendDeniedError(result);
+    }
+    return result;
+  }
+
+  guardTool<TArgs extends unknown[], TResult>(
+    input: PaybondSpendAuthorizationInput,
+    handler: PaybondToolHandler<TArgs, TResult>,
+  ): PaybondGuardedToolHandler<TArgs, TResult> {
+    return async (...args: TArgs): Promise<Awaited<TResult>> => {
+      await this.assertSpendAuthorized(input);
+      return await handler(...args);
+    };
+  }
+}
+
+export async function authorizeSpend(
+  binding: PaybondCapabilityBinding,
+  input: PaybondSpendAuthorizationInput,
+): Promise<VerifyCapabilityResult> {
+  return binding.authorizeSpend(input);
+}
+
+export function guardTool<TArgs extends unknown[], TResult>(
+  binding: PaybondCapabilityBinding,
+  input: PaybondSpendAuthorizationInput,
+  handler: PaybondToolHandler<TArgs, TResult>,
+): PaybondGuardedToolHandler<TArgs, TResult> {
+  return new PaybondSpendGuard(binding).guardTool(input, handler);
+}
+
+export const paybondOpenAIToolSpendGuard = guardTool;
+export const paybondAnthropicToolSpendGuard = guardTool;
+export const paybondClaudeToolSpendGuard = guardTool;
+export const paybondGeminiToolSpendGuard = guardTool;
+export const paybondGoogleAIToolSpendGuard = guardTool;
+export const paybondVercelAIToolSpendGuard = guardTool;
+export const paybondLangGraphToolSpendGuard = guardTool;
+export const paybondMCPToolSpendGuard = guardTool;
 
 export type PaybondOpenOptions = {
   apiKey: string;
@@ -1049,6 +1140,24 @@ export class HarborClient {
       code: body.code,
       message: body.message,
     };
+  }
+
+  async verifySpendCapability(input: {
+    intentId: string;
+    token: string;
+    operation: string;
+    requestedSpendCents?: number;
+  }): Promise<VerifyCapabilityResult> {
+    return this.verifyCapability(input);
+  }
+
+  async authorizeSpend(input: {
+    intentId: string;
+    token: string;
+    operation: string;
+    requestedSpendCents?: number;
+  }): Promise<VerifyCapabilityResult> {
+    return this.verifyCapability(input);
   }
 
   /**
@@ -1446,6 +1555,24 @@ export class GatewayHarborClient {
       code: body.code,
       message: body.message,
     };
+  }
+
+  async verifySpendCapability(input: {
+    intentId: string;
+    token: string;
+    operation: string;
+    requestedSpendCents?: number;
+  }): Promise<VerifyCapabilityResult> {
+    return this.verifyCapability(input);
+  }
+
+  async authorizeSpend(input: {
+    intentId: string;
+    token: string;
+    operation: string;
+    requestedSpendCents?: number;
+  }): Promise<VerifyCapabilityResult> {
+    return this.verifyCapability(input);
   }
 
   async createIntent(
@@ -2678,6 +2805,12 @@ export class PaybondIntents {
     return this.harbor.createIntent(body, { idempotencyKey, recognitionProof } as never);
   }
 
+  async createSpendIntent(
+    params: PaybondCreateIntentParams & { idempotencyKey?: string },
+  ): Promise<Record<string, unknown>> {
+    return this.create(params);
+  }
+
   /**
    * Advance Harbor `/intents/{id}/fund` for x402 / USDC-on-Base intents.
    */
@@ -2782,6 +2915,19 @@ export class Paybond {
   /** Reserved for future HTTP client cleanup; safe to call after work completes. */
   async aclose(): Promise<void> {
     await Promise.resolve();
+  }
+
+  spendGuard(intentId: string, capabilityToken: string): PaybondSpendGuard {
+    return new PaybondSpendGuard(new PaybondCapabilityBinding(this.harbor, intentId, capabilityToken));
+  }
+
+  async authorizeSpend(input: {
+    intentId: string;
+    token: string;
+    operation: string;
+    requestedSpendCents?: number;
+  }): Promise<VerifyCapabilityResult> {
+    return this.harbor.authorizeSpend(input);
   }
 }
 
