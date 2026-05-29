@@ -18,20 +18,12 @@ npm install @paybond/kit
 
 - Node.js 22+
 - A `paybond_sk_sandbox_...` or `paybond_sk_live_...` service-account API key
-- For capability verification: a funded intent id and a capability token minted for that intent
 - For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
 
 Minimal environment for the quick start:
 
 ```bash
 export PAYBOND_API_KEY="paybond_sk_sandbox_..."
-```
-
-Optional, if you want the quick start to verify a capability:
-
-```bash
-export PAYBOND_INTENT_ID="00000000-0000-0000-0000-000000000000"
-export PAYBOND_CAPABILITY="base64-biscuit-token"
 ```
 
 ## Tenant isolation
@@ -62,22 +54,6 @@ const paybond = await Paybond.open({
 
 try {
   console.log("tenant realm:", paybond.harbor.tenantId);
-
-  const intentId = process.env.PAYBOND_INTENT_ID;
-  const capability = process.env.PAYBOND_CAPABILITY;
-  if (intentId && capability) {
-    const verified = await paybond.harbor.verifyCapability({
-      intentId,
-      token: capability,
-      operation: "payments.capture",
-      requestedSpendCents: 18_700,
-    });
-
-    if (!verified.allow) {
-      throw new Error(`verify denied: ${verified.code ?? "deny"} ${verified.message ?? ""}`);
-    }
-    console.log("capability verified:", verified.auditId);
-  }
 } finally {
   await paybond.aclose();
 }
