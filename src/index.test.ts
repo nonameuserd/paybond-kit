@@ -8,13 +8,16 @@ import {
   HarborClient,
   HarborHttpError,
   Paybond,
-  PaybondCapabilityBinding,
   PaybondIntents,
   PaybondSpendDeniedError,
   PaybondSpendGuard,
   ProtocolHttpError,
   ServiceAccountFraudSession,
   ServiceAccountSignalSession,
+  guardTool,
+  paybondAgentToolSpendGuard,
+  paybondRuntimeNeutralToolSpendGuard,
+  paybondRuntimeToolCallAdapter,
 } from "./index.js";
 
 describe("HarborClient", () => {
@@ -234,9 +237,7 @@ describe("PaybondSpendGuard", () => {
       tenant: "tenant-a",
       intentId,
     });
-    const guard = new PaybondSpendGuard(
-      new PaybondCapabilityBinding(harbor, intentId, "cap-token"),
-    );
+    const guard = new PaybondSpendGuard({ harbor, intentId, capabilityToken: "cap-token" });
     const tool = vi.fn(async (city: string) => ({ city }));
     await expect(
       guard.guardTool(
@@ -258,14 +259,71 @@ describe("PaybondSpendGuard", () => {
       code: "policy_mismatch",
       message: "budget exceeded",
     });
-    const guard = new PaybondSpendGuard(
-      new PaybondCapabilityBinding(harbor, intentId, "cap-token"),
-    );
+    const guard = new PaybondSpendGuard({ harbor, intentId, capabilityToken: "cap-token" });
     const tool = vi.fn(async () => "ok");
     await expect(
       guard.guardTool({ operation: "travel.book_hotel" }, tool)(),
     ).rejects.toBeInstanceOf(PaybondSpendDeniedError);
     expect(tool).not.toHaveBeenCalled();
+  });
+
+  it("exports runtime-neutral guard aliases", () => {
+    expect(paybondAgentToolSpendGuard).toBe(guardTool);
+    expect(paybondRuntimeNeutralToolSpendGuard).toBe(guardTool);
+  });
+
+  it("adapts generic runtime tool-call objects", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const verify = vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
+      allow: true,
+      auditId: "550e8400-e29b-41d4-a716-446655440001",
+      tenant: "tenant-a",
+      intentId,
+    });
+    const execute = vi.fn(async (call: { name: string; spend: number; city: string }) => ({
+      confirmation: `demo-${call.city}`,
+    }));
+    const run = paybondRuntimeToolCallAdapter({
+      source: { harbor, intentId, capabilityToken: "cap-token" },
+      operation: (call: { name: string }) => call.name,
+      requestedSpendCents: (call: { spend: number }) => call.spend,
+      execute,
+    });
+
+    await expect(
+      run({ name: "travel.book_hotel", spend: 20_000, city: "NYC" }),
+    ).resolves.toEqual({ confirmation: "demo-NYC" });
+    expect(verify).toHaveBeenCalledWith({
+      intentId,
+      token: "cap-token",
+      operation: "travel.book_hotel",
+      requestedSpendCents: 20_000,
+    });
+    expect(execute).toHaveBeenCalledOnce();
+  });
+
+  it("lets runtime adapters map denial to framework-specific output", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
+      allow: false,
+      auditId: "550e8400-e29b-41d4-a716-446655440001",
+      tenant: "tenant-a",
+      intentId,
+      code: "policy_mismatch",
+      message: "budget exceeded",
+    });
+    const execute = vi.fn(async () => ({ status: "ok" }));
+    const run = paybondRuntimeToolCallAdapter({
+      source: { harbor, intentId, capabilityToken: "cap-token" },
+      operation: "travel.book_hotel",
+      execute,
+      onDeny: (result) => ({ status: "blocked", reason: result.message }),
+    });
+
+    await expect(run({})).resolves.toEqual({ status: "blocked", reason: "budget exceeded" });
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 

@@ -847,6 +847,12 @@ export class PaybondCapabilityBinding {
   }
 }
 
+export type PaybondSpendGuardInit = {
+  harbor: Pick<HarborClient | GatewayHarborClient, "tenantId" | "verifyCapability">;
+  intentId: string;
+  capabilityToken: string;
+};
+
 export type PaybondSpendAuthorizationInput = {
   operation: string;
   requestedSpendCents?: number;
@@ -872,14 +878,27 @@ export type PaybondGuardedToolHandler<TArgs extends unknown[], TResult> = (
 ) => Promise<Awaited<TResult>>;
 
 export class PaybondSpendGuard {
-  constructor(public readonly binding: PaybondCapabilityBinding) {}
+  public readonly harbor: Pick<HarborClient | GatewayHarborClient, "tenantId" | "verifyCapability">;
+  public readonly intentId: string;
+  public readonly capabilityToken: string;
+
+  constructor(init: PaybondSpendGuardInit | PaybondCapabilityBinding) {
+    this.harbor = init.harbor;
+    this.intentId = init.intentId;
+    this.capabilityToken = init.capabilityToken;
+  }
 
   async verifySpendCapability(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
-    return this.binding.verifySpendCapability(input);
+    return this.harbor.verifyCapability({
+      intentId: this.intentId,
+      token: this.capabilityToken,
+      operation: input.operation,
+      requestedSpendCents: input.requestedSpendCents,
+    });
   }
 
   async authorizeSpend(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
-    return this.binding.authorizeSpend(input);
+    return this.verifySpendCapability(input);
   }
 
   async assertSpendAuthorized(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
@@ -902,28 +921,79 @@ export class PaybondSpendGuard {
 }
 
 export async function authorizeSpend(
-  binding: PaybondCapabilityBinding,
+  source: PaybondSpendGuardInit | PaybondCapabilityBinding,
   input: PaybondSpendAuthorizationInput,
 ): Promise<VerifyCapabilityResult> {
-  return binding.authorizeSpend(input);
+  return new PaybondSpendGuard(source).authorizeSpend(input);
 }
 
 export function guardTool<TArgs extends unknown[], TResult>(
-  binding: PaybondCapabilityBinding,
+  source: PaybondSpendGuardInit | PaybondCapabilityBinding,
   input: PaybondSpendAuthorizationInput,
   handler: PaybondToolHandler<TArgs, TResult>,
 ): PaybondGuardedToolHandler<TArgs, TResult> {
-  return new PaybondSpendGuard(binding).guardTool(input, handler);
+  return new PaybondSpendGuard(source).guardTool(input, handler);
 }
 
-export const paybondOpenAIToolSpendGuard = guardTool;
-export const paybondAnthropicToolSpendGuard = guardTool;
-export const paybondClaudeToolSpendGuard = guardTool;
-export const paybondGeminiToolSpendGuard = guardTool;
-export const paybondGoogleAIToolSpendGuard = guardTool;
-export const paybondVercelAIToolSpendGuard = guardTool;
+export const paybondAgentToolSpendGuard = guardTool;
+export const paybondRuntimeNeutralToolSpendGuard = guardTool;
 export const paybondLangGraphToolSpendGuard = guardTool;
 export const paybondMCPToolSpendGuard = guardTool;
+
+export type PaybondRuntimeOperation<TCall> = string | ((call: TCall) => string);
+export type PaybondRuntimeSpendCents<TCall> = number | ((call: TCall) => number | undefined);
+export type PaybondRuntimeToolExecutor<TCall, TResult> = (
+  call: TCall,
+) => TResult | Promise<TResult>;
+export type PaybondRuntimeDenyHandler<TCall, TResult> = (
+  result: VerifyCapabilityResult,
+  call: TCall,
+) => TResult | Promise<TResult>;
+
+export type PaybondRuntimeToolCallAdapterInit<TCall, TResult> = {
+  source: PaybondSpendGuardInit | PaybondCapabilityBinding;
+  operation: PaybondRuntimeOperation<TCall>;
+  execute: PaybondRuntimeToolExecutor<TCall, TResult>;
+  requestedSpendCents?: PaybondRuntimeSpendCents<TCall>;
+  onDeny?: PaybondRuntimeDenyHandler<TCall, TResult>;
+};
+
+function resolveRuntimeOperation<TCall>(operation: PaybondRuntimeOperation<TCall>, call: TCall): string {
+  const value = typeof operation === "function" ? operation(call) : operation;
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    throw new Error("Paybond operation must be a non-empty string");
+  }
+  return trimmed;
+}
+
+function resolveRuntimeSpendCents<TCall>(
+  requestedSpendCents: PaybondRuntimeSpendCents<TCall> | undefined,
+  call: TCall,
+): number | undefined {
+  if (requestedSpendCents === undefined) {
+    return undefined;
+  }
+  return typeof requestedSpendCents === "function" ? requestedSpendCents(call) : requestedSpendCents;
+}
+
+export function paybondRuntimeToolCallAdapter<TCall, TResult>(
+  init: PaybondRuntimeToolCallAdapterInit<TCall, TResult>,
+): (call: TCall) => Promise<Awaited<TResult>> {
+  const guard = new PaybondSpendGuard(init.source);
+  return async (call: TCall): Promise<Awaited<TResult>> => {
+    const operation = resolveRuntimeOperation(init.operation, call);
+    const requestedSpendCents = resolveRuntimeSpendCents(init.requestedSpendCents, call);
+    const result = await guard.authorizeSpend({ operation, requestedSpendCents });
+    if (!result.allow) {
+      if (init.onDeny) {
+        return await init.onDeny(result, call);
+      }
+      throw new PaybondSpendDeniedError(result);
+    }
+    return await init.execute(call);
+  };
+}
 
 export type PaybondOpenOptions = {
   apiKey: string;
@@ -2918,7 +2988,7 @@ export class Paybond {
   }
 
   spendGuard(intentId: string, capabilityToken: string): PaybondSpendGuard {
-    return new PaybondSpendGuard(new PaybondCapabilityBinding(this.harbor, intentId, capabilityToken));
+    return new PaybondSpendGuard({ harbor: this.harbor, intentId, capabilityToken });
   }
 
   async authorizeSpend(input: {

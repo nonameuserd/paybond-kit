@@ -557,6 +557,8 @@ export class PaybondMCPServer {
             },
             instructions:
               "This MCP server is tenant-bound to the configured Paybond service-account API key. " +
+              "Use paybond_create_spend_intent or paybond_fund_intent to obtain the intent_id and " +
+              "capability_token, then call paybond_authorize_agent_spend before side-effecting tools. " +
               "It works with any MCP-compatible host and does not assume a specific model provider.",
           },
         };
@@ -646,11 +648,14 @@ export class PaybondMCPServer {
       {
         name: "paybond_verify_capability",
         description:
-          "Verify a capability token for one tenant-bound Harbor intent through the gateway compatibility route.",
+          "Verify a capability token returned by a created or funded Paybond intent for one tenant-bound Harbor intent.",
         inputSchema: objectSchema(
           {
             intent_id: { type: "string", description: "Canonical Harbor intent UUID." },
-            token: { type: "string", description: "Capability token to verify." },
+            token: {
+              type: "string",
+              description: "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
+            },
             operation: { type: "string", description: "Delegated operation or tool name." },
             requested_spend_cents: {
               type: "integer",
@@ -673,11 +678,14 @@ export class PaybondMCPServer {
       {
         name: "paybond_authorize_agent_spend",
         description:
-          "Authorize delegated agent spend before a side-effecting tool, paid API, vendor action, or settlement workflow executes.",
+          "Provider-agnostic spend gate: verify the funded intent's capability token before a side-effecting tool, paid API, vendor action, or settlement workflow executes.",
         inputSchema: objectSchema(
           {
             intent_id: { type: "string", description: "Canonical Harbor intent UUID." },
-            token: { type: "string", description: "Capability token to verify." },
+            token: {
+              type: "string",
+              description: "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
+            },
             operation: { type: "string", description: "Delegated operation or tool name." },
             requested_spend_cents: {
               type: "integer",
@@ -918,7 +926,7 @@ export class PaybondMCPServer {
       {
         name: "paybond_create_spend_intent",
         description:
-          "Create a signed Paybond spend intent through the gateway /harbor route. Use this when an agent workflow needs bounded budget, allowed operations, evidence, and settlement review.",
+          "Create a signed Paybond spend intent through the gateway /harbor route. Use this when an agent workflow needs bounded budget, allowed operations, evidence, and settlement review. If the selected rail funds immediately, use the returned intent_id and capability_token with paybond_authorize_agent_spend.",
         inputSchema: objectSchema(
           {
             body: { type: "object", additionalProperties: true },
@@ -937,7 +945,7 @@ export class PaybondMCPServer {
       {
         name: "paybond_fund_intent",
         description:
-          "Advance Harbor funding through the gateway /harbor path with a replay-safe recognition proof.",
+          "Advance Harbor funding through the gateway /harbor path with a replay-safe recognition proof. When funding succeeds, use the returned capability_token with intent_id in paybond_authorize_agent_spend.",
         inputSchema: objectSchema(
           {
             intent_id: { type: "string" },

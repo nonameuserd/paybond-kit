@@ -17,7 +17,9 @@ describe("PaybondMCPServer", () => {
       gatewayBaseUrl: "https://gateway.test",
       apiKey: apiKey(),
     });
-    const names = new Set(server.listTools().map((tool) => String(tool.name)));
+    const tools = server.listTools();
+    const names = new Set(tools.map((tool) => String(tool.name)));
+    const toolByName = new Map(tools.map((tool) => [String(tool.name), tool]));
     expect(names.has("paybond_get_a2a_agent_card")).toBe(true);
     expect(names.has("paybond_get_principal")).toBe(true);
     expect(names.has("paybond_get_signed_portfolio_artifact")).toBe(true);
@@ -33,6 +35,15 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_submit_evidence")).toBe(true);
     expect(names.has("paybond_submit_spend_evidence")).toBe(true);
     expect(names.has("paybond_create_intent_legacy")).toBe(false);
+    expect(toolByName.get("paybond_authorize_agent_spend")?.description).toContain(
+      "Provider-agnostic spend gate",
+    );
+    expect(toolByName.get("paybond_create_spend_intent")?.description).toContain(
+      "intent_id and capability_token",
+    );
+    expect(toolByName.get("paybond_fund_intent")?.description).toContain(
+      "paybond_authorize_agent_spend",
+    );
   });
 
   it("returns gateway principal through the MCP tool", async () => {

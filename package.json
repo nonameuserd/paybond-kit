@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Paybond Kit for TypeScript: agent spend controls, hosted Gateway sessions, capability verification, signed intent/evidence flows, and Stripe Connect or x402 / USDC-on-Base settlement.",
   "license": "Apache-2.0",
   "type": "module",
@@ -47,7 +47,6 @@
     "delegated-spend",
     "spend-guardrails",
     "tool-call-spend-limits",
-    "openai-agents",
     "gemini",
     "claude",
     "anthropic",

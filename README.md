@@ -64,15 +64,33 @@ try {
 Use Paybond Kit when an agent workflow needs delegated spend guardrails, tool-call budget checks, paid API or vendor action approval, evidence, release/refund logic, disputes, or audit-ready receipts.
 
 ```ts
-import { PaybondCapabilityBinding, PaybondSpendGuard } from "@paybond/kit";
+import { Paybond } from "@paybond/kit";
 
-const binding = new PaybondCapabilityBinding(paybond.harbor, intentId, capabilityToken);
-const guard = new PaybondSpendGuard(binding);
+const paybond = await Paybond.open({
+  apiKey: process.env.PAYBOND_API_KEY!,
+  expectedEnvironment: "sandbox",
+});
+
+const created = await paybond.intents.create({
+  // principal, payee, budget, predicate, evidence schema, deadline...
+  allowedTools: ["travel.book_hotel"],
+  settlementRail: "stripe_connect",
+});
+
+const intentId = String(created.intent_id);
+const capabilityToken = String(created.capability_token ?? "");
+if (!capabilityToken) {
+  throw new Error("fund the intent before guarding tools");
+}
+
+const guard = paybond.spendGuard(intentId, capabilityToken);
 const guardedTool = guard.guardTool(
   { operation: "travel.book_hotel", requestedSpendCents: 20_000 },
   async (input) => bookHotel(input),
 );
 ```
+
+The `paybond.harbor` client is created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Normal integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
 
 Scaffold a wrapper:
 
@@ -89,7 +107,8 @@ Core SDK:
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
 - `PaybondSpendGuard`, `authorizeSpend`, and `guardTool` for spend-named wrappers around capability verification
-- Provider and framework aliases: `paybondOpenAIToolSpendGuard`, `paybondGeminiToolSpendGuard`, `paybondClaudeToolSpendGuard`, `paybondAnthropicToolSpendGuard`, `paybondGoogleAIToolSpendGuard`, `paybondVercelAIToolSpendGuard`, `paybondLangGraphToolSpendGuard`, and `paybondMCPToolSpendGuard`
+- Runtime-neutral and framework aliases: `paybondAgentToolSpendGuard`, `paybondRuntimeNeutralToolSpendGuard`, `paybondLangGraphToolSpendGuard`, and `paybondMCPToolSpendGuard`
+- `paybondRuntimeToolCallAdapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor
 
 Gateway and trust helpers:
 
@@ -116,7 +135,7 @@ Gateway-backed protocol helpers throw `ProtocolHttpError` with parsed `errorCode
 ## What it does not include
 
 - No operator-tier settlement or console workflows
-- No model-provider-specific TypeScript agent wrapper; use the documented app-side wrapper pattern with `PaybondCapabilityBinding`
+- No model-provider-specific TypeScript agent wrapper; use the documented app-side wrapper pattern with `paybond.spendGuard(...)`
 - No model-provider-specific MCP wrapper; the MCP server is host-agnostic and works with any MCP-compatible runtime
 
 ## Docs

@@ -11,7 +11,7 @@ declare const process: {
 type Framework =
   | "generic"
   | "provider-agnostic"
-  | "openai-agents"
+  | "openai"
   | "claude"
   | "anthropic"
   | "gemini"
@@ -23,7 +23,7 @@ type Framework =
 const FRAMEWORKS = new Set<Framework>([
   "generic",
   "provider-agnostic",
-  "openai-agents",
+  "openai",
   "claude",
   "anthropic",
   "gemini",
@@ -36,7 +36,7 @@ const FRAMEWORKS = new Set<Framework>([
 const FRAMEWORK_NOTES: Record<Framework, string> = {
   generic: "Wrap the returned function around any side-effecting tool handler.",
   "provider-agnostic": "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-  "openai-agents": "Register the guarded handler where your OpenAI Agents tool handler is defined.",
+  openai: "Call the guarded handler before the OpenAI tool call performs paid or external work.",
   claude: "Call the guarded handler before the Claude tool-use action performs paid or external work.",
   anthropic: "Call the guarded handler before the Anthropic tool-use action performs paid or external work.",
   gemini: "Call the guarded handler before the Gemini function call performs paid or external work.",
@@ -48,7 +48,7 @@ const FRAMEWORK_NOTES: Record<Framework, string> = {
 
 function usage(): string {
   return [
-    "Usage: paybond-init [--framework generic|provider-agnostic|openai-agents|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp] [--out paybond-spend-guard.ts] [--force]",
+    "Usage: paybond-init [--framework generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp] [--out paybond-spend-guard.ts] [--force]",
     "",
     "Scaffolds a Paybond spend guard wrapper for delegated agent spend controls.",
   ].join("\n");
@@ -93,12 +93,43 @@ function parseArgs(argv: string[]): { framework: Framework; out: string; force: 
 }
 
 function template(framework: Framework): string {
-  return `import { Paybond, PaybondCapabilityBinding, PaybondSpendGuard } from "@paybond/kit";
+  return `import { Paybond, type FundIntentResult } from "@paybond/kit";
 
 type ToolInput = {
   city: string;
   maxPriceCents: number;
 };
+
+type FundedIntent = {
+  intentId: string;
+  capabilityToken: string;
+};
+
+export async function openPaybond(): Promise<Paybond> {
+  return Paybond.open({
+    apiKey: process.env.PAYBOND_API_KEY!,
+    expectedEnvironment: "sandbox",
+  });
+}
+
+export function fundedIntentFromCreate(created: Record<string, unknown>): FundedIntent {
+  const intentId = String(created["intent_id"] ?? "");
+  const capabilityToken = String(created["capability_token"] ?? "");
+  if (!intentId) {
+    throw new Error("intent create response missing intent_id");
+  }
+  if (!capabilityToken) {
+    throw new Error("intent is not funded yet; call paybond.intents.fund(...) before guarding tools");
+  }
+  return { intentId, capabilityToken };
+}
+
+export function fundedIntentFromFund(funded: FundIntentResult): FundedIntent {
+  if (!funded.capabilityToken) {
+    throw new Error("intent funding did not return a capabilityToken yet");
+  }
+  return { intentId: funded.intentId, capabilityToken: funded.capabilityToken };
+}
 
 async function bookHotel(input: ToolInput): Promise<{ confirmation: string }> {
   // Put the side-effecting tool call here.
@@ -106,19 +137,14 @@ async function bookHotel(input: ToolInput): Promise<{ confirmation: string }> {
 }
 
 export async function buildGuardedHotelTool(params: {
+  paybond: Paybond;
   intentId: string;
   capabilityToken: string;
 }): Promise<(input: ToolInput) => Promise<{ confirmation: string }>> {
-  const paybond = await Paybond.open({
-    apiKey: process.env.PAYBOND_API_KEY!,
-    expectedEnvironment: "sandbox",
-  });
-  const binding = new PaybondCapabilityBinding(
-    paybond.harbor,
-    params.intentId,
-    params.capabilityToken,
-  );
-  const guard = new PaybondSpendGuard(binding);
+  if (!params.capabilityToken.trim()) {
+    throw new Error("fund the intent before guarding tools");
+  }
+  const guard = params.paybond.spendGuard(params.intentId, params.capabilityToken);
 
   // ${FRAMEWORK_NOTES[framework]}
   return guard.guardTool(
