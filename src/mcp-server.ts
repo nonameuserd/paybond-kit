@@ -4,9 +4,8 @@ import {
   GatewayAuthError,
   GatewayFraudClient,
   GatewaySignalClient,
-  HarborHttpError,
-  ServiceAccountHarborSession,
   SignalHttpError,
+  DEFAULT_PAYBOND_GATEWAY_BASE_URL,
 } from "./index.js";
 
 declare const process: {
@@ -32,7 +31,6 @@ declare const Buffer: {
 const SERVER_NAME = "Paybond MCP";
 const SERVER_VERSION = "0.6.0";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
-const DEFAULT_HARBOR_ACCESS_PATH = "/v1/auth/harbor-access";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
 const agentRecognitionProofHeader = "x-paybond-agent-recognition-proof";
@@ -70,13 +68,10 @@ type MCPCallToolResult = {
 };
 
 export type PaybondMCPSettings = {
-  gatewayBaseUrl: string;
   apiKey: string;
-  harborBaseUrl?: string;
-  harborAccessPath?: string;
+  gatewayBaseUrl?: string;
   principalPath?: string;
   maxRetries?: number;
-  clockSkewSeconds?: number;
 };
 
 class GatewayHTTPError extends Error {
@@ -204,23 +199,18 @@ class GatewayAPIClient {
 }
 
 class PaybondMCPRuntime {
-  private readonly settings: Required<Pick<PaybondMCPSettings, "gatewayBaseUrl" | "apiKey" | "harborAccessPath" | "principalPath" | "maxRetries" | "clockSkewSeconds">> &
-    Pick<PaybondMCPSettings, "harborBaseUrl">;
+  private readonly settings: Required<Pick<PaybondMCPSettings, "gatewayBaseUrl" | "apiKey" | "principalPath" | "maxRetries">>;
   private readonly gateway: GatewayAPIClient;
   private principalValue: Promise<Record<string, unknown>> | null = null;
   private signalValue: Promise<GatewaySignalClient> | null = null;
   private fraudValue: Promise<GatewayFraudClient> | null = null;
-  private harborValue: Promise<ServiceAccountHarborSession> | null = null;
 
   constructor(settings: PaybondMCPSettings) {
     this.settings = {
-      gatewayBaseUrl: settings.gatewayBaseUrl,
+      gatewayBaseUrl: settings.gatewayBaseUrl ?? DEFAULT_PAYBOND_GATEWAY_BASE_URL,
       apiKey: settings.apiKey,
-      harborBaseUrl: settings.harborBaseUrl,
-      harborAccessPath: settings.harborAccessPath ?? DEFAULT_HARBOR_ACCESS_PATH,
       principalPath: settings.principalPath ?? DEFAULT_PRINCIPAL_PATH,
       maxRetries: Math.max(1, settings.maxRetries ?? 3),
-      clockSkewSeconds: Math.max(0, settings.clockSkewSeconds ?? 90),
     };
     this.gateway = new GatewayAPIClient({
       gatewayBaseUrl: this.settings.gatewayBaseUrl,
@@ -259,21 +249,6 @@ class PaybondMCPRuntime {
         maxRetries: this.settings.maxRetries,
       }))();
     return this.fraudValue;
-  }
-
-  async harbor(): Promise<ServiceAccountHarborSession> {
-    if (!this.settings.harborBaseUrl) {
-      throw new Error("PAYBOND_HARBOR_URL is required for direct Harbor mutation tools");
-    }
-    this.harborValue ??= ServiceAccountHarborSession.open({
-      gatewayBaseUrl: this.settings.gatewayBaseUrl,
-      apiKey: this.settings.apiKey,
-      harborBaseUrl: this.settings.harborBaseUrl,
-      harborAccessPath: this.settings.harborAccessPath,
-      clockSkewSeconds: this.settings.clockSkewSeconds,
-      maxRetries: this.settings.maxRetries,
-    });
-    return this.harborValue;
   }
 
   async listIntents(init: {
@@ -512,9 +487,6 @@ export class PaybondMCPServer {
   private initialized = false;
 
   constructor(settings: PaybondMCPSettings) {
-    if (!settings.gatewayBaseUrl.trim()) {
-      throw new Error("PAYBOND_GATEWAY_URL is required");
-    }
     if (!settings.apiKey.trim()) {
       throw new Error("PAYBOND_API_KEY is required");
     }
@@ -981,95 +953,22 @@ export class PaybondMCPServer {
       },
     ];
 
-    if (settings.harborBaseUrl?.trim()) {
-      tools.push(
-        {
-          name: "paybond_create_intent_legacy",
-          description:
-            "Legacy direct-Harbor fallback for POST /intents. Prefer paybond_create_intent unless you explicitly need PAYBOND_HARBOR_URL direct mode.",
-          inputSchema: objectSchema(
-            {
-              body: { type: "object", additionalProperties: true },
-              idempotency_key: { type: "string" },
-            },
-            ["body"],
-          ),
-          call: async (args) =>
-            (await this.runtime.harbor()).harbor.createIntent(
-              ensureObject(args.body, "body"),
-              { idempotencyKey: optionalString(args.idempotency_key) },
-            ),
-        },
-        {
-          name: "paybond_fund_intent_legacy",
-          description:
-            "Legacy direct-Harbor fallback for POST /intents/{intent_id}/fund.",
-          inputSchema: objectSchema(
-            {
-              intent_id: { type: "string" },
-              payment_signature: { type: "string" },
-              idempotency_key: { type: "string" },
-            },
-            ["intent_id"],
-          ),
-          call: async (args) =>
-            jsonObjectFromValue(
-              await (await this.runtime.harbor()).harbor.fundIntent(
-                uuidArg(args.intent_id, "intent_id"),
-                {
-                  paymentSignature: optionalString(args.payment_signature),
-                  idempotencyKey: optionalString(args.idempotency_key),
-                },
-              ),
-            ),
-        },
-        {
-          name: "paybond_submit_evidence_legacy",
-          description:
-            "Legacy direct-Harbor fallback for POST /intents/{intent_id}/evidence.",
-          inputSchema: objectSchema(
-            {
-              intent_id: { type: "string" },
-              body: { type: "object", additionalProperties: true },
-              idempotency_key: { type: "string" },
-            },
-            ["intent_id", "body"],
-          ),
-          call: async (args) =>
-            (await this.runtime.harbor()).harbor.submitEvidence(
-              uuidArg(args.intent_id, "intent_id"),
-              ensureObject(args.body, "body"),
-              { idempotencyKey: optionalString(args.idempotency_key) },
-            ),
-        },
-      );
-    }
-
     return tools;
   }
 }
 
 export function settingsFromEnv(env: Record<string, string | undefined> = process.env): PaybondMCPSettings {
-  const gatewayBaseUrl = String(env.PAYBOND_GATEWAY_URL ?? "").trim();
   const apiKey = String(env.PAYBOND_API_KEY ?? "").trim();
-  if (!gatewayBaseUrl) {
-    throw new Error("PAYBOND_GATEWAY_URL is required");
-  }
   if (!apiKey) {
     throw new Error("PAYBOND_API_KEY is required");
   }
   return {
-    gatewayBaseUrl,
+    gatewayBaseUrl: DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     apiKey,
-    harborBaseUrl: optionalEnv(env.PAYBOND_HARBOR_URL),
-    harborAccessPath: optionalEnv(env.PAYBOND_HARBOR_ACCESS_PATH) ?? DEFAULT_HARBOR_ACCESS_PATH,
     principalPath: optionalEnv(env.PAYBOND_PRINCIPAL_PATH) ?? DEFAULT_PRINCIPAL_PATH,
     maxRetries: optionalEnv(env.PAYBOND_MCP_MAX_RETRIES)
       ? intArg(optionalEnv(env.PAYBOND_MCP_MAX_RETRIES), "PAYBOND_MCP_MAX_RETRIES")
       : 3,
-    clockSkewSeconds: optionalEnv(env.PAYBOND_MCP_CLOCK_SKEW_SECONDS)
-      ? numberArg(optionalEnv(env.PAYBOND_MCP_CLOCK_SKEW_SECONDS), "PAYBOND_MCP_CLOCK_SKEW_SECONDS")
-      : 90,
   };
 }
 
@@ -1077,7 +976,7 @@ export function main(argv: string[] = process.argv.slice(2)): number {
   if (argv.includes("--help")) {
     process.stderr.write(
       "Usage: paybond-mcp-server\n\n" +
-        "Runs the tenant-bound Paybond MCP server over stdio using PAYBOND_GATEWAY_URL and PAYBOND_API_KEY.\n",
+        "Runs the tenant-bound Paybond MCP server over stdio using PAYBOND_API_KEY.\n",
     );
     return 0;
   }
@@ -1135,19 +1034,6 @@ function intArg(value: unknown, field: string): number {
         : Number.NaN;
   if (!Number.isInteger(parsed)) {
     throw new Error(`${field} must be an integer`);
-  }
-  return parsed;
-}
-
-function numberArg(value: unknown, field: string): number {
-  const parsed =
-    typeof value === "number"
-      ? value
-      : typeof value === "string" && value.trim()
-        ? Number(value)
-        : Number.NaN;
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`${field} must be numeric`);
   }
   return parsed;
 }
@@ -1246,7 +1132,6 @@ function formatError(err: unknown): string {
     err instanceof Error ||
     err instanceof GatewayAuthError ||
     err instanceof GatewayHTTPError ||
-    err instanceof HarborHttpError ||
     err instanceof SignalHttpError
   ) {
     return err.message;

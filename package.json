@@ -1,7 +1,7 @@
 {
   "name": "@paybond/kit",
-  "version": "0.6.1",
-  "description": "Paybond Kit for TypeScript: tenant-bound Harbor sessions, capability verification, and signed intent/evidence flows.",
+  "version": "0.7.0",
+  "description": "Paybond Kit for TypeScript: hosted Gateway sessions, capability verification, signed intent/evidence flows, and Stripe Connect or x402 / USDC-on-Base settlement.",
   "license": "Apache-2.0",
   "type": "module",
   "main": "dist/index.js",

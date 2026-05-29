@@ -3,11 +3,11 @@ import {
   GatewayA2AClient,
   GatewayAuthError,
   GatewayFraudClient,
-  GatewayHarborTokenProvider,
   GatewayProtocolClient,
   GatewaySignalClient,
   HarborClient,
   HarborHttpError,
+  Paybond,
   PaybondIntents,
   ProtocolHttpError,
   ServiceAccountFraudSession,
@@ -158,64 +158,6 @@ describe("HarborClient", () => {
   });
 });
 
-describe("GatewayHarborTokenProvider", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.restoreAllMocks();
-  });
-
-  it("parses tenant_id and access_token", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            access_token: "jwt-here",
-            token_type: "Bearer",
-            expires_in: 3600,
-            tenant_id: "realm-z",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      ),
-    );
-    const mono = { t: 0 };
-    const p = new GatewayHarborTokenProvider({
-      gatewayBaseUrl: "https://gw.test",
-      apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
-      clock: () => {
-        mono.t += 1_000_000;
-        return mono.t;
-      },
-    });
-    const tenant = await p.ensureInitial();
-    expect(tenant).toBe("realm-z");
-    const tok = await p.bearer();
-    expect(tok).toBe("jwt-here");
-  });
-
-  it("raises when tenant_id missing", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            access_token: "jwt-here",
-            token_type: "Bearer",
-            expires_in: 3600,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
-      ),
-    );
-    const p = new GatewayHarborTokenProvider({
-      gatewayBaseUrl: "https://gw.test",
-      apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
-    });
-    await expect(p.ensureInitial()).rejects.toBeInstanceOf(GatewayAuthError);
-  });
-});
-
 describe("PaybondIntents", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -236,6 +178,7 @@ describe("PaybondIntents", () => {
       intentId,
       payeeDid: "did:web:example.com#payee",
       payeeSigningSeed: new Uint8Array(32),
+      recognitionProof: {},
       payload: { ok: true },
     });
 
@@ -244,6 +187,59 @@ describe("PaybondIntents", () => {
     expect(calledIntentId).toBe(intentId);
     expect(body.artifacts).toEqual([]);
     expect(body.submitted_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
+  });
+});
+
+describe("Paybond", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("opens with only an API key and uses the hosted gateway", async () => {
+    const intent = "550e8400-e29b-41d4-a716-446655440000";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe(
+          "Bearer paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+        );
+        if (url === "https://api.paybond.ai/v1/auth/principal") {
+          return new Response(
+            JSON.stringify({ tenant_id: "realm-z", environment: "sandbox" }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        expect(url).toBe("https://api.paybond.ai/verify");
+        expect(headers.get("x-tenant-id")).toBe("realm-z");
+        return new Response(
+          JSON.stringify({
+            allow: true,
+            audit_id: "550e8400-e29b-41d4-a716-446655440001",
+            tenant: "realm-z",
+            intent_id: intent,
+            code: null,
+            message: null,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const paybond = await Paybond.open({
+      apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      expectedEnvironment: "sandbox",
+    });
+    expect(paybond.harbor.tenantId).toBe("realm-z");
+    await expect(
+      paybond.harbor.verifyCapability({
+        intentId: intent,
+        token: "Cg==",
+        operation: "demo.tool",
+      }),
+    ).resolves.toMatchObject({ allow: true, tenant: "realm-z" });
   });
 });
 
@@ -1022,6 +1018,7 @@ describe("ServiceAccountSignalSession", () => {
         new Response(
           JSON.stringify({
             tenant_id: "realm-z",
+            environment: "sandbox",
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         ),
@@ -1030,6 +1027,7 @@ describe("ServiceAccountSignalSession", () => {
     const session = await ServiceAccountSignalSession.open({
       gatewayBaseUrl: "https://gw.test",
       apiKey: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      expectedEnvironment: "sandbox",
     });
     expect(session.signal.tenantId).toBe("realm-z");
   });

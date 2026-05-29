@@ -1,6 +1,6 @@
 # `@paybond/kit`
 
-Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations. It opens gateway-authenticated Harbor sessions, verifies capability tokens, signs intent and evidence payloads, funds x402 / USDC-on-Base intents, and reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data.
+Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations. It opens hosted Gateway sessions, verifies capability tokens, signs intent and evidence payloads, uses Stripe Connect or x402 / USDC-on-Base settlement rails, and reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data.
 
 ## Install
 
@@ -17,17 +17,14 @@ npm install @paybond/kit
 ## Requirements
 
 - Node.js 22+
-- A `paybond_sk_...` service-account API key
-- Reachable Gateway and Harbor base URLs
+- A `paybond_sk_sandbox_...` or `paybond_sk_live_...` service-account API key
 - For capability verification: a funded intent id and a capability token minted for that intent
 - For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
 
 Minimal environment for the quick start:
 
 ```bash
-export PAYBOND_GATEWAY_URL="https://gateway.example.com"
-export PAYBOND_HARBOR_URL="https://harbor.example.com"
-export PAYBOND_API_KEY="paybond_sk_..."
+export PAYBOND_API_KEY="paybond_sk_sandbox_..."
 ```
 
 Optional, if you want the quick start to verify a capability:
@@ -39,7 +36,7 @@ export PAYBOND_CAPABILITY="base64-biscuit-token"
 
 ## Tenant isolation
 
-Every session is bound to the tenant realm echoed by gateway-authenticated service-account introspection and Harbor access exchange flows.
+Every session is bound to the tenant realm echoed by gateway-authenticated service-account introspection.
 
 - Do not pass tenant ids by hand for normal SDK usage.
 - Construct one `Paybond` session per tenant/service account.
@@ -59,9 +56,8 @@ function requiredEnv(name: string): string {
 }
 
 const paybond = await Paybond.open({
-  gatewayBaseUrl: requiredEnv("PAYBOND_GATEWAY_URL"),
   apiKey: requiredEnv("PAYBOND_API_KEY"),
-  harborBaseUrl: requiredEnv("PAYBOND_HARBOR_URL"),
+  expectedEnvironment: "sandbox",
 });
 
 try {
@@ -91,7 +87,7 @@ try {
 
 Core SDK:
 
-- `Paybond.open(...)` for gateway-authenticated, tenant-derived Harbor sessions
+- `Paybond.open(...)` for API-key-only, tenant-derived hosted sessions
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
 - `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission

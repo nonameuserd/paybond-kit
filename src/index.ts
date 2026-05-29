@@ -1,6 +1,6 @@
 /**
- * Paybond Kit — TypeScript Harbor client with tenant binding, retries, optional upstream JWT,
- * and gateway service-account token exchange (`POST /v1/auth/harbor-access`).
+ * Paybond Kit — TypeScript Gateway client with tenant binding, retries, capability verification,
+ * and signed intent/evidence helpers.
  */
 
 import {
@@ -72,7 +72,14 @@ export type FundIntentResult = {
   funding?: IntentFundingResult;
 };
 
-/** Async supplier for short-lived Harbor JWTs minted by the Paybond gateway. */
+export const DEFAULT_PAYBOND_GATEWAY_BASE_URL = "https://api.paybond.ai";
+
+function defaultGatewayBaseUrl(value?: string): string {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : DEFAULT_PAYBOND_GATEWAY_BASE_URL;
+}
+
+/** Async supplier for upstream Harbor bearer tokens on low-level direct clients. */
 export type HarborBearerSupplier = () => Promise<string | null | undefined>;
 
 /**
@@ -93,7 +100,7 @@ export class HarborHttpError extends Error {
 }
 
 /**
- * Gateway rejected the service-account exchange or returned an unusable harbor-access payload.
+ * Gateway rejected service-account credentials or returned an unusable tenant-principal payload.
  */
 export class GatewayAuthError extends Error {
   readonly statusCode: number | undefined;
@@ -787,125 +794,32 @@ function parseRetryAfterSeconds(v: string | null): number | null {
   return Math.min(n, 30);
 }
 
-const DEFAULT_HARBOR_ACCESS_PATH = "/v1/auth/harbor-access";
+export type PaybondEnvironment = "live" | "sandbox";
 
-/**
- * Exchanges a `paybond_sk_` API key for short-lived Harbor JWTs and caches tenant realm from the
- * gateway response (no separate tenant env var for the default path).
- */
-export class GatewayHarborTokenProvider {
-  private readonly gatewayBase: string;
-  private readonly apiKey: string;
-  private readonly path: string;
-  private readonly skewMs: number;
-  private readonly clock: () => number;
-  private token: string | null = null;
-  private tenantIdValue: string | null = null;
-  private notAfterMonotonic = 0;
-  private refreshTail: Promise<void> = Promise.resolve();
-
-  constructor(init: {
-    gatewayBaseUrl: string;
-    apiKey: string;
-    harborAccessPath?: string;
-    clockSkewSeconds?: number;
-    /** Injectable monotonic clock (milliseconds) for tests. */
-    clock?: () => number;
-  }) {
-    this.gatewayBase = normalizeBase(init.gatewayBaseUrl);
-    this.apiKey = init.apiKey.trim();
-    const rawPath = (init.harborAccessPath ?? DEFAULT_HARBOR_ACCESS_PATH).trim();
-    this.path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
-    this.skewMs = Math.max(0, (init.clockSkewSeconds ?? 90) * 1000);
-    this.clock = init.clock ?? (() => performance.now());
+function normalizeExpectedEnvironment(value: PaybondEnvironment | undefined): PaybondEnvironment | null {
+  if (value === undefined) return null;
+  const env = String(value).trim();
+  if (env === "live" || env === "sandbox") {
+    return env;
   }
+  throw new GatewayAuthError(`expectedEnvironment must be "live" or "sandbox", got ${JSON.stringify(value)}`);
+}
 
-  get tenantId(): string | null {
-    return this.tenantIdValue;
+function assertExpectedEnvironment(
+  source: string,
+  actualRaw: unknown,
+  expected: PaybondEnvironment | null,
+  bodyText?: string,
+): void {
+  if (!expected) return;
+  const actual = typeof actualRaw === "string" ? actualRaw.trim() : "";
+  if (!actual) {
+    throw new GatewayAuthError(`${source} response missing environment`, { bodyText });
   }
-
-  /**
-   * First exchange; returns tenant realm echoed by the gateway.
-   */
-  async ensureInitial(): Promise<string> {
-    await this.refresh(true);
-    if (!this.tenantIdValue) {
-      throw new GatewayAuthError(
-        "harbor-access response missing tenant_id; upgrade gateway (PAYBOND-V1-008)",
-      );
-    }
-    return this.tenantIdValue;
-  }
-
-  /** Return a valid Harbor JWT, refreshing when near expiry. */
-  async bearer(): Promise<string> {
-    await this.refresh(false);
-    if (!this.token) {
-      throw new GatewayAuthError("harbor-access did not return access_token");
-    }
-    return this.token;
-  }
-
-  /** Force rotation (credential rotation drills). */
-  async forceRotate(): Promise<void> {
-    await this.refresh(true);
-  }
-
-  private async refresh(force: boolean): Promise<void> {
-    const job = this.refreshTail.then(() => this.refreshInner(force));
-    this.refreshTail = job.then(
-      () => undefined,
-      () => undefined,
-    );
-    await job;
-  }
-
-  private async refreshInner(force: boolean): Promise<void> {
-    const now = this.clock();
-    if (!force && this.token && now < this.notAfterMonotonic) {
-      return;
-    }
-    const url = `${this.gatewayBase}${this.path}`;
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${this.apiKey}`,
-        accept: "application/json",
-      },
+  if (actual !== expected) {
+    throw new GatewayAuthError(`${source} environment mismatch: expected=${expected} gateway=${actual}`, {
+      bodyText,
     });
-    const text = await res.text();
-    if (!res.ok) {
-      throw new GatewayAuthError(`harbor-access HTTP ${res.status}`, {
-        statusCode: res.status,
-        bodyText: text,
-      });
-    }
-    let body: Record<string, unknown>;
-    try {
-      body = JSON.parse(text) as Record<string, unknown>;
-    } catch {
-      throw new GatewayAuthError("harbor-access response was not JSON", { bodyText: text });
-    }
-    const access = String(body.access_token ?? "").trim();
-    if (!access) {
-      throw new GatewayAuthError("harbor-access JSON missing access_token", { bodyText: text });
-    }
-    const expIn = Number(body.expires_in ?? 0);
-    if (!Number.isFinite(expIn) || expIn <= 0) {
-      throw new GatewayAuthError("harbor-access JSON missing expires_in", { bodyText: text });
-    }
-    const tidRaw = body.tenant_id;
-    if (typeof tidRaw === "string" && tidRaw.trim()) {
-      this.tenantIdValue = tidRaw.trim();
-    }
-    if (!this.tenantIdValue) {
-      throw new GatewayAuthError(
-        "harbor-access response missing tenant_id; upgrade gateway (PAYBOND-V1-008)",
-        { bodyText: text },
-      );
-    }
-    this.token = access;
-    this.notAfterMonotonic = now + Math.max(1000, expIn * 1000 - this.skewMs);
   }
 }
 
@@ -914,60 +828,19 @@ export class GatewayHarborTokenProvider {
  */
 export class PaybondCapabilityBinding {
   constructor(
-    public readonly harbor: HarborClient,
+    public readonly harbor: Pick<HarborClient | GatewayHarborClient, "tenantId" | "verifyCapability">,
     public readonly intentId: string,
     public readonly capabilityToken: string,
   ) {}
 }
 
-export type ServiceAccountHarborSessionInit = {
-  gatewayBaseUrl: string;
+export type PaybondOpenOptions = {
   apiKey: string;
-  harborBaseUrl: string;
-  harborAccessPath?: string;
-  clockSkewSeconds?: number;
+  gatewayBaseUrl?: string;
+  principalPath?: string;
+  expectedEnvironment?: PaybondEnvironment;
   maxRetries?: number;
 };
-
-/**
- * Harbor client plus gateway token lifecycle for one service account.
- */
-export class ServiceAccountHarborSession {
-  readonly harbor: HarborClient;
-  private readonly tokens: GatewayHarborTokenProvider;
-
-  private constructor(harbor: HarborClient, tokens: GatewayHarborTokenProvider) {
-    this.harbor = harbor;
-    this.tokens = tokens;
-  }
-
-  /**
-   * Build a tenant-bound {@link HarborClient} using gateway-derived tenant id and JWT supplier.
-   */
-  static async open(init: ServiceAccountHarborSessionInit): Promise<ServiceAccountHarborSession> {
-    const tokens = new GatewayHarborTokenProvider({
-      gatewayBaseUrl: init.gatewayBaseUrl,
-      apiKey: init.apiKey,
-      harborAccessPath: init.harborAccessPath,
-      clockSkewSeconds: init.clockSkewSeconds,
-    });
-    const tenant = await tokens.ensureInitial();
-    const harbor = new HarborClient(init.harborBaseUrl, tenant, {
-      harborBearerSupplier: () => tokens.bearer(),
-      maxRetries: init.maxRetries ?? 3,
-    });
-    return new ServiceAccountHarborSession(harbor, tokens);
-  }
-
-  async rotateHarborToken(): Promise<void> {
-    await this.tokens.forceRotate();
-  }
-
-  /** Reserved for future HTTP client cleanup; safe to call after work completes. */
-  async aclose(): Promise<void> {
-    await Promise.resolve();
-  }
-}
 
 type HarborClientOptions = {
   harborBearerSupplier?: HarborBearerSupplier;
@@ -1391,8 +1264,8 @@ export class HarborClient {
   }
 
   /**
-   * `GET /ledger/v1/events` — paginated append-only history; `afterSeq` is an exclusive cursor.
-   * `limit` is clamped to 1…256 to match Harbor.
+   * `GET /ledger/v1/events` - protected Harbor append-only history for trusted clients.
+   * `afterSeq` is an exclusive cursor; `limit` is clamped to 1..256 to match Harbor.
    */
   async getLedgerEvents(options?: { afterSeq?: number; limit?: number }): Promise<Record<string, unknown>> {
     const afterSeq = Math.max(0, Math.floor(options?.afterSeq ?? 0));
@@ -1434,6 +1307,212 @@ export class HarborClient {
     const body = JSON.parse(text) as Record<string, unknown>;
     this.assertLedgerTenant(body, url);
     return body;
+  }
+}
+
+type GatewayHarborClientOptions = {
+  staticGatewayBearerToken: string;
+  maxRetries?: number;
+};
+
+type GatewayHarborMutationOptions = {
+  idempotencyKey?: string;
+  recognitionProof?: AgentRecognitionProofV1 | Record<string, unknown>;
+};
+
+/**
+ * Gateway-backed Harbor surface for hosted Paybond integrations.
+ *
+ * This client sends the service-account API key to the public Gateway. Gateway derives tenant,
+ * mints upstream Harbor credentials internally, and applies recognition/guardrail checks before
+ * forwarding state-changing Harbor requests.
+ */
+export class GatewayHarborClient {
+  private readonly base: string;
+  readonly tenantId: string;
+  private readonly staticGatewayBearerToken: string;
+  private readonly maxRetries: number;
+
+  constructor(gatewayBaseUrl: string, tenantId: string, options: GatewayHarborClientOptions) {
+    this.base = `${normalizeBase(gatewayBaseUrl)}/`;
+    this.tenantId = tenantId.trim();
+    this.staticGatewayBearerToken = options.staticGatewayBearerToken.trim();
+    this.maxRetries = Math.max(1, options.maxRetries ?? 3);
+  }
+
+  private headers(extra?: HeadersInit): Headers {
+    const headers = new Headers(extra);
+    headers.set("accept", "application/json");
+    headers.set("x-tenant-id", this.tenantId);
+    headers.set("authorization", `Bearer ${this.staticGatewayBearerToken}`);
+    return headers;
+  }
+
+  private async fetchWithRetries(url: string, init: RequestInit): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(url, init);
+      } catch (e) {
+        lastErr = e;
+        if (attempt + 1 >= this.maxRetries) throw e;
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        continue;
+      }
+      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < this.maxRetries) {
+        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
+        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      return res;
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  private async postJSON(
+    path: string,
+    payload: Record<string, unknown>,
+    extraHeaders?: HeadersInit,
+  ): Promise<{ res: Response; text: string; url: string }> {
+    const url = `${this.base}${path.replace(/^\/+/, "")}`;
+    const res = await this.fetchWithRetries(url, {
+      method: "POST",
+      headers: this.headers({
+        "content-type": "application/json",
+        ...(extraHeaders ?? {}),
+      }),
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text();
+    return { res, text, url };
+  }
+
+  private mutationHeaders(
+    operation: string,
+    options?: GatewayHarborMutationOptions,
+    headers?: Record<string, string>,
+  ): Record<string, string> {
+    const proof = options?.recognitionProof;
+    if (!proof || typeof proof !== "object" || Array.isArray(proof)) {
+      throw new Error(`${operation} requires recognitionProof`);
+    }
+    return gatewayMutationHeaders(proof, {
+      ...(headers ?? {}),
+      ...(options?.idempotencyKey?.trim() ? { "idempotency-key": options.idempotencyKey.trim() } : {}),
+    });
+  }
+
+  async verifyCapability(input: {
+    intentId: string;
+    token: string;
+    operation: string;
+    requestedSpendCents?: number;
+  }): Promise<VerifyCapabilityResult> {
+    const payload = {
+      intent_id: input.intentId,
+      token: input.token,
+      operation: input.operation,
+      requested_spend_cents: input.requestedSpendCents ?? 0,
+    };
+    const { res, text, url } = await this.postJSON("/verify", payload);
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway verify HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = JSON.parse(text) as {
+      allow: boolean;
+      audit_id: string;
+      tenant: string;
+      intent_id: string;
+      code?: string;
+      message?: string;
+    };
+    if (body.tenant !== this.tenantId) {
+      throw new Error(`verify tenant mismatch: client=${this.tenantId} gateway=${body.tenant}`);
+    }
+    if (body.intent_id !== input.intentId) {
+      throw new Error(`verify intent mismatch: requested=${input.intentId} gateway=${body.intent_id}`);
+    }
+    return {
+      allow: body.allow,
+      auditId: body.audit_id,
+      tenant: body.tenant,
+      intentId: body.intent_id,
+      code: body.code,
+      message: body.message,
+    };
+  }
+
+  async createIntent(
+    body: Record<string, unknown>,
+    options: GatewayHarborMutationOptions,
+  ): Promise<Record<string, unknown>> {
+    const { res, text, url } = await this.postJSON(
+      "/harbor/intents",
+      body,
+      this.mutationHeaders("createIntent", options),
+    );
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway Harbor create intent HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return JSON.parse(text) as Record<string, unknown>;
+  }
+
+  async fundIntent(
+    intentId: string,
+    options: GatewayHarborMutationOptions & { paymentSignature?: string },
+  ): Promise<FundIntentResult> {
+    const { res, text, url } = await this.postJSON(
+      `/harbor/intents/${encodeURIComponent(intentId)}/fund`,
+      {},
+      this.mutationHeaders("fundIntent", options, {
+        ...(options.paymentSignature?.trim() ? { "payment-signature": options.paymentSignature.trim() } : {}),
+      }),
+    );
+    if (![200, 202, 402].includes(res.status)) {
+      throw new HarborHttpError(`Gateway Harbor fund intent HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return parseFundIntentResponse(assertJSONObject(JSON.parse(text)), {
+      tenantId: this.tenantId,
+      intentId,
+      statusCode: res.status as 200 | 202 | 402,
+      paymentRequired: res.headers.get("payment-required") ?? undefined,
+      paymentResponse: res.headers.get("payment-response") ?? undefined,
+      source: "gateway",
+    });
+  }
+
+  async submitEvidence(
+    intentId: string,
+    evidenceBody: Record<string, unknown>,
+    options: GatewayHarborMutationOptions,
+  ): Promise<SubmitEvidenceResult> {
+    const { res, text, url } = await this.postJSON(
+      `/harbor/intents/${encodeURIComponent(intentId)}/evidence`,
+      evidenceBody,
+      this.mutationHeaders("submitEvidence", options),
+    );
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway Harbor evidence HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return parseSubmitEvidenceResponse(JSON.parse(text));
   }
 }
 
@@ -1479,6 +1558,69 @@ function readStringArrayValue(value: unknown, field: string): string[] {
     throw new Error(`invalid ${field}`);
   }
   return [...value];
+}
+
+function parseFundIntentResponse(
+  body: Record<string, unknown>,
+  init: {
+    tenantId: string;
+    intentId: string;
+    statusCode: 200 | 202 | 402;
+    paymentRequired?: string;
+    paymentResponse?: string;
+    source: "harbor" | "gateway";
+  },
+): FundIntentResult {
+  const tenant = String(body.tenant ?? "");
+  if (tenant !== init.tenantId) {
+    throw new Error(`fund tenant mismatch: client=${init.tenantId} ${init.source}=${tenant}`);
+  }
+  const echoedIntentId = String(body.intent_id ?? "");
+  if (echoedIntentId !== init.intentId) {
+    throw new Error(`fund intent mismatch: requested=${init.intentId} ${init.source}=${echoedIntentId}`);
+  }
+  if (typeof body.state !== "string" || !body.state.trim()) {
+    throw new Error("fund response missing state");
+  }
+  if (typeof body.currency !== "string" || !body.currency.trim()) {
+    throw new Error("fund response missing currency");
+  }
+  const amountCents = Number(body.amount_cents);
+  if (!Number.isFinite(amountCents)) {
+    throw new Error("fund response missing amount_cents");
+  }
+
+  return {
+    statusCode: init.statusCode,
+    paymentRequired: init.paymentRequired,
+    paymentResponse: init.paymentResponse,
+    intentId: echoedIntentId,
+    tenant,
+    state: body.state,
+    settlementRail: readSettlementRailValue(body.settlement_rail, "fund settlement_rail"),
+    currency: body.currency,
+    amountCents,
+    funded: Boolean(body.funded),
+    capabilityToken:
+      typeof body.capability_token === "string" && body.capability_token.trim()
+        ? body.capability_token
+        : undefined,
+    funding:
+      body.funding === undefined || body.funding === null
+        ? undefined
+        : parseIntentFundingResult(body.funding),
+  };
+}
+
+function parseSubmitEvidenceResponse(value: unknown): SubmitEvidenceResult {
+  const body = assertJSONObject(value);
+  return {
+    intentId: String(body.intent_id ?? ""),
+    tenant: String(body.tenant ?? ""),
+    state: String(body.state ?? ""),
+    predicatePassed:
+      typeof body.predicate_passed === "boolean" ? body.predicate_passed : undefined,
+  };
 }
 
 function parseIntentFundingResult(value: unknown): IntentFundingResult {
@@ -2360,9 +2502,10 @@ function encodeRecognitionProofHeader(proof: AgentRecognitionProofV1 | Record<st
 }
 
 export type ServiceAccountSignalSessionInit = {
-  gatewayBaseUrl: string;
   apiKey: string;
+  gatewayBaseUrl?: string;
   principalPath?: string;
+  expectedEnvironment?: PaybondEnvironment;
   maxRetries?: number;
 };
 
@@ -2373,10 +2516,12 @@ async function resolveGatewayTenantId(
   apiKey: string,
   principalPath: string,
   maxRetries: number,
+  expectedEnvironment?: PaybondEnvironment,
 ): Promise<string> {
   const base = normalizeBase(gatewayBaseUrl);
   const path = principalPath.startsWith("/") ? principalPath : `/${principalPath}`;
   const url = `${base}${path}`;
+  const expected = normalizeExpectedEnvironment(expectedEnvironment);
   let lastErr: unknown;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     let res: Response;
@@ -2416,6 +2561,7 @@ async function resolveGatewayTenantId(
         bodyText: text,
       });
     }
+    assertExpectedEnvironment("gateway principal", body.environment, expected, text);
     return tenant;
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
@@ -2432,14 +2578,16 @@ export class ServiceAccountSignalSession {
   }
 
   static async open(init: ServiceAccountSignalSessionInit): Promise<ServiceAccountSignalSession> {
+    const gatewayBaseUrl = defaultGatewayBaseUrl(init.gatewayBaseUrl);
     const tenantId = await resolveGatewayTenantId(
-      init.gatewayBaseUrl,
+      gatewayBaseUrl,
       init.apiKey,
       init.principalPath ?? DEFAULT_PRINCIPAL_PATH,
       Math.max(1, init.maxRetries ?? 3),
+      init.expectedEnvironment,
     );
     return new ServiceAccountSignalSession(
-      new GatewaySignalClient(init.gatewayBaseUrl, tenantId, {
+      new GatewaySignalClient(gatewayBaseUrl, tenantId, {
         staticGatewayBearerToken: init.apiKey,
         maxRetries: init.maxRetries ?? 3,
       }),
@@ -2462,14 +2610,16 @@ export class ServiceAccountFraudSession {
   }
 
   static async open(init: ServiceAccountFraudSessionInit): Promise<ServiceAccountFraudSession> {
+    const gatewayBaseUrl = defaultGatewayBaseUrl(init.gatewayBaseUrl);
     const tenantId = await resolveGatewayTenantId(
-      init.gatewayBaseUrl,
+      gatewayBaseUrl,
       init.apiKey,
       init.principalPath ?? DEFAULT_PRINCIPAL_PATH,
       Math.max(1, init.maxRetries ?? 3),
+      init.expectedEnvironment,
     );
     return new ServiceAccountFraudSession(
-      new GatewayFraudClient(init.gatewayBaseUrl, tenantId, {
+      new GatewayFraudClient(gatewayBaseUrl, tenantId, {
         staticGatewayBearerToken: init.apiKey,
         maxRetries: init.maxRetries ?? 3,
       }),
@@ -2488,6 +2638,7 @@ export class ServiceAccountFraudSession {
  */
 export type PaybondCreateIntentParams = Omit<BuildSignedCreateIntentParams, "tenantId" | "intentId"> & {
   intentId?: string;
+  recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
 };
 
 /** Parameters for {@link PaybondIntents.submitEvidence} (tenant is taken from the bound Harbor client). */
@@ -2497,6 +2648,7 @@ export type PaybondSubmitEvidenceParams = Omit<
 > & {
   artifactsBlake3Hex?: string[];
   submittedAtRfc3339?: string;
+  recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
 };
 
 function nowRfc3339Seconds(): string {
@@ -2507,7 +2659,7 @@ function nowRfc3339Seconds(): string {
  * Ergonomic intent helpers: principal-signed intent create, x402 funding, and payee-signed evidence.
  */
 export class PaybondIntents {
-  constructor(private readonly harbor: HarborClient) {}
+  constructor(private readonly harbor: HarborClient | GatewayHarborClient) {}
 
   /**
    * Build a principal-signed `POST /intents` body and submit it. `principalSigningSeed` must be
@@ -2516,26 +2668,32 @@ export class PaybondIntents {
   async create(
     params: PaybondCreateIntentParams & { idempotencyKey?: string },
   ): Promise<Record<string, unknown>> {
-    const { idempotencyKey, intentId: maybeIntentId, ...fields } = params;
+    const { idempotencyKey, intentId: maybeIntentId, recognitionProof, ...fields } = params;
     const intentId = maybeIntentId ?? globalThis.crypto.randomUUID();
     const body = buildSignedCreateIntentBody({
       tenantId: this.harbor.tenantId,
       intentId,
       ...fields,
     });
-    return this.harbor.createIntent(body, { idempotencyKey });
+    return this.harbor.createIntent(body, { idempotencyKey, recognitionProof } as never);
   }
 
   /**
    * Advance Harbor `/intents/{id}/fund` for x402 / USDC-on-Base intents.
    */
   async fund(
-    params: { intentId: string; paymentSignature?: string; idempotencyKey?: string },
+    params: {
+      intentId: string;
+      recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+      paymentSignature?: string;
+      idempotencyKey?: string;
+    },
   ): Promise<FundIntentResult> {
     return this.harbor.fundIntent(params.intentId, {
       paymentSignature: params.paymentSignature,
       idempotencyKey: params.idempotencyKey,
-    });
+      recognitionProof: params.recognitionProof,
+    } as never);
   }
 
   /**
@@ -2548,6 +2706,7 @@ export class PaybondIntents {
       idempotencyKey,
       artifactsBlake3Hex = [],
       submittedAtRfc3339 = nowRfc3339Seconds(),
+      recognitionProof,
       ...rest
     } = params;
     const wire = signPayeeEvidenceBinding({
@@ -2556,67 +2715,73 @@ export class PaybondIntents {
       submittedAtRfc3339,
       ...rest,
     });
-    return this.harbor.submitEvidence(rest.intentId, wire, { idempotencyKey });
+    return this.harbor.submitEvidence(rest.intentId, wire, { idempotencyKey, recognitionProof } as never);
   }
 }
 
 /**
- * High-level Kit entrypoint: same session lifecycle as {@link ServiceAccountHarborSession}, plus {@link PaybondIntents}.
+ * High-level Kit entrypoint: tenant-bound Gateway clients plus ergonomic intent helpers.
  */
 export class Paybond {
-  readonly harbor: HarborClient;
+  readonly harbor: GatewayHarborClient;
   readonly signal: GatewaySignalClient;
   readonly fraud: GatewayFraudClient;
   readonly a2a: GatewayA2AClient;
   readonly protocol: GatewayProtocolClient;
   readonly intents: PaybondIntents;
-  private readonly session: ServiceAccountHarborSession;
 
   private constructor(
-    session: ServiceAccountHarborSession,
+    harbor: GatewayHarborClient,
     signal: GatewaySignalClient,
     fraud: GatewayFraudClient,
     a2a: GatewayA2AClient,
     protocol: GatewayProtocolClient,
   ) {
-    this.session = session;
-    this.harbor = session.harbor;
+    this.harbor = harbor;
     this.signal = signal;
     this.fraud = fraud;
     this.a2a = a2a;
     this.protocol = protocol;
-    this.intents = new PaybondIntents(session.harbor);
+    this.intents = new PaybondIntents(harbor);
   }
 
-  /** Open a tenant-bound session via gateway `harbor-access` exchange. */
-  static async open(init: ServiceAccountHarborSessionInit): Promise<Paybond> {
-    const session = await ServiceAccountHarborSession.open(init);
-    const signal = new GatewaySignalClient(init.gatewayBaseUrl, session.harbor.tenantId, {
+  /** Open a tenant-bound hosted Paybond session from a service-account API key. */
+  static async open(init: PaybondOpenOptions): Promise<Paybond> {
+    const gatewayBaseUrl = defaultGatewayBaseUrl(init.gatewayBaseUrl);
+    const maxRetries = Math.max(1, init.maxRetries ?? 3);
+    const tenantId = await resolveGatewayTenantId(
+      gatewayBaseUrl,
+      init.apiKey,
+      init.principalPath ?? DEFAULT_PRINCIPAL_PATH,
+      maxRetries,
+      init.expectedEnvironment,
+    );
+    const harbor = new GatewayHarborClient(gatewayBaseUrl, tenantId, {
       staticGatewayBearerToken: init.apiKey,
-      maxRetries: init.maxRetries ?? 3,
+      maxRetries,
     });
-    const fraud = new GatewayFraudClient(init.gatewayBaseUrl, session.harbor.tenantId, {
+    const signal = new GatewaySignalClient(gatewayBaseUrl, tenantId, {
       staticGatewayBearerToken: init.apiKey,
-      maxRetries: init.maxRetries ?? 3,
+      maxRetries,
     });
-    const a2a = new GatewayA2AClient(init.gatewayBaseUrl, {
+    const fraud = new GatewayFraudClient(gatewayBaseUrl, tenantId, {
       staticGatewayBearerToken: init.apiKey,
-      maxRetries: init.maxRetries ?? 3,
+      maxRetries,
     });
-    const protocol = new GatewayProtocolClient(init.gatewayBaseUrl, session.harbor.tenantId, {
+    const a2a = new GatewayA2AClient(gatewayBaseUrl, {
       staticGatewayBearerToken: init.apiKey,
-      maxRetries: init.maxRetries ?? 3,
+      maxRetries,
     });
-    return new Paybond(session, signal, fraud, a2a, protocol);
+    const protocol = new GatewayProtocolClient(gatewayBaseUrl, tenantId, {
+      staticGatewayBearerToken: init.apiKey,
+      maxRetries,
+    });
+    return new Paybond(harbor, signal, fraud, a2a, protocol);
   }
 
-  async rotateHarborToken(): Promise<void> {
-    await this.session.rotateHarborToken();
-  }
-
-  /** Release HTTP resources (Harbor client + gateway token provider). */
+  /** Reserved for future HTTP client cleanup; safe to call after work completes. */
   async aclose(): Promise<void> {
-    await this.session.aclose();
+    await Promise.resolve();
   }
 }
 
