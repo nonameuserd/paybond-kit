@@ -19,12 +19,16 @@ npm install @paybond/kit
 - Node.js 22+
 - A `paybond_sk_sandbox_...` or `paybond_sk_live_...` service-account API key
 - For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
+- For Gateway-backed Harbor mutations: a runtime signer that can issue a fresh `AgentRecognitionProofV1` for each request
+- For `x402_usdc_base` funding: an x402 wallet or facilitator that can sign Harbor's payment challenge
 
 Minimal environment for the quick start:
 
 ```bash
 export PAYBOND_API_KEY="paybond_sk_sandbox_..."
 ```
+
+`PAYBOND_API_KEY` is the only long-lived environment variable in the basic quick start. Local sandbox/live quick-start scripts may load `PAYBOND_*_RECOGNITION_PROOF_JSON` or `PAYBOND_X402_PAYMENT_SIGNATURE`, but production integrations should generate those values per request.
 
 ## Tenant isolation
 
@@ -71,13 +75,21 @@ const paybond = await Paybond.open({
   expectedEnvironment: "sandbox",
 });
 
+const intentId = crypto.randomUUID();
+const createRecognitionProof = JSON.parse(process.env.PAYBOND_CREATE_RECOGNITION_PROOF_JSON!);
 const created = await paybond.intents.create({
   // principal, payee, budget, predicate, evidence schema, deadline...
+  recognitionProof: createRecognitionProof,
   allowedTools: ["travel.book_hotel"],
   settlementRail: "stripe_connect",
+  intentId,
+  idempotencyKey: `intent:${intentId}`,
 });
 
-const intentId = String(created.intent_id);
+if (String(created.intent_id) !== intentId) {
+  throw new Error(`intent mismatch: requested=${intentId} gateway=${String(created.intent_id ?? "")}`);
+}
+
 const capabilityToken = String(created.capability_token ?? "");
 if (!capabilityToken) {
   throw new Error("fund the intent before guarding tools");
@@ -86,11 +98,54 @@ if (!capabilityToken) {
 const guard = paybond.spendGuard(intentId, capabilityToken);
 const guardedTool = guard.guardTool(
   { operation: "travel.book_hotel", requestedSpendCents: 20_000 },
-  async (input) => bookHotel(input),
+  async (input) => {
+    // Only run the real action after Paybond authorizes the agent to do it.
+    return bookHotel(input);
+  },
 );
 ```
 
 The `paybond.harbor` client is created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Normal integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
+
+## Recognition proofs and x402 signatures
+
+Gateway-backed Harbor mutations such as `paybond.intents.create(...)`, `paybond.intents.fund(...)`, and `paybond.intents.submitEvidence(...)` require `recognitionProof`. Think of it as a short-lived signature that says: "this tenant-registered agent key is authorizing this exact Gateway request right now."
+
+Paybond does not create or hand this proof to your app, and Kit does not generate it automatically. A tenant admin registers the agent runtime's Ed25519 public key in Paybond's trusted agent key registry with a stable `key_id`. Your trusted backend, KMS-backed signer, wallet service, or agent runner keeps the matching private key and signs a fresh `AgentRecognitionProofV1` immediately before each protected mutation.
+
+Kit only transports the finished object: it encodes `recognitionProof` and sends it as `x-paybond-agent-recognition-proof`. Gateway verifies the signature against the registered public key, checks tenant/purpose/request binding, and rejects replayed nonces.
+
+Generate the proof after the request body is fixed. It should bind the request purpose, method, path, SHA-256 body digest, `verifier_context.tenant_id: paybond.harbor.tenantId`, `verifier_context.verifier_id: "paybond-gateway"`, the tenant-registered `key_id`, a unique nonce, a short expiry window, and the Ed25519 digest/signature fields. If your signer cannot reproduce the exact body built by a high-level helper, prebuild the body and call the lower-level `paybond.harbor` method directly.
+
+`PAYBOND_FUND_RETRY_RECOGNITION_PROOF_JSON` is a local quick-start placeholder for the second `/fund` call, not a static value an operator should provision. The first `/fund` call and the retry each need a different proof because proof nonces are single-use.
+
+`PAYBOND_X402_PAYMENT_SIGNATURE` is also only a local quick-start stand-in. In production, ask your x402 wallet or facilitator to sign the `paymentRequired` challenge returned by Harbor, then pass that result as `paymentSignature`.
+
+```ts
+const firstProof = await issueAgentRecognitionProofV1({
+  purpose: "harbor.intent.fund",
+  method: "POST",
+  path: `/harbor/intents/${intentId}/fund`,
+  body: {},
+});
+const first = await paybond.intents.fund({ intentId, recognitionProof: firstProof });
+
+if (first.statusCode === 402) {
+  if (!first.paymentRequired) {
+    throw new Error("missing PAYMENT-REQUIRED challenge");
+  }
+  const paymentSignature = await x402Wallet.signPayment(first.paymentRequired);
+  const retryProof = await issueAgentRecognitionProofV1({
+    purpose: "harbor.intent.fund",
+    method: "POST",
+    path: `/harbor/intents/${intentId}/fund`,
+    body: {},
+  });
+  await paybond.intents.fund({ intentId, recognitionProof: retryProof, paymentSignature });
+}
+```
+
+`issueAgentRecognitionProofV1(...)` and `x402Wallet.signPayment(...)` are application-owned helpers, not Kit exports.
 
 Scaffold a wrapper:
 
