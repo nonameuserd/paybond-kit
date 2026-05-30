@@ -2,6 +2,8 @@
 
 Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
+Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It is runtime-agnostic and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
+
 ## Install
 
 ```bash
