@@ -1,6 +1,6 @@
 # `@paybond/kit`
 
-Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
+Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect, Stripe ACH Direct Debit, or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
 Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
 
@@ -107,7 +107,7 @@ const guardedTool = guard.guardTool(
 );
 ```
 
-The `paybond.harbor` client is created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Normal integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
+The `paybond.harbor` client is created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Normal integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after a delayed rail such as `x402_usdc_base` or `stripe_ach_debit` completes its funding handoff.
 
 ## Recognition proofs and x402 signatures
 
@@ -160,9 +160,9 @@ npx -p @paybond/kit paybond-init --framework provider-agnostic --out paybond-spe
 Core SDK:
 
 - `Paybond.open(...)` for API-key-only, tenant-derived hosted sessions
-- `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
+- `HarborClient` for capability verification, intent creation, rail-aware funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
-- `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
+- `PaybondIntents` helpers for principal-signed intent creation, rail-aware funding, and payee-signed evidence submission
 - `PaybondSpendGuard`, `authorizeSpend`, and `guardTool` for spend-named wrappers around capability verification
 - Runtime-neutral and framework aliases: `paybondAgentToolSpendGuard`, `paybondRuntimeNeutralToolSpendGuard`, `paybondLangGraphToolSpendGuard`, and `paybondMCPToolSpendGuard`
 - `paybondRuntimeToolCallAdapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor
@@ -183,7 +183,7 @@ Advanced exports:
 
 `allowedTools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
-`settlementRail` on intent creation is a principal-signed rail request. Stripe destinations and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
+`settlementRail` on intent creation is a principal-signed rail request. Stripe destinations, ACH account details, and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
 
 The protocol-v2 surface is trust-first: signed mandates, recognition proofs, and receipts work across supported settlement adapters instead of treating any single rail as the product boundary.
 

@@ -38,12 +38,28 @@ export type IntentFundingResult = {
   status?: string;
   paymentSessionId?: string;
   paymentUrl?: string;
+  stripePaymentIntentId?: string;
+  clientSecret?: string;
+  stripeConnectDestination?: string;
+  stripeCustomerId?: string;
+  latestChargeId?: string;
+  paymentMethodId?: string;
+  mandateId?: string;
+  financialConnectionsAccountId?: string;
+  bankLast4?: string;
+  bankFingerprint?: string;
+  bankName?: string;
   asset?: string;
   network?: string;
   authorizationId?: string;
   captureId?: string;
   voidId?: string;
+  transferId?: string;
   refundId?: string;
+  expectedDebitDate?: string;
+  paymentReference?: string;
+  refundReference?: string;
+  refundReferenceStatus?: string;
   sourceAddress?: string;
   targetAddress?: string;
   authorizationExpiresAt?: string;
@@ -1724,7 +1740,7 @@ type GatewayFraudClientOptions = {
 };
 
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
-const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "x402_usdc_base"]);
+const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]);
 const FRAUD_REVIEW_EVENT_TYPES = new Set<string>([
   "review_open_requested",
   "appeal_requested",
@@ -1857,12 +1873,28 @@ function parseIntentFundingResult(value: unknown): IntentFundingResult {
     status: readOptionalString("status"),
     paymentSessionId: readOptionalString("payment_session_id"),
     paymentUrl: readOptionalString("payment_url"),
+    stripePaymentIntentId: readOptionalString("stripe_payment_intent_id"),
+    clientSecret: readOptionalString("client_secret"),
+    stripeConnectDestination: readOptionalString("stripe_connect_destination"),
+    stripeCustomerId: readOptionalString("stripe_customer_id"),
+    latestChargeId: readOptionalString("latest_charge_id"),
+    paymentMethodId: readOptionalString("payment_method_id"),
+    mandateId: readOptionalString("mandate_id"),
+    financialConnectionsAccountId: readOptionalString("financial_connections_account_id"),
+    bankLast4: readOptionalString("bank_last4"),
+    bankFingerprint: readOptionalString("bank_fingerprint"),
+    bankName: readOptionalString("bank_name"),
     asset: readOptionalString("asset"),
     network: readOptionalString("network"),
     authorizationId: readOptionalString("authorization_id"),
     captureId: readOptionalString("capture_id"),
     voidId: readOptionalString("void_id"),
+    transferId: readOptionalString("transfer_id"),
     refundId: readOptionalString("refund_id"),
+    expectedDebitDate: readOptionalString("expected_debit_date"),
+    paymentReference: readOptionalString("payment_reference"),
+    refundReference: readOptionalString("refund_reference"),
+    refundReferenceStatus: readOptionalString("refund_reference_status"),
     sourceAddress: readOptionalString("source_address"),
     targetAddress: readOptionalString("target_address"),
     authorizationExpiresAt: readOptionalString("authorization_expires_at"),

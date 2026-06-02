@@ -9,9 +9,9 @@ import { ensureEd25519Sha512Sync } from "./ed25519-sync.js";
 import { jsonValueDigest } from "./json-digest.js";
 
 /** Tenant-configured settlement rail names. Clients may request a rail, not a destination. */
-export type SettlementRail = "stripe_connect" | "x402_usdc_base";
+export type SettlementRail = "stripe_connect" | "stripe_ach_debit" | "x402_usdc_base";
 
-const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "x402_usdc_base"]);
+const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]);
 
 function validateSettlementRail(value: string): SettlementRail {
   if (!SETTLEMENT_RAIL_VALUES.has(value as SettlementRail)) {

@@ -122,6 +122,68 @@ describe("HarborClient", () => {
     });
   });
 
+  it("returns structured Stripe ACH funding handoff", async () => {
+    const intent = "550e8400-e29b-41d4-a716-446655440011";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            intent_id: intent,
+            tenant: "tenant-a",
+            state: "open",
+            settlement_rail: "stripe_ach_debit",
+            currency: "usd",
+            amount_cents: 4200,
+            funded: false,
+            funding: {
+              settlement_rail: "stripe_ach_debit",
+              harbor_fund_endpoint: `/intents/${intent}/fund`,
+              status: "requires_payment_method",
+              stripe_payment_intent_id: "pi_ach_123",
+              client_secret: "pi_ach_123_secret_abc",
+              stripe_connect_destination: "acct_123",
+              stripe_customer_id: "cus_123",
+              payment_method_id: "pm_123",
+              mandate_id: "mandate_123",
+              financial_connections_account_id: "fca_123",
+              bank_last4: "6789",
+              bank_fingerprint: "bankfp_123",
+              bank_name: "Test Bank",
+              expected_debit_date: "2026-06-05",
+              payment_reference: "PAYBOND-ACH-123",
+            },
+          }),
+          {
+            status: 202,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+    const c = new HarborClient("https://harbor.test", "tenant-a");
+    await expect(c.fundIntent(intent)).resolves.toMatchObject({
+      statusCode: 202,
+      settlementRail: "stripe_ach_debit",
+      funded: false,
+      funding: {
+        settlementRail: "stripe_ach_debit",
+        stripePaymentIntentId: "pi_ach_123",
+        clientSecret: "pi_ach_123_secret_abc",
+        stripeConnectDestination: "acct_123",
+        stripeCustomerId: "cus_123",
+        paymentMethodId: "pm_123",
+        mandateId: "mandate_123",
+        financialConnectionsAccountId: "fca_123",
+        bankLast4: "6789",
+        bankFingerprint: "bankfp_123",
+        bankName: "Test Bank",
+        expectedDebitDate: "2026-06-05",
+        paymentReference: "PAYBOND-ACH-123",
+      },
+    });
+  });
+
   it("getLedgerTip rejects ledger tenant echo mismatch", async () => {
     vi.stubGlobal(
       "fetch",
