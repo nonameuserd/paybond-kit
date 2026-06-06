@@ -21,16 +21,24 @@ npm install @paybond/kit
 - Node.js 22+
 - A `paybond_sk_sandbox_...` or `paybond_sk_live_...` service-account API key
 - For intent creation or evidence submission: 32-byte Ed25519 signing seeds owned by your application
-- For Gateway-backed Harbor mutations: a runtime signer that can issue a fresh `AgentRecognitionProofV1` for each request
-- For `x402_usdc_base` funding: an x402 wallet or facilitator that can sign Harbor's payment challenge
 
-Minimal environment for the quick start:
+Create a sandbox key for local development:
 
 ```bash
-export PAYBOND_API_KEY="paybond_sk_sandbox_..."
+npx -p @paybond/kit paybond login
 ```
 
-`PAYBOND_API_KEY` is the only long-lived environment variable in the basic quick start. Local sandbox/live quick-start scripts may load `PAYBOND_*_RECOGNITION_PROOF_JSON` or `PAYBOND_X402_PAYMENT_SIGNATURE`, but production integrations should generate those values per request.
+`paybond login` writes `PAYBOND_API_KEY` to `.env.local` with file mode `0600`, refuses to overwrite an existing key unless `--force` is passed, and refuses env files that are not ignored by git. Live production keys are created by tenant admins in Console and stored in deployment secret managers.
+
+## First guardrail scaffold
+
+Use this first when you have a paid tool and want Paybond guardrails in the sandbox:
+
+```bash
+npx -p @paybond/kit paybond-init --preset paid-tool-guard --framework provider-agnostic --out paybond-guardrail-demo.ts
+```
+
+The generated demo opens Paybond, bootstraps a sandbox guardrail intent, wraps one replaceable paid-tool handler, submits sandbox evidence, and prints the lifecycle result. Free Developer is sandbox-only; live settlement rails start on paid production plans.
 
 ## Tenant isolation
 
@@ -77,82 +85,34 @@ const paybond = await Paybond.open({
   expectedEnvironment: "sandbox",
 });
 
-const intentId = crypto.randomUUID();
-const createRecognitionProof = JSON.parse(process.env.PAYBOND_CREATE_RECOGNITION_PROOF_JSON!);
-const created = await paybond.intents.create({
-  // principal, payee, budget, predicate, evidence schema, deadline...
-  recognitionProof: createRecognitionProof,
-  allowedTools: ["travel.book_hotel"],
-  settlementRail: "stripe_connect",
-  intentId,
-  idempotencyKey: `intent:${intentId}`,
+const guardrail = await paybond.guardrails.bootstrapSandbox({
+  operation: "travel.book_hotel",
+  requestedSpendCents: 20_000,
+  currency: "usd",
 });
 
-if (String(created.intent_id) !== intentId) {
-  throw new Error(`intent mismatch: requested=${intentId} gateway=${String(created.intent_id ?? "")}`);
-}
-
-const capabilityToken = String(created.capability_token ?? "");
-if (!capabilityToken) {
-  throw new Error("fund the intent before guarding tools");
-}
-
-const guard = paybond.spendGuard(intentId, capabilityToken);
+const guard = paybond.spendGuard(guardrail.intent_id, guardrail.capability_token);
 const guardedTool = guard.guardTool(
-  { operation: "travel.book_hotel", requestedSpendCents: 20_000 },
-  async (input) => {
-    // Only run the real action after Paybond authorizes the agent to do it.
-    return bookHotel(input);
+  {
+    operation: guardrail.operation,
+    requestedSpendCents: guardrail.requested_spend_cents,
   },
+  async (input) => bookHotel(input),
 );
-```
 
-The `paybond.harbor` client is created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Normal integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after a delayed rail such as `x402_usdc_base` or `stripe_ach_debit` completes its funding handoff.
-
-## Recognition proofs and x402 signatures
-
-Gateway-backed Harbor mutations such as `paybond.intents.create(...)`, `paybond.intents.fund(...)`, and `paybond.intents.submitEvidence(...)` require `recognitionProof`. Think of it as a short-lived signature that says: "this tenant-registered agent key is authorizing this exact Gateway request right now."
-
-Paybond does not create or hand this proof to your app, and Kit does not generate it automatically. A tenant admin registers the agent runtime's Ed25519 public key in Paybond's trusted agent key registry with a stable `key_id`. Your trusted backend, KMS-backed signer, wallet service, or agent runner keeps the matching private key and signs a fresh `AgentRecognitionProofV1` immediately before each protected mutation.
-
-Kit only transports the finished object: it encodes `recognitionProof` and sends it as `x-paybond-agent-recognition-proof`. Gateway verifies the signature against the registered public key, checks tenant/purpose/request binding, and rejects replayed nonces.
-
-Generate the proof after the request body is fixed. It should bind the request purpose, method, path, SHA-256 body digest, `verifier_context.tenant_id: paybond.harbor.tenantId`, `verifier_context.verifier_id: "paybond-gateway"`, the tenant-registered `key_id`, a unique nonce, a short expiry window, and the Ed25519 digest/signature fields. If your signer cannot reproduce the exact body built by a high-level helper, prebuild the body and call the lower-level `paybond.harbor` method directly.
-
-`PAYBOND_FUND_RETRY_RECOGNITION_PROOF_JSON` is a local quick-start placeholder for the second `/fund` call, not a static value an operator should provision. The first `/fund` call and the retry each need a different proof because proof nonces are single-use.
-
-`PAYBOND_X402_PAYMENT_SIGNATURE` is also only a local quick-start stand-in. In production, ask your x402 wallet or facilitator to sign the `paymentRequired` challenge returned by Harbor, then pass that result as `paymentSignature`.
-
-```ts
-const firstProof = await issueAgentRecognitionProofV1({
-  purpose: "harbor.intent.fund",
-  method: "POST",
-  path: `/harbor/intents/${intentId}/fund`,
-  body: {},
+const result = await guardedTool({ hotelId: "hotel_demo", maxPriceCents: 20_000 });
+await paybond.guardrails.submitSandboxEvidence({
+  intentId: guardrail.intent_id,
+  payload: { result, sandbox: true },
 });
-const first = await paybond.intents.fund({ intentId, recognitionProof: firstProof });
-
-if (first.statusCode === 402) {
-  if (!first.paymentRequired) {
-    throw new Error("missing PAYMENT-REQUIRED challenge");
-  }
-  const paymentSignature = await x402Wallet.signPayment(first.paymentRequired);
-  const retryProof = await issueAgentRecognitionProofV1({
-    purpose: "harbor.intent.fund",
-    method: "POST",
-    path: `/harbor/intents/${intentId}/fund`,
-    body: {},
-  });
-  await paybond.intents.fund({ intentId, recognitionProof: retryProof, paymentSignature });
-}
 ```
 
-`issueAgentRecognitionProofV1(...)` and `x402Wallet.signPayment(...)` are application-owned helpers, not Kit exports.
+The `paybond.harbor` and `paybond.guardrails` clients are created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Production integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
 
-Scaffold a wrapper:
+Scaffold a guardrail integration:
 
 ```bash
-npx -p @paybond/kit paybond-init --framework provider-agnostic --out paybond-spend-guard.ts
+npx -p @paybond/kit paybond-init --preset paid-tool-guard --framework provider-agnostic --out paybond-guardrail-demo.ts
 ```
 
 ## What the package includes
@@ -160,9 +120,9 @@ npx -p @paybond/kit paybond-init --framework provider-agnostic --out paybond-spe
 Core SDK:
 
 - `Paybond.open(...)` for API-key-only, tenant-derived hosted sessions
-- `HarborClient` for capability verification, intent creation, rail-aware funding, evidence submission, and ledger reads
+- `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
-- `PaybondIntents` helpers for principal-signed intent creation, rail-aware funding, and payee-signed evidence submission
+- `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
 - `PaybondSpendGuard`, `authorizeSpend`, and `guardTool` for spend-named wrappers around capability verification
 - Runtime-neutral and framework aliases: `paybondAgentToolSpendGuard`, `paybondRuntimeNeutralToolSpendGuard`, `paybondLangGraphToolSpendGuard`, and `paybondMCPToolSpendGuard`
 - `paybondRuntimeToolCallAdapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor
@@ -172,8 +132,9 @@ Gateway and trust helpers:
 - `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
 - `GatewayFraudClient` and `ServiceAccountFraudSession` for tenant-scoped fraud assessments, review queues, review events, metrics, and release-gate config
 - Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
+- `paybond login` for sandbox device approval and local `.env.local` API-key setup
 - `paybond-mcp-server` for tenant-bound MCP tool exposure to any MCP-compatible host
-- `paybond-init` for generating a small spend guard wrapper
+- `paybond-init` for generating a Paybond guardrail integration with a sandbox smoke path
 
 Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
 
@@ -183,7 +144,7 @@ Advanced exports:
 
 `allowedTools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
-`settlementRail` on intent creation is a principal-signed rail request. Stripe destinations, ACH account details, and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
+`settlementRail` on intent creation is a principal-signed rail request. Stripe destinations and x402 receive addresses stay tenant-owned server-side config and are never supplied by the SDK caller.
 
 The protocol-v2 surface is trust-first: signed mandates, recognition proofs, and receipts work across supported settlement adapters instead of treating any single rail as the product boundary.
 
@@ -198,6 +159,7 @@ Gateway-backed protocol helpers throw `ProtocolHttpError` with parsed `errorCode
 ## Docs
 
 - Long-form docs: https://paybond.ai/docs/kit
+- One-command guardrails: https://paybond.ai/docs/kit/one-command-guardrails
 - TypeScript quickstart: https://paybond.ai/docs/kit/quickstart-typescript
 - TypeScript SDK reference: https://paybond.ai/docs/kit/sdk-reference-typescript
 - MCP server guide: https://paybond.ai/docs/kit/mcp-server

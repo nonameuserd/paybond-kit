@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -33,6 +33,14 @@ function runLogged(cmd, args, cwd) {
   });
 }
 
+function assertIncludesAll(text, fragments, label) {
+  for (const fragment of fragments) {
+    if (!text.includes(fragment)) {
+      throw new Error(`${label} missing expected fragment: ${fragment}`);
+    }
+  }
+}
+
 runLogged(npmBin, ["run", "test"], repoRoot);
 runLogged(npmBin, ["run", "build"], repoRoot);
 
@@ -56,7 +64,7 @@ for (const banned of [
   }
 }
 
-for (const required of ["package/README.md", "package/LICENSE"]) {
+for (const required of ["package/README.md", "package/LICENSE", "package/dist/login.js", "package/dist/login.d.ts"]) {
   if (!packedFiles.includes(required)) {
     throw new Error(`packed tarball must include ${required}`);
   }
@@ -126,6 +134,85 @@ try {
       'const mod = await import("@paybond/kit"); if (!mod.Paybond || !mod.HarborClient) throw new Error("missing exports");',
     ],
     consumerRoot,
+  );
+
+  const loginCli = join(consumerNodeModules, "@paybond", "kit", "dist", "login.js");
+  const loginHelp = run("node", [loginCli, "--help"], consumerRoot);
+  assertIncludesAll(loginHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond login help");
+
+  const initCli = join(consumerNodeModules, "@paybond", "kit", "dist", "init.js");
+  const scaffoldPath = join(consumerRoot, "paybond-guardrail-demo.ts");
+  runLogged(
+    "node",
+    [
+      initCli,
+      "--preset",
+      "paid-tool-guard",
+      "--framework",
+      "provider-agnostic",
+      "--out",
+      scaffoldPath,
+    ],
+    consumerRoot,
+  );
+  assertIncludesAll(
+    readFileSync(scaffoldPath, "utf8"),
+    [
+      "openPaybondFromEnv",
+      "bootstrapSandboxGuardrailIntent",
+      "wrapPaidTool",
+      "submitSandboxEvidence",
+      "replaceableSmokeTestPaidTool",
+      "runSandboxSmokePath",
+      "paybond.guardrails.bootstrapSandbox",
+      "paybond.spendGuard(guardrail.intent_id, guardrail.capability_token)",
+      "paybond.guardrails.submitSandboxEvidence",
+      "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
+      "Replace this sandbox smoke-test function with the real paid side-effecting tool.",
+    ],
+    "paybond-init scaffold",
+  );
+
+  let blockedOverwrite = false;
+  try {
+    run(
+      "node",
+      [
+        initCli,
+        "--preset",
+        "paid-tool-guard",
+        "--out",
+        scaffoldPath,
+      ],
+      consumerRoot,
+      { stdio: ["ignore", "pipe", "pipe"] },
+    );
+  } catch (err) {
+    const stderr = err && typeof err === "object" && "stderr" in err ? String(err.stderr) : "";
+    blockedOverwrite = stderr.includes("already exists");
+  }
+  if (!blockedOverwrite) {
+    throw new Error("paybond-init must refuse to overwrite scaffolds without --force");
+  }
+
+  runLogged(
+    "node",
+    [
+      initCli,
+      "--preset",
+      "paid-tool-guard",
+      "--framework",
+      "mcp",
+      "--out",
+      scaffoldPath,
+      "--force",
+    ],
+    consumerRoot,
+  );
+  assertIncludesAll(
+    readFileSync(scaffoldPath, "utf8"),
+    ["Call the guarded handler inside the MCP tool implementation before paid or external work runs."],
+    "paybond-init --force scaffold",
   );
 } finally {
   rmSync(scratch, { force: true, recursive: true });

@@ -20,6 +20,8 @@ type Framework =
   | "langgraph"
   | "mcp";
 
+type Preset = "paid-tool-guard";
+
 const FRAMEWORKS = new Set<Framework>([
   "generic",
   "provider-agnostic",
@@ -32,6 +34,8 @@ const FRAMEWORKS = new Set<Framework>([
   "langgraph",
   "mcp",
 ]);
+
+const PRESETS = new Set<Preset>(["paid-tool-guard"]);
 
 const FRAMEWORK_NOTES: Record<Framework, string> = {
   generic: "Wrap the returned function around any side-effecting tool handler.",
@@ -48,25 +52,35 @@ const FRAMEWORK_NOTES: Record<Framework, string> = {
 
 function usage(): string {
   return [
-    "Usage: paybond-init [--framework generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp] [--out paybond-spend-guard.ts] [--force]",
+    "Usage: paybond-init [--preset paid-tool-guard] [--framework generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp] [--out paybond-guardrail-demo.ts] [--force]",
     "",
-    "Scaffolds a Paybond spend guard wrapper for delegated agent spend controls.",
+    "Scaffolds a production-shaped Paybond guardrail integration with a sandbox smoke path.",
   ].join("\n");
 }
 
-function parseArgs(argv: string[]): { framework: Framework; out: string; force: boolean } {
-  let framework: Framework = "generic";
-  let out = "paybond-spend-guard.ts";
+function parseArgs(argv: string[]): { preset: Preset; framework: Framework; out: string; force: boolean } {
+  let preset: Preset = "paid-tool-guard";
+  let framework: Framework = "provider-agnostic";
+  let out = "paybond-guardrail-demo.ts";
   let force = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--help" || arg === "-h") {
       process.stdout.write(`${usage()}\n`);
       process.exitCode = 0;
-      return { framework, out, force };
+      return { preset, framework, out, force };
     }
     if (arg === "--force") {
       force = true;
+      continue;
+    }
+    if (arg === "--preset") {
+      const raw = argv[i + 1];
+      i += 1;
+      if (!raw || !PRESETS.has(raw as Preset)) {
+        throw new Error("invalid --preset");
+      }
+      preset = raw as Preset;
       continue;
     }
     if (arg === "--framework") {
@@ -89,71 +103,173 @@ function parseArgs(argv: string[]): { framework: Framework; out: string; force: 
     }
     throw new Error(`unknown argument: ${arg}`);
   }
-  return { framework, out, force };
+  return { preset, framework, out, force };
 }
 
 function template(framework: Framework): string {
-  return `import { Paybond, type FundIntentResult } from "@paybond/kit";
+  return `import {
+  Paybond,
+  type SandboxGuardrailBootstrapResult,
+  type SandboxGuardrailEvidenceResult,
+} from "@paybond/kit";
 
-type ToolInput = {
-  city: string;
+const DEFAULT_OPERATION = "paid_tool.smoke_test";
+const DEFAULT_REQUESTED_SPEND_CENTS = 500;
+
+export type PaidToolHandler<TInput, TResult> = (input: TInput) => TResult | Promise<TResult>;
+
+export type SandboxGuardrailIntentOptions = {
+  operation?: string;
+  requestedSpendCents?: number;
+  currency?: string;
+  evidenceSchema?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
+};
+
+export type SubmitSandboxEvidenceOptions = {
+  operation?: string;
+  requestedSpendCents?: number;
+  metadata?: Record<string, unknown>;
+  artifacts?: string[];
+  idempotencyKey?: string;
+};
+
+export type SmokePaidToolInput = {
+  itemId: string;
   maxPriceCents: number;
 };
 
-type FundedIntent = {
-  intentId: string;
-  capabilityToken: string;
+export type SmokePaidToolResult = {
+  confirmationId: string;
+  itemId: string;
+  chargedCents: number;
+  sandbox: true;
 };
 
-export async function openPaybond(): Promise<Paybond> {
+export async function openPaybondFromEnv(): Promise<Paybond> {
+  const apiKey = process.env.PAYBOND_API_KEY?.trim();
+  if (!apiKey) {
+    throw new Error("PAYBOND_API_KEY is required");
+  }
+
   return Paybond.open({
-    apiKey: process.env.PAYBOND_API_KEY!,
+    apiKey,
+    gatewayBaseUrl: process.env.PAYBOND_GATEWAY_BASE_URL,
     expectedEnvironment: "sandbox",
   });
 }
 
-export function fundedIntentFromCreate(created: Record<string, unknown>): FundedIntent {
-  const intentId = String(created["intent_id"] ?? "");
-  const capabilityToken = String(created["capability_token"] ?? "");
-  if (!intentId) {
-    throw new Error("intent create response missing intent_id");
-  }
-  if (!capabilityToken) {
-    throw new Error("intent is not funded yet; call paybond.intents.fund(...) before guarding tools");
-  }
-  return { intentId, capabilityToken };
+export async function bootstrapSandboxGuardrailIntent(
+  paybond: Paybond,
+  options: SandboxGuardrailIntentOptions = {},
+): Promise<SandboxGuardrailBootstrapResult> {
+  return paybond.guardrails.bootstrapSandbox({
+    operation: options.operation ?? DEFAULT_OPERATION,
+    requestedSpendCents: options.requestedSpendCents ?? DEFAULT_REQUESTED_SPEND_CENTS,
+    currency: options.currency ?? "usd",
+    evidenceSchema: options.evidenceSchema ?? {
+      type: "object",
+      required: ["confirmation_id", "charged_cents"],
+      properties: {
+        confirmation_id: { type: "string" },
+        charged_cents: { type: "integer" },
+      },
+    },
+    metadata: options.metadata,
+    idempotencyKey: options.idempotencyKey,
+  });
 }
 
-export function fundedIntentFromFund(funded: FundIntentResult): FundedIntent {
-  if (!funded.capabilityToken) {
-    throw new Error("intent funding did not return a capabilityToken yet");
+export function wrapPaidTool<TInput, TResult>(
+  paybond: Paybond,
+  guardrail: Pick<
+    SandboxGuardrailBootstrapResult,
+    "intent_id" | "capability_token" | "operation" | "requested_spend_cents"
+  >,
+  handler: PaidToolHandler<TInput, TResult>,
+): (input: TInput) => Promise<Awaited<TResult>> {
+  if (!guardrail.capability_token.trim()) {
+    throw new Error("sandbox guardrail bootstrap did not return a capability token");
   }
-  return { intentId: funded.intentId, capabilityToken: funded.capabilityToken };
-}
 
-async function bookHotel(input: ToolInput): Promise<{ confirmation: string }> {
-  // Put the side-effecting tool call here.
-  return { confirmation: \`demo-\${input.city}-\${input.maxPriceCents}\` };
-}
-
-export async function buildGuardedHotelTool(params: {
-  paybond: Paybond;
-  intentId: string;
-  capabilityToken: string;
-}): Promise<(input: ToolInput) => Promise<{ confirmation: string }>> {
-  if (!params.capabilityToken.trim()) {
-    throw new Error("fund the intent before guarding tools");
-  }
-  const guard = params.paybond.spendGuard(params.intentId, params.capabilityToken);
+  const guard = paybond.spendGuard(guardrail.intent_id, guardrail.capability_token);
 
   // ${FRAMEWORK_NOTES[framework]}
   return guard.guardTool(
     {
-      operation: "travel.book_hotel",
-      requestedSpendCents: 20_000,
+      operation: guardrail.operation,
+      requestedSpendCents: guardrail.requested_spend_cents,
     },
-    bookHotel,
+    handler,
   );
+}
+
+export async function submitSandboxEvidence(
+  paybond: Paybond,
+  guardrail: Pick<SandboxGuardrailBootstrapResult, "intent_id" | "operation" | "requested_spend_cents">,
+  payload: Record<string, unknown>,
+  options: SubmitSandboxEvidenceOptions = {},
+): Promise<SandboxGuardrailEvidenceResult> {
+  return paybond.guardrails.submitSandboxEvidence({
+    intentId: guardrail.intent_id,
+    payload,
+    artifacts: options.artifacts,
+    operation: options.operation ?? guardrail.operation,
+    requestedSpendCents: options.requestedSpendCents ?? guardrail.requested_spend_cents,
+    metadata: options.metadata,
+    idempotencyKey: options.idempotencyKey,
+  });
+}
+
+export async function replaceableSmokeTestPaidTool(
+  input: SmokePaidToolInput,
+): Promise<SmokePaidToolResult> {
+  // Replace this sandbox smoke-test function with the real paid side-effecting tool.
+  return {
+    confirmationId: "sandbox-confirmation-" + input.itemId,
+    itemId: input.itemId,
+    chargedCents: Math.min(input.maxPriceCents, DEFAULT_REQUESTED_SPEND_CENTS),
+    sandbox: true,
+  };
+}
+
+export async function runSandboxSmokePath(): Promise<{
+  guardrail: SandboxGuardrailBootstrapResult;
+  toolResult: SmokePaidToolResult;
+  evidence: SandboxGuardrailEvidenceResult;
+}> {
+  const paybond = await openPaybondFromEnv();
+  const guardrail = await bootstrapSandboxGuardrailIntent(paybond);
+  const guardedTool = wrapPaidTool(paybond, guardrail, replaceableSmokeTestPaidTool);
+  const toolResult = await guardedTool({
+    itemId: "replace-with-your-tool-input",
+    maxPriceCents: DEFAULT_REQUESTED_SPEND_CENTS,
+  });
+  const evidence = await submitSandboxEvidence(paybond, guardrail, {
+    confirmation_id: toolResult.confirmationId,
+    charged_cents: toolResult.chargedCents,
+    item_id: toolResult.itemId,
+    sandbox: toolResult.sandbox,
+  });
+  return { guardrail, toolResult, evidence };
+}
+
+async function main(): Promise<void> {
+  const result = await runSandboxSmokePath();
+  console.log(JSON.stringify(result, null, 2));
+}
+
+function normalizeFileURL(url: string): string {
+  return url.startsWith("file:///var/") ? url.replace("file:///var/", "file:///private/var/") : url;
+}
+
+const invokedPath = process.argv[1] ? normalizeFileURL(new URL("file://" + process.argv[1]).href) : "";
+if (invokedPath && normalizeFileURL(import.meta.url) === invokedPath) {
+  main().catch((err) => {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exitCode = 1;
+  });
 }
 `;
 }
@@ -177,7 +293,7 @@ async function writeScaffold(out: string, body: string, force: boolean): Promise
 }
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<number> {
-  let parsed: { framework: Framework; out: string; force: boolean };
+  let parsed: { preset: Preset; framework: Framework; out: string; force: boolean };
   try {
     parsed = parseArgs(argv);
   } catch (err) {
@@ -187,14 +303,30 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
   if (argv.includes("--help") || argv.includes("-h")) {
     return 0;
   }
-  await writeScaffold(parsed.out, template(parsed.framework), parsed.force);
-  process.stdout.write(`Created ${parsed.out}\n`);
+  try {
+    await writeScaffold(parsed.out, template(parsed.framework), parsed.force);
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+  process.stdout.write(`Created Paybond guardrail integration: ${parsed.out}\n`);
   return 0;
 }
 
-main().then((code) => {
-  process.exitCode = code;
-}, (err) => {
-  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
-  process.exitCode = 1;
-});
+function normalizeFileURL(url: string): string {
+  return url.startsWith("file:///var/") ? url.replace("file:///var/", "file:///private/var/") : url;
+}
+
+function invokedFromCLI(): boolean {
+  const invokedPath = process.argv[1] ? normalizeFileURL(new URL("file://" + process.argv[1]).href) : "";
+  return Boolean(invokedPath && normalizeFileURL(import.meta.url) === invokedPath);
+}
+
+if (invokedFromCLI()) {
+  main().then((code) => {
+    process.exitCode = code;
+  }, (err) => {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    process.exitCode = 1;
+  });
+}

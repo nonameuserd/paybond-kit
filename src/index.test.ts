@@ -440,6 +440,132 @@ describe("Paybond", () => {
       }),
     ).resolves.toMatchObject({ allow: true, tenant: "realm-z" });
   });
+
+  it("bootstraps and submits sandbox guardrail evidence without caller tenant headers", async () => {
+    const intent = "550e8400-e29b-41d4-a716-446655440020";
+    const apiKey = "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64);
+    const calls: Array<{ url: string; headers: Headers; body: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const headers = new Headers(init?.headers);
+        calls.push({ url, headers, body: String(init?.body ?? "") });
+        if (url === "https://api.paybond.ai/v1/auth/principal") {
+          return new Response(
+            JSON.stringify({ tenant_id: "realm-z", environment: "sandbox" }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        expect(headers.get("authorization")).toBe(`Bearer ${apiKey}`);
+        expect(headers.has("x-tenant-id")).toBe(false);
+        if (url === "https://api.paybond.ai/v1/sandbox/guardrails/bootstrap") {
+          expect(JSON.parse(String(init?.body))).toMatchObject({
+            operation: "vendor.lookup",
+            requested_spend_cents: 250,
+          });
+          return new Response(
+            JSON.stringify({
+              tenant_id: "realm-z",
+              intent_id: intent,
+              capability_token: "sandbox-cap-token",
+              operation: "vendor.lookup",
+              requested_spend_cents: 250,
+              currency: "usd",
+              settlement_rail: "stripe_connect",
+              settlement_mode: "simulated",
+              sandbox_lifecycle_status: "funded",
+            }),
+            { status: 201, headers: { "content-type": "application/json" } },
+          );
+        }
+        expect(url).toBe(`https://api.paybond.ai/v1/sandbox/guardrails/${intent}/evidence`);
+        expect(JSON.parse(String(init?.body))).toMatchObject({
+          operation: "vendor.lookup",
+          requested_spend_cents: 250,
+          payload: { status: "completed" },
+        });
+        return new Response(
+          JSON.stringify({
+            tenant_id: "realm-z",
+            intent_id: intent,
+            operation: "vendor.lookup",
+            requested_spend_cents: 250,
+            settlement_rail: "stripe_connect",
+            settlement_mode: "simulated",
+            sandbox_lifecycle_status: "released",
+            predicate_passed: true,
+          }),
+          { status: 202, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const paybond = await Paybond.open({ apiKey, expectedEnvironment: "sandbox" });
+    await expect(
+      paybond.guardrails.bootstrapSandbox({
+        operation: "vendor.lookup",
+        requestedSpendCents: 250,
+      }),
+    ).resolves.toMatchObject({
+      tenant_id: "realm-z",
+      intent_id: intent,
+      capability_token: "sandbox-cap-token",
+      operation: "vendor.lookup",
+      requested_spend_cents: 250,
+      sandbox_lifecycle_status: "funded",
+    });
+    await expect(
+      paybond.guardrails.submitSandboxEvidence({
+        intentId: intent,
+        operation: "vendor.lookup",
+        requestedSpendCents: 250,
+        payload: { status: "completed" },
+      }),
+    ).resolves.toMatchObject({
+      tenant_id: "realm-z",
+      intent_id: intent,
+      operation: "vendor.lookup",
+      requested_spend_cents: 250,
+      sandbox_lifecycle_status: "released",
+    });
+    expect(calls.filter((call) => call.url.includes("/v1/sandbox/guardrails/"))).toHaveLength(2);
+  });
+
+  it("rejects sandbox guardrail tenant drift", async () => {
+    const apiKey = "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = input.toString();
+        if (url === "https://api.paybond.ai/v1/auth/principal") {
+          return new Response(
+            JSON.stringify({ tenant_id: "realm-z", environment: "sandbox" }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            tenant_id: "other",
+            intent_id: "550e8400-e29b-41d4-a716-446655440021",
+            capability_token: "sandbox-cap-token",
+            operation: "vendor.lookup",
+            requested_spend_cents: 250,
+            sandbox_lifecycle_status: "funded",
+          }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+
+    const paybond = await Paybond.open({ apiKey, expectedEnvironment: "sandbox" });
+    await expect(
+      paybond.guardrails.bootstrapSandbox({
+        operation: "vendor.lookup",
+        requestedSpendCents: 250,
+      }),
+    ).rejects.toThrow(/sandbox guardrail tenant mismatch/);
+  });
 });
 
 describe("GatewaySignalClient", () => {

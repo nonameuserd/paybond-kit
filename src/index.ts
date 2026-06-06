@@ -88,6 +88,53 @@ export type FundIntentResult = {
   funding?: IntentFundingResult;
 };
 
+export type SandboxGuardrailBootstrapInput = {
+  operation: string;
+  requestedSpendCents: number;
+  currency?: string;
+  evidenceSchema?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
+};
+
+export type SandboxGuardrailEvidenceInput = {
+  intentId: string;
+  payload?: Record<string, unknown>;
+  artifacts?: string[];
+  operation?: string;
+  requestedSpendCents?: number;
+  metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
+};
+
+export type SandboxGuardrailBootstrapResult = {
+  tenant_id: string;
+  intent_id: string;
+  capability_token: string;
+  operation: string;
+  requested_spend_cents: number;
+  sandbox_lifecycle_status: string;
+  currency?: string;
+  settlement_rail?: string;
+  settlement_mode?: string;
+  simulator_event?: unknown;
+};
+
+export type SandboxGuardrailEvidenceResult = {
+  tenant_id: string;
+  intent_id: string;
+  capability_token?: string;
+  operation: string;
+  requested_spend_cents: number;
+  sandbox_lifecycle_status: string;
+  settlement_rail?: string;
+  settlement_mode?: string;
+  predicate_passed?: boolean | null;
+  payload_digest?: string;
+  artifacts_digest?: string;
+  simulator_event?: unknown;
+};
+
 export const DEFAULT_PAYBOND_GATEWAY_BASE_URL = "https://api.paybond.ai";
 
 function defaultGatewayBaseUrl(value?: string): string {
@@ -1729,6 +1776,154 @@ export class GatewayHarborClient {
   }
 }
 
+type GatewaySandboxGuardrailsClientOptions = {
+  staticGatewayBearerToken: string;
+  maxRetries?: number;
+};
+
+/**
+ * Gateway sandbox guardrail helpers.
+ *
+ * These routes derive tenant scope only from the service-account bearer token and intentionally
+ * reject caller-supplied tenant IDs, including the normal `x-tenant-id` Gateway Harbor header.
+ */
+export class PaybondGuardrails {
+  private readonly base: string;
+  readonly tenantId: string;
+  private readonly bearerToken: string;
+  private readonly maxRetries: number;
+
+  constructor(gatewayBaseUrl: string, tenantId: string, options: GatewaySandboxGuardrailsClientOptions) {
+    this.base = normalizeBase(gatewayBaseUrl) + "/";
+    this.tenantId = tenantId.trim();
+    this.bearerToken = options.staticGatewayBearerToken.trim();
+    this.maxRetries = Math.max(1, options.maxRetries ?? 3);
+  }
+
+  private headers(extra?: HeadersInit): Headers {
+    const headers = new Headers(extra);
+    headers.set("accept", "application/json");
+    headers.set("authorization", `Bearer ${this.bearerToken}`);
+    return headers;
+  }
+
+  private async fetchWithRetries(url: string, init: RequestInit): Promise<Response> {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
+      let res: Response;
+      try {
+        res = await fetch(url, init);
+      } catch (e) {
+        lastErr = e;
+        if (attempt + 1 >= this.maxRetries) throw e;
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        continue;
+      }
+      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < this.maxRetries) {
+        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
+        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      return res;
+    }
+    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  }
+
+  private async postJSON(
+    path: string,
+    payload: Record<string, unknown>,
+    options?: { idempotencyKey?: string },
+  ): Promise<{ res: Response; text: string; url: string }> {
+    const url = `${this.base}${path.replace(/^\/+/, "")}`;
+    const extraHeaders: Record<string, string> = {
+      "content-type": "application/json",
+    };
+    if (options?.idempotencyKey?.trim()) {
+      extraHeaders["idempotency-key"] = options.idempotencyKey.trim();
+    }
+    const res = await this.fetchWithRetries(url, {
+      method: "POST",
+      headers: this.headers(extraHeaders),
+      body: JSON.stringify(payload),
+    });
+    const text = await res.text();
+    return { res, text, url };
+  }
+
+  async bootstrapSandbox(input: SandboxGuardrailBootstrapInput): Promise<SandboxGuardrailBootstrapResult> {
+    const payload: Record<string, unknown> = {
+      operation: input.operation,
+      requested_spend_cents: input.requestedSpendCents,
+    };
+    if (input.currency !== undefined) {
+      payload.currency = input.currency;
+    }
+    if (input.evidenceSchema !== undefined) {
+      payload.evidence_schema = input.evidenceSchema;
+    }
+    if (input.metadata !== undefined) {
+      payload.metadata = input.metadata;
+    }
+    const { res, text, url } = await this.postJSON(
+      "/v1/sandbox/guardrails/bootstrap",
+      payload,
+      { idempotencyKey: input.idempotencyKey },
+    );
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway sandbox guardrail bootstrap HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return parseSandboxGuardrailBootstrapResponse(JSON.parse(text), {
+      tenantId: this.tenantId,
+      url,
+      bodyText: text,
+      statusCode: res.status,
+    });
+  }
+
+  async submitSandboxEvidence(input: SandboxGuardrailEvidenceInput): Promise<SandboxGuardrailEvidenceResult> {
+    const payload: Record<string, unknown> = {};
+    if (input.payload !== undefined) {
+      payload.payload = input.payload;
+    }
+    if (input.artifacts !== undefined) {
+      payload.artifacts = input.artifacts;
+    }
+    if (input.operation !== undefined) {
+      payload.operation = input.operation;
+    }
+    if (input.requestedSpendCents !== undefined) {
+      payload.requested_spend_cents = input.requestedSpendCents;
+    }
+    if (input.metadata !== undefined) {
+      payload.metadata = input.metadata;
+    }
+    const { res, text, url } = await this.postJSON(
+      `/v1/sandbox/guardrails/${encodeURIComponent(input.intentId)}/evidence`,
+      payload,
+      { idempotencyKey: input.idempotencyKey },
+    );
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway sandbox guardrail evidence HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return parseSandboxGuardrailEvidenceResponse(JSON.parse(text), {
+      tenantId: this.tenantId,
+      intentId: input.intentId,
+      url,
+      bodyText: text,
+      statusCode: res.status,
+    });
+  }
+}
+
 type GatewaySignalClientOptions = {
   staticGatewayBearerToken: string;
   maxRetries?: number;
@@ -1834,6 +2029,98 @@ function parseSubmitEvidenceResponse(value: unknown): SubmitEvidenceResult {
     predicatePassed:
       typeof body.predicate_passed === "boolean" ? body.predicate_passed : undefined,
   };
+}
+
+function parseSandboxGuardrailBootstrapResponse(
+  value: unknown,
+  init: { tenantId: string; url: string; bodyText: string; statusCode: number },
+): SandboxGuardrailBootstrapResult {
+  const body = assertJSONObject(value);
+  const tenant = sandboxGuardrailString(body, "tenant_id", init);
+  if (tenant !== init.tenantId) {
+    throw new Error(`sandbox guardrail tenant mismatch: client=${init.tenantId} gateway=${tenant}`);
+  }
+  return {
+    tenant_id: tenant,
+    intent_id: sandboxGuardrailString(body, "intent_id", init),
+    capability_token: sandboxGuardrailString(body, "capability_token", init),
+    operation: sandboxGuardrailString(body, "operation", init),
+    requested_spend_cents: sandboxGuardrailNumber(body, "requested_spend_cents", init),
+    sandbox_lifecycle_status: sandboxGuardrailString(body, "sandbox_lifecycle_status", init),
+    currency: sandboxGuardrailOptionalString(body.currency),
+    settlement_rail: sandboxGuardrailOptionalString(body.settlement_rail),
+    settlement_mode: sandboxGuardrailOptionalString(body.settlement_mode),
+    simulator_event: body.simulator_event,
+  };
+}
+
+function parseSandboxGuardrailEvidenceResponse(
+  value: unknown,
+  init: { tenantId: string; intentId: string; url: string; bodyText: string; statusCode: number },
+): SandboxGuardrailEvidenceResult {
+  const body = assertJSONObject(value);
+  const tenant = sandboxGuardrailString(body, "tenant_id", init);
+  if (tenant !== init.tenantId) {
+    throw new Error(`sandbox guardrail tenant mismatch: client=${init.tenantId} gateway=${tenant}`);
+  }
+  const intentId = sandboxGuardrailString(body, "intent_id", init);
+  if (intentId !== init.intentId) {
+    throw new Error(`sandbox guardrail intent mismatch: requested=${init.intentId} gateway=${intentId}`);
+  }
+  const predicatePassedRaw = body.predicate_passed;
+  return {
+    tenant_id: tenant,
+    intent_id: intentId,
+    capability_token: sandboxGuardrailOptionalString(body.capability_token),
+    operation: sandboxGuardrailString(body, "operation", init),
+    requested_spend_cents: sandboxGuardrailNumber(body, "requested_spend_cents", init),
+    sandbox_lifecycle_status: sandboxGuardrailString(body, "sandbox_lifecycle_status", init),
+    settlement_rail: sandboxGuardrailOptionalString(body.settlement_rail),
+    settlement_mode: sandboxGuardrailOptionalString(body.settlement_mode),
+    predicate_passed:
+      typeof predicatePassedRaw === "boolean" || predicatePassedRaw === null
+        ? predicatePassedRaw
+        : undefined,
+    payload_digest: sandboxGuardrailOptionalString(body.payload_digest),
+    artifacts_digest: sandboxGuardrailOptionalString(body.artifacts_digest),
+    simulator_event: body.simulator_event,
+  };
+}
+
+function sandboxGuardrailString(
+  body: Record<string, unknown>,
+  field: string,
+  init: { url: string; bodyText: string; statusCode: number },
+): string {
+  const value = body[field];
+  if (typeof value === "string" && value.trim()) {
+    return value;
+  }
+  throw new HarborHttpError(`Gateway sandbox guardrail response missing ${field}`, {
+    statusCode: init.statusCode,
+    url: init.url,
+    bodyText: init.bodyText,
+  });
+}
+
+function sandboxGuardrailOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function sandboxGuardrailNumber(
+  body: Record<string, unknown>,
+  field: string,
+  init: { url: string; bodyText: string; statusCode: number },
+): number {
+  const value = body[field];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  throw new HarborHttpError(`Gateway sandbox guardrail response missing ${field}`, {
+    statusCode: init.statusCode,
+    url: init.url,
+    bodyText: init.bodyText,
+  });
 }
 
 function parseIntentFundingResult(value: unknown): IntentFundingResult {
@@ -2959,6 +3246,7 @@ export class PaybondIntents {
  */
 export class Paybond {
   readonly harbor: GatewayHarborClient;
+  readonly guardrails: PaybondGuardrails;
   readonly signal: GatewaySignalClient;
   readonly fraud: GatewayFraudClient;
   readonly a2a: GatewayA2AClient;
@@ -2967,12 +3255,14 @@ export class Paybond {
 
   private constructor(
     harbor: GatewayHarborClient,
+    guardrails: PaybondGuardrails,
     signal: GatewaySignalClient,
     fraud: GatewayFraudClient,
     a2a: GatewayA2AClient,
     protocol: GatewayProtocolClient,
   ) {
     this.harbor = harbor;
+    this.guardrails = guardrails;
     this.signal = signal;
     this.fraud = fraud;
     this.a2a = a2a;
@@ -2995,6 +3285,10 @@ export class Paybond {
       staticGatewayBearerToken: init.apiKey,
       maxRetries,
     });
+    const guardrails = new PaybondGuardrails(gatewayBaseUrl, tenantId, {
+      staticGatewayBearerToken: init.apiKey,
+      maxRetries,
+    });
     const signal = new GatewaySignalClient(gatewayBaseUrl, tenantId, {
       staticGatewayBearerToken: init.apiKey,
       maxRetries,
@@ -3011,7 +3305,7 @@ export class Paybond {
       staticGatewayBearerToken: init.apiKey,
       maxRetries,
     });
-    return new Paybond(harbor, signal, fraud, a2a, protocol);
+    return new Paybond(harbor, guardrails, signal, fraud, a2a, protocol);
   }
 
   /** Reserved for future HTTP client cleanup; safe to call after work completes. */

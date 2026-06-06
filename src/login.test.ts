@@ -1,0 +1,216 @@
+import { execFileSync } from "node:child_process";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+
+import { assertGitIgnored, runLogin, writeEnvFile } from "./login.js";
+
+const RAW_KEY =
+  "paybond_sk_sandbox_0123456789abcdef0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function outputCollector(): { writer: { write(chunk: string): boolean }; text: () => string } {
+  let output = "";
+  return {
+    writer: {
+      write(chunk: string): boolean {
+        output += chunk;
+        return true;
+      },
+    },
+    text: () => output,
+  };
+}
+
+describe("paybond login", () => {
+  it("runs the device flow, writes a 0600 env file, and masks the key in output", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const envPath = join(cwd, ".env.local");
+    const stdout = outputCollector();
+    const sleeps: number[] = [];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          device_code: "device-code",
+          user_code: "ABCD-EFGH",
+          verification_uri: "https://paybond.ai/device",
+          verification_uri_complete: "https://paybond.ai/device?code=ABCD-EFGH",
+          expires_in: 600,
+          interval: 5,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: "authorization_pending",
+            error_description: "pending",
+            interval: 5,
+          },
+          400,
+        ),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: RAW_KEY,
+          token_type: "bearer",
+          tenant_id: "tenant-sandbox",
+          tenant_uuid: "550e8400-e29b-41d4-a716-446655440000",
+          environment: "sandbox",
+          service_account_role: "operator",
+        }),
+      );
+
+    await expect(
+      runLogin(
+        { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
+        {
+          cwd,
+          fetch: fetchMock,
+          sleep: async (ms) => {
+            sleeps.push(ms);
+          },
+          stdout: stdout.writer,
+          now: () => 0,
+        },
+      ),
+    ).resolves.toBe(0);
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(sleeps).toEqual([5000, 5000]);
+    expect(await readFile(envPath, "utf8")).toBe(`PAYBOND_API_KEY=${RAW_KEY}\n`);
+    expect((await stat(envPath)).mode & 0o777).toBe(0o600);
+    expect(stdout.text()).toContain("Target sandbox tenant: tenant-sandbox");
+    expect(stdout.text()).toContain("Key: paybond_sk_sandbox_01234567...cdef");
+    expect(stdout.text()).not.toContain(RAW_KEY);
+    expect(stdout.text()).not.toContain("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+  });
+
+  it("requests live, warns, and accepts a live operator key", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const envPath = join(cwd, ".env.local");
+    const stdout = outputCollector();
+    const liveKey = "paybond_sk_live_fixture_not_a_real_secret";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          device_code: "device-code",
+          user_code: "ABCD-EFGH",
+          verification_uri: "https://paybond.ai/device",
+          verification_uri_complete: "https://paybond.ai/device?code=ABCD-EFGH",
+          expires_in: 600,
+          interval: 5,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: liveKey,
+          token_type: "bearer",
+          tenant_id: "tenant-live",
+          tenant_uuid: "550e8400-e29b-41d4-a716-446655440000",
+          environment: "live",
+          service_account_role: "operator",
+          expires_at: "2026-06-06T10:00:00Z",
+        }),
+      );
+
+    await expect(
+      runLogin(
+        { envFile: ".env.local", gateway: "https://gateway.test", environment: "live", noOpen: true, force: false },
+        { cwd, fetch: fetchMock, sleep: async () => {}, stdout: stdout.writer, now: () => 0 },
+      ),
+    ).resolves.toBe(0);
+
+    expect(await readFile(envPath, "utf8")).toBe(`PAYBOND_API_KEY=${liveKey}\n`);
+    expect(stdout.text()).toContain("Paybond live login");
+    expect(stdout.text()).toContain("PRODUCTION operator API key");
+    expect(stdout.text()).toContain("Target live tenant: tenant-live");
+    expect(stdout.text()).toContain("auto-expires at 2026-06-06T10:00:00Z");
+    expect(stdout.text()).not.toContain(liveKey);
+
+    const startBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(startBody.requested_environment).toBe("live");
+  });
+
+  it("rejects a sandbox key when live was requested", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          device_code: "device-code",
+          user_code: "ABCD-EFGH",
+          verification_uri: "https://paybond.ai/device",
+          expires_in: 600,
+          interval: 5,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: RAW_KEY,
+          token_type: "bearer",
+          tenant_id: "tenant-sandbox",
+          tenant_uuid: "550e8400-e29b-41d4-a716-446655440000",
+          environment: "sandbox",
+          service_account_role: "operator",
+        }),
+      );
+
+    await expect(
+      runLogin(
+        { envFile: ".env.local", gateway: "https://gateway.test", environment: "live", noOpen: true, force: false },
+        { cwd, fetch: fetchMock, sleep: async () => {}, now: () => 0 },
+      ),
+    ).rejects.toThrow(/sandbox key but live was requested/);
+  });
+
+  it("refuses to overwrite PAYBOND_API_KEY without force", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const envPath = join(cwd, ".env.local");
+    await writeFile(envPath, "PAYBOND_API_KEY=existing\nOTHER=value\n", "utf8");
+    const fetchMock = vi.fn();
+
+    await expect(
+      runLogin(
+        { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
+        { cwd, fetch: fetchMock },
+      ),
+    ).rejects.toThrow(/PAYBOND_API_KEY already exists/);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(await readFile(envPath, "utf8")).toBe("PAYBOND_API_KEY=existing\nOTHER=value\n");
+  });
+
+  it("replaces PAYBOND_API_KEY when force is set", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const envPath = join(cwd, ".env.local");
+    await writeFile(envPath, "OTHER=value\nexport PAYBOND_API_KEY=existing\n", "utf8");
+
+    await writeEnvFile(envPath, RAW_KEY, true);
+
+    expect(await readFile(envPath, "utf8")).toBe(`OTHER=value\nPAYBOND_API_KEY=${RAW_KEY}\n`);
+    expect((await stat(envPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it("refuses env files inside a git repo when they are not ignored", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+
+    await expect(assertGitIgnored(join(cwd, "paybond-login-secrets"), cwd)).rejects.toThrow(/not ignored by git/);
+  });
+
+  it("allows env files inside a git repo when they are ignored", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+    await writeFile(join(cwd, ".gitignore"), "paybond-login-secrets\n", "utf8");
+
+    await expect(assertGitIgnored(join(cwd, "paybond-login-secrets"), cwd)).resolves.toBeUndefined();
+  });
+});

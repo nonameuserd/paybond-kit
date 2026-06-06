@@ -322,6 +322,84 @@ class PaybondMCPRuntime {
     return body;
   }
 
+  async bootstrapSandboxGuardrail(init: {
+    operation: string;
+    requestedSpendCents: number;
+    currency?: string;
+    evidenceSchema?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+    idempotencyKey?: string;
+  }): Promise<Record<string, unknown>> {
+    const expectedTenant = await this.tenantId();
+    const payload: Record<string, unknown> = {
+      operation: init.operation,
+      requested_spend_cents: init.requestedSpendCents,
+    };
+    if (init.currency?.trim()) {
+      payload.currency = init.currency.trim();
+    }
+    if (init.evidenceSchema !== undefined) {
+      payload.evidence_schema = init.evidenceSchema;
+    }
+    if (init.metadata !== undefined) {
+      payload.metadata = init.metadata;
+    }
+    const body = await this.gateway.postJSON(
+      "/v1/sandbox/guardrails/bootstrap",
+      payload,
+      optionalMutationHeaders(init.idempotencyKey),
+    );
+    assertSandboxGuardrailTenant(body, expectedTenant);
+    stringArg(body.intent_id, "intent_id");
+    stringArg(body.capability_token, "capability_token");
+    stringArg(body.operation, "operation");
+    intArg(body.requested_spend_cents, "requested_spend_cents");
+    stringArg(body.sandbox_lifecycle_status, "sandbox_lifecycle_status");
+    return body;
+  }
+
+  async submitSandboxGuardrailEvidence(init: {
+    intentId: string;
+    payload?: Record<string, unknown>;
+    artifacts?: string[];
+    operation?: string;
+    requestedSpendCents?: number;
+    metadata?: Record<string, unknown>;
+    idempotencyKey?: string;
+  }): Promise<Record<string, unknown>> {
+    const expectedTenant = await this.tenantId();
+    const payload: Record<string, unknown> = {};
+    if (init.payload !== undefined) {
+      payload.payload = init.payload;
+    }
+    if (init.artifacts !== undefined) {
+      payload.artifacts = init.artifacts;
+    }
+    if (init.operation?.trim()) {
+      payload.operation = init.operation.trim();
+    }
+    if (init.requestedSpendCents !== undefined) {
+      payload.requested_spend_cents = init.requestedSpendCents;
+    }
+    if (init.metadata !== undefined) {
+      payload.metadata = init.metadata;
+    }
+    const body = await this.gateway.postJSON(
+      `/v1/sandbox/guardrails/${encodeURIComponent(init.intentId)}/evidence`,
+      payload,
+      optionalMutationHeaders(init.idempotencyKey),
+    );
+    assertSandboxGuardrailTenant(body, expectedTenant);
+    const echoedIntent = stringArg(body.intent_id, "intent_id");
+    if (echoedIntent !== init.intentId) {
+      throw new Error(`sandbox guardrail intent mismatch: requested=${init.intentId} gateway=${echoedIntent}`);
+    }
+    stringArg(body.operation, "operation");
+    intArg(body.requested_spend_cents, "requested_spend_cents");
+    stringArg(body.sandbox_lifecycle_status, "sandbox_lifecycle_status");
+    return body;
+  }
+
   async verifyAgentMandateV1(signedMandate: Record<string, unknown>): Promise<Record<string, unknown>> {
     return this.gateway.postJSON("/protocol/v2/mandates/verify", signedMandate, {
       "x-tenant-id": await this.tenantId(),
@@ -703,6 +781,68 @@ export class PaybondMCPServer {
               args.requested_spend_cents === undefined
                 ? 0
                 : intArg(args.requested_spend_cents, "requested_spend_cents"),
+          }),
+      },
+      {
+        name: "paybond_bootstrap_sandbox_guardrail",
+        description:
+          "Bootstrap a sandbox-only Paybond guardrail intent for a first paid-tool integration. Tenant scope is derived from the configured service-account API key and the route never touches live settlement rails.",
+        inputSchema: objectSchema(
+          {
+            operation: { type: "string", description: "Delegated operation or paid tool name." },
+            requested_spend_cents: {
+              type: "integer",
+              description: "Sandbox spend amount in cents to authorize for the sample tool call.",
+            },
+            currency: { type: "string", description: "Optional ISO currency code; defaults at the gateway." },
+            evidence_schema: { type: "object", additionalProperties: true },
+            metadata: { type: "object", additionalProperties: true },
+            idempotency_key: { type: "string" },
+          },
+          ["operation", "requested_spend_cents"],
+        ),
+        call: async (args) =>
+          this.runtime.bootstrapSandboxGuardrail({
+            operation: stringArg(args.operation, "operation"),
+            requestedSpendCents: intArg(args.requested_spend_cents, "requested_spend_cents"),
+            currency: optionalString(args.currency),
+            evidenceSchema:
+              args.evidence_schema === undefined ? undefined : ensureObject(args.evidence_schema, "evidence_schema"),
+            metadata: args.metadata === undefined ? undefined : ensureObject(args.metadata, "metadata"),
+            idempotencyKey: optionalString(args.idempotency_key),
+          }),
+      },
+      {
+        name: "paybond_submit_sandbox_guardrail_evidence",
+        description:
+          "Submit evidence for a sandbox-only Paybond guardrail intent. Tenant scope is derived from the configured service-account API key and simulator settlement remains sandbox-only.",
+        inputSchema: objectSchema(
+          {
+            intent_id: { type: "string", description: "Sandbox guardrail intent UUID." },
+            payload: { type: "object", additionalProperties: true },
+            artifacts: { type: "array", items: { type: "string" } },
+            operation: { type: "string", description: "Optional operation override for the evidence record." },
+            requested_spend_cents: {
+              type: "integer",
+              description: "Optional sandbox spend amount override for the evidence record.",
+            },
+            metadata: { type: "object", additionalProperties: true },
+            idempotency_key: { type: "string" },
+          },
+          ["intent_id"],
+        ),
+        call: async (args) =>
+          this.runtime.submitSandboxGuardrailEvidence({
+            intentId: uuidArg(args.intent_id, "intent_id"),
+            payload: args.payload === undefined ? undefined : ensureObject(args.payload, "payload"),
+            artifacts: args.artifacts === undefined ? undefined : stringArrayArg(args.artifacts, "artifacts"),
+            operation: optionalString(args.operation),
+            requestedSpendCents:
+              args.requested_spend_cents === undefined
+                ? undefined
+                : intArg(args.requested_spend_cents, "requested_spend_cents"),
+            metadata: args.metadata === undefined ? undefined : ensureObject(args.metadata, "metadata"),
+            idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
       {
@@ -1121,6 +1261,20 @@ function uuidArg(value: unknown, field: string): string {
   return raw;
 }
 
+function stringArrayArg(value: unknown, field: string): string[] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${field} must be an array`);
+  }
+  return value.map((item, index) => stringArg(item, `${field}[${index}]`));
+}
+
+function assertSandboxGuardrailTenant(body: Record<string, unknown>, expectedTenant: string): void {
+  const echoedTenant = stringArg(body.tenant_id, "tenant_id");
+  if (echoedTenant !== expectedTenant) {
+    throw new Error(`sandbox guardrail tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`);
+  }
+}
+
 function encodeRecognitionProofHeader(proof: Record<string, unknown>): string {
   return Buffer.from(JSON.stringify(proof), "utf8").toString("base64url");
 }
@@ -1214,13 +1368,17 @@ function formatError(err: unknown): string {
   return String(err);
 }
 
+function normalizeFileURL(url: string): string {
+  return url.startsWith("file:///var/") ? url.replace("file:///var/", "file:///private/var/") : url;
+}
+
 const isMainModule = (() => {
   const scriptPath = process.argv[1];
   if (!scriptPath) {
     return false;
   }
   try {
-    return import.meta.url === new URL(scriptPath, "file://").href;
+    return normalizeFileURL(import.meta.url) === normalizeFileURL(new URL("file://" + scriptPath).href);
   } catch {
     return import.meta.url.endsWith(scriptPath);
   }

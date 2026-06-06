@@ -30,6 +30,8 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_get_settlement_receipt_v1")).toBe(true);
     expect(names.has("paybond_verify_protocol_receipt_v1")).toBe(true);
     expect(names.has("paybond_authorize_agent_spend")).toBe(true);
+    expect(names.has("paybond_bootstrap_sandbox_guardrail")).toBe(true);
+    expect(names.has("paybond_submit_sandbox_guardrail_evidence")).toBe(true);
     expect(names.has("paybond_create_intent")).toBe(true);
     expect(names.has("paybond_create_spend_intent")).toBe(true);
     expect(names.has("paybond_submit_evidence")).toBe(true);
@@ -43,6 +45,9 @@ describe("PaybondMCPServer", () => {
     );
     expect(toolByName.get("paybond_fund_intent")?.description).toContain(
       "paybond_authorize_agent_spend",
+    );
+    expect(toolByName.get("paybond_bootstrap_sandbox_guardrail")?.description).toContain(
+      "sandbox-only",
     );
   });
 
@@ -310,6 +315,118 @@ describe("PaybondMCPServer", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/tenant mismatch/);
+  });
+
+  it("bootstraps and submits sandbox guardrail evidence without caller tenant headers", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(JSON.stringify({ tenant_id: "tenant-a" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v1/sandbox/guardrails/bootstrap")) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe(`Bearer ${apiKey()}`);
+        expect(headers.get("x-tenant-id")).toBeNull();
+        expect(headers.get("x-paybond-agent-recognition-proof")).toBeNull();
+        expect(headers.get("idempotency-key")).toBe("sandbox-bootstrap-1");
+        expect(init?.body).toBe(
+          JSON.stringify({
+            operation: "vendor.lookup",
+            requested_spend_cents: 125,
+            currency: "USD",
+            evidence_schema: { type: "object" },
+            metadata: { demo: true },
+          }),
+        );
+        return new Response(
+          JSON.stringify({
+            tenant_id: "tenant-a",
+            intent_id: intentId,
+            capability_token: "cap-sandbox",
+            operation: "vendor.lookup",
+            requested_spend_cents: 125,
+            sandbox_lifecycle_status: "funded",
+            settlement_rail: "simulator",
+            settlement_mode: "sandbox",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith(`/v1/sandbox/guardrails/${intentId}/evidence`)) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe(`Bearer ${apiKey()}`);
+        expect(headers.get("x-tenant-id")).toBeNull();
+        expect(headers.get("x-paybond-agent-recognition-proof")).toBeNull();
+        expect(headers.get("idempotency-key")).toBe("sandbox-evidence-1");
+        expect(init?.body).toBe(
+          JSON.stringify({
+            payload: { ok: true },
+            artifacts: ["artifact-1"],
+            operation: "vendor.lookup",
+            requested_spend_cents: 125,
+            metadata: { demo: true },
+          }),
+        );
+        return new Response(
+          JSON.stringify({
+            tenant_id: "tenant-a",
+            intent_id: intentId,
+            capability_token: "cap-sandbox",
+            operation: "vendor.lookup",
+            requested_spend_cents: 125,
+            sandbox_lifecycle_status: "evidence_submitted",
+            settlement_rail: "simulator",
+            settlement_mode: "sandbox",
+            predicate_passed: true,
+            payload_digest: "ab".repeat(32),
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+
+    const bootstrap = await server.callTool("paybond_bootstrap_sandbox_guardrail", {
+      operation: "vendor.lookup",
+      requested_spend_cents: 125,
+      currency: "USD",
+      evidence_schema: { type: "object" },
+      metadata: { demo: true },
+      idempotency_key: "sandbox-bootstrap-1",
+    });
+    expect(bootstrap.isError).toBeUndefined();
+    expect(bootstrap.structuredContent).toMatchObject({
+      tenant_id: "tenant-a",
+      intent_id: intentId,
+      capability_token: "cap-sandbox",
+      sandbox_lifecycle_status: "funded",
+    });
+
+    const evidence = await server.callTool("paybond_submit_sandbox_guardrail_evidence", {
+      intent_id: intentId,
+      payload: { ok: true },
+      artifacts: ["artifact-1"],
+      operation: "vendor.lookup",
+      requested_spend_cents: 125,
+      metadata: { demo: true },
+      idempotency_key: "sandbox-evidence-1",
+    });
+    expect(evidence.isError).toBeUndefined();
+    expect(evidence.structuredContent).toMatchObject({
+      tenant_id: "tenant-a",
+      intent_id: intentId,
+      sandbox_lifecycle_status: "evidence_submitted",
+      predicate_passed: true,
+    });
   });
 
   it("defaults verifier context for recognition verification", async () => {
