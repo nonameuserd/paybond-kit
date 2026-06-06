@@ -28,17 +28,20 @@ Create a sandbox key for local development:
 npx -p @paybond/kit paybond login
 ```
 
-`paybond login` writes `PAYBOND_API_KEY` to `.env.local` with file mode `0600`, refuses to overwrite an existing key unless `--force` is passed, and refuses env files that are not ignored by git. Live production keys are created by tenant admins in Console and stored in deployment secret managers.
+`paybond login` writes a sandbox `PAYBOND_API_KEY` to `.env.local` with file mode `0600`, adds the default `.env.local` target to `.gitignore` when needed, and refuses to overwrite an existing key unless `--force` is passed. Custom env-file paths inside a git repo must already be ignored. Live production keys are created by tenant admins in Console and stored in deployment secret managers.
 
 ## First guardrail scaffold
 
 Use this first when you have a paid tool and want Paybond guardrails in the sandbox:
 
 ```bash
-npx -p @paybond/kit paybond-init --preset paid-tool-guard --framework provider-agnostic --out paybond-guardrail-demo.ts
+npx -p @paybond/kit paybond-init \
+  --preset paid-tool-guard \
+  --framework provider-agnostic \
+  --out paybond-paid-tool-guard.ts
 ```
 
-The generated demo opens Paybond, bootstraps a sandbox guardrail intent, wraps one replaceable paid-tool handler, submits sandbox evidence, and prints the lifecycle result. Free Developer is sandbox-only; live settlement rails start on paid production plans.
+The generated integration opens Paybond from the environment, loads `.env.local` when `PAYBOND_API_KEY` is not already present, bootstraps a sandbox guardrail intent, wraps your paid-tool handler, and submits sandbox evidence. It does not generate a paid-tool implementation. Free Developer is sandbox-only; live settlement rails start on paid production plans.
 
 ## Tenant isolation
 
@@ -100,7 +103,7 @@ const guardedTool = guard.guardTool(
   async (input) => bookHotel(input),
 );
 
-const result = await guardedTool({ hotelId: "hotel_demo", maxPriceCents: 20_000 });
+const result = await guardedTool({ hotelId: "hotel_123", maxPriceCents: 20_000 });
 await paybond.guardrails.submitSandboxEvidence({
   intentId: guardrail.intent_id,
   payload: { result, sandbox: true },
@@ -112,7 +115,10 @@ The `paybond.harbor` and `paybond.guardrails` clients are created by `Paybond.op
 Scaffold a guardrail integration:
 
 ```bash
-npx -p @paybond/kit paybond-init --preset paid-tool-guard --framework provider-agnostic --out paybond-guardrail-demo.ts
+npx -p @paybond/kit paybond-init \
+  --preset paid-tool-guard \
+  --framework provider-agnostic \
+  --out paybond-paid-tool-guard.ts
 ```
 
 ## What the package includes
@@ -134,7 +140,7 @@ Gateway and trust helpers:
 - Protocol-v2 helpers for mandate verification, replay-safe recognition proof verification, receipt reads, and A2A discovery
 - `paybond login` for sandbox device approval and local `.env.local` API-key setup
 - `paybond-mcp-server` for tenant-bound MCP tool exposure to any MCP-compatible host
-- `paybond-init` for generating a Paybond guardrail integration with a sandbox smoke path
+- `paybond-init` for generating a Paybond guardrail integration helper
 
 Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
 

@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { main } from "./init.js";
 
@@ -9,38 +9,49 @@ describe("paybond-init", () => {
   const originalExitCode = process.exitCode;
 
   afterEach(() => {
+    vi.restoreAllMocks();
     process.exitCode = originalExitCode;
   });
 
   it("scaffolds a provider-agnostic guardrail integration", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-init-"));
-    const out = join(cwd, "paybond-guardrail-demo.ts");
+    const out = join(cwd, "paybond-paid-tool-guard.ts");
+    const stdout = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 
     await expect(
       main(["--preset", "paid-tool-guard", "--framework", "provider-agnostic", "--out", out]),
     ).resolves.toBe(0);
 
+    expect(stdout).toHaveBeenCalledWith(`Created Paybond guardrail integration: ${out}\n`);
     const body = await readFile(out, "utf8");
     for (const fragment of [
-      "openPaybondFromEnv",
+	      "Production integration helpers only.",
+	      "loadPaybondEnvFile",
+	      "openPaybondFromEnv",
       "bootstrapSandboxGuardrailIntent",
       "wrapPaidTool",
       "submitSandboxEvidence",
-      "replaceableSmokeTestPaidTool",
-      "runSandboxSmokePath",
       "paybond.guardrails.bootstrapSandbox",
       "paybond.spendGuard(guardrail.intent_id, guardrail.capability_token)",
       "paybond.guardrails.submitSandboxEvidence",
       "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-      "Replace this sandbox smoke-test function with the real paid side-effecting tool.",
     ]) {
       expect(body).toContain(fragment);
+    }
+    for (const fragment of [
+      "replaceableSmokeTestPaidTool",
+      "runSandboxSmokePath",
+      "SmokePaidToolInput",
+      "SmokePaidToolResult",
+      "sandbox-confirmation",
+    ]) {
+      expect(body).not.toContain(fragment);
     }
   });
 
   it("refuses to overwrite without --force", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-init-"));
-    const out = join(cwd, "paybond-guardrail-demo.ts");
+    const out = join(cwd, "paybond-paid-tool-guard.ts");
     await writeFile(out, "existing", "utf8");
 
     await expect(main(["--out", out])).resolves.toBe(1);
@@ -49,7 +60,7 @@ describe("paybond-init", () => {
 
   it("overwrites with --force and applies framework notes", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-init-"));
-    const out = join(cwd, "paybond-guardrail-demo.ts");
+    const out = join(cwd, "paybond-paid-tool-guard.ts");
     await writeFile(out, "existing", "utf8");
 
     await expect(main(["--framework", "mcp", "--out", out, "--force"])).resolves.toBe(0);

@@ -141,7 +141,7 @@ try {
   assertIncludesAll(loginHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond login help");
 
   const initCli = join(consumerNodeModules, "@paybond", "kit", "dist", "init.js");
-  const scaffoldPath = join(consumerRoot, "paybond-guardrail-demo.ts");
+  const scaffoldPath = join(consumerRoot, "paybond-paid-tool-guard.ts");
   runLogged(
     "node",
     [
@@ -158,20 +158,43 @@ try {
   assertIncludesAll(
     readFileSync(scaffoldPath, "utf8"),
     [
+      "declare const process",
       "openPaybondFromEnv",
+      "loadPaybondEnvFile",
+      "Production integration helpers only.",
       "bootstrapSandboxGuardrailIntent",
       "wrapPaidTool",
       "submitSandboxEvidence",
-      "replaceableSmokeTestPaidTool",
-      "runSandboxSmokePath",
       "paybond.guardrails.bootstrapSandbox",
       "paybond.spendGuard(guardrail.intent_id, guardrail.capability_token)",
       "paybond.guardrails.submitSandboxEvidence",
       "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
-      "Replace this sandbox smoke-test function with the real paid side-effecting tool.",
     ],
     "paybond-init scaffold",
   );
+  writeFileSync(
+    join(consumerRoot, "tsconfig.json"),
+    JSON.stringify(
+      {
+        compilerOptions: {
+          target: "ES2022",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          strict: true,
+          noEmit: true,
+        },
+        include: ["index.ts", "paybond-paid-tool-guard.ts"],
+      },
+      null,
+      2,
+    ),
+  );
+  runLogged(tscBin, ["-p", consumerRoot], consumerRoot);
+  for (const banned of ["replaceableSmokeTestPaidTool", "runSandboxSmokePath", "sandbox-confirmation"]) {
+    if (readFileSync(scaffoldPath, "utf8").includes(banned)) {
+      throw new Error(`paybond-init scaffold should not include generated paid-tool implementation fragment: ${banned}`);
+    }
+  }
 
   let blockedOverwrite = false;
   try {

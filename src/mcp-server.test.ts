@@ -1,6 +1,9 @@
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PaybondMCPServer } from "./mcp-server.js";
+import { PaybondMCPServer, settingsFromEnv } from "./mcp-server.js";
 
 function apiKey(): string {
   return `paybond_sk_${"a".repeat(32)}_${"b".repeat(64)}`;
@@ -49,6 +52,17 @@ describe("PaybondMCPServer", () => {
     expect(toolByName.get("paybond_bootstrap_sandbox_guardrail")?.description).toContain(
       "sandbox-only",
     );
+  });
+
+  it("loads PAYBOND_API_KEY from the local env file when process env is absent", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "paybond-mcp-"));
+    const envFile = join(cwd, ".env.local");
+    writeFileSync(envFile, `PAYBOND_API_KEY=${apiKey()}\n`, "utf8");
+
+    expect(settingsFromEnv({ PAYBOND_ENV_FILE: envFile })).toMatchObject({
+      apiKey: apiKey(),
+      gatewayBaseUrl: "https://api.paybond.ai",
+    });
   });
 
   it("returns gateway principal through the MCP tool", async () => {

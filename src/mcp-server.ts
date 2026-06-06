@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// @ts-ignore Node builtins are available in the published CLI runtime.
+import { readFileSync } from "node:fs";
+
 import {
   GatewayAuthError,
   GatewayFraudClient,
@@ -34,6 +37,7 @@ const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
 const agentRecognitionProofHeader = "x-paybond-agent-recognition-proof";
+const DEFAULT_ENV_FILE = ".env.local";
 
 type JSONRPCID = string | number | null;
 
@@ -73,6 +77,30 @@ export type PaybondMCPSettings = {
   principalPath?: string;
   maxRetries?: number;
 };
+
+function readEnvFileValue(envFile: string, key: string): string | undefined {
+  let body: string;
+  try {
+    body = readFileSync(envFile, "utf8");
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === "ENOENT") return undefined;
+    throw err;
+  }
+  const pattern = new RegExp("^\\s*(?:export\\s+)?" + key + "\\s*=\\s*(.*)$", "m");
+  const match = body.match(pattern);
+  if (!match) return undefined;
+  let value = String(match[1] ?? "").trim();
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      value = value.slice(1, -1);
+    }
+  } else if (value.startsWith("'") && value.endsWith("'")) {
+    value = value.slice(1, -1);
+  }
+  return value.trim() || undefined;
+}
 
 class GatewayHTTPError extends Error {
   readonly statusCode: number;
@@ -1173,12 +1201,13 @@ export class PaybondMCPServer {
 }
 
 export function settingsFromEnv(env: Record<string, string | undefined> = process.env): PaybondMCPSettings {
-  const apiKey = String(env.PAYBOND_API_KEY ?? "").trim();
+  const envFile = optionalEnv(env.PAYBOND_ENV_FILE) ?? DEFAULT_ENV_FILE;
+  const apiKey = String(env.PAYBOND_API_KEY ?? readEnvFileValue(envFile, "PAYBOND_API_KEY") ?? "").trim();
   if (!apiKey) {
-    throw new Error("PAYBOND_API_KEY is required");
+    throw new Error("PAYBOND_API_KEY is required; run paybond login or configure your MCP host environment");
   }
   return {
-    gatewayBaseUrl: DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+    gatewayBaseUrl: optionalEnv(env.PAYBOND_GATEWAY_BASE_URL) ?? DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     apiKey,
     principalPath: optionalEnv(env.PAYBOND_PRINCIPAL_PATH) ?? DEFAULT_PRINCIPAL_PATH,
     maxRetries: optionalEnv(env.PAYBOND_MCP_MAX_RETRIES)

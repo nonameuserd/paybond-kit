@@ -52,16 +52,16 @@ const FRAMEWORK_NOTES: Record<Framework, string> = {
 
 function usage(): string {
   return [
-    "Usage: paybond-init [--preset paid-tool-guard] [--framework generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp] [--out paybond-guardrail-demo.ts] [--force]",
+    "Usage: paybond-init [--preset paid-tool-guard] [--framework generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp] [--out paybond-paid-tool-guard.ts] [--force]",
     "",
-    "Scaffolds a production-shaped Paybond guardrail integration with a sandbox smoke path.",
+    "Scaffolds a production-shaped Paybond guardrail integration helper.",
   ].join("\n");
 }
 
 function parseArgs(argv: string[]): { preset: Preset; framework: Framework; out: string; force: boolean } {
   let preset: Preset = "paid-tool-guard";
   let framework: Framework = "provider-agnostic";
-  let out = "paybond-guardrail-demo.ts";
+  let out = "paybond-paid-tool-guard.ts";
   let force = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -113,7 +113,13 @@ function template(framework: Framework): string {
   type SandboxGuardrailEvidenceResult,
 } from "@paybond/kit";
 
-const DEFAULT_OPERATION = "paid_tool.smoke_test";
+declare const process: {
+  env: Record<string, string | undefined>;
+};
+
+// Production integration helpers only. Add your paid-tool handler in
+// application code and pass it to wrapPaidTool(...).
+const DEFAULT_OPERATION = "paid_tool.operation";
 const DEFAULT_REQUESTED_SPEND_CENTS = 500;
 
 export type PaidToolHandler<TInput, TResult> = (input: TInput) => TResult | Promise<TResult>;
@@ -135,22 +141,59 @@ export type SubmitSandboxEvidenceOptions = {
   idempotencyKey?: string;
 };
 
-export type SmokePaidToolInput = {
-  itemId: string;
-  maxPriceCents: number;
+export type OpenPaybondFromEnvOptions = {
+  /**
+   * Load PAYBOND_API_KEY from this local env file when the process environment
+   * does not already provide it. Pass false when your agent host injects secrets.
+   */
+  envFile?: string | false;
 };
 
-export type SmokePaidToolResult = {
-  confirmationId: string;
-  itemId: string;
-  chargedCents: number;
-  sandbox: true;
-};
+function readEnvValue(body: string, key: string): string | undefined {
+  const pattern = new RegExp("^\\\\s*(?:export\\\\s+)?" + key + "\\\\s*=\\\\s*(.*)$", "m");
+  const match = body.match(pattern);
+  if (!match) return undefined;
+  let value = (match[1] ?? "").trim();
+  if (value.startsWith('"') && value.endsWith('"')) {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      value = value.slice(1, -1);
+    }
+  } else if (value.startsWith("'") && value.endsWith("'")) {
+    value = value.slice(1, -1);
+  }
+  return value.trim() || undefined;
+}
 
-export async function openPaybondFromEnv(): Promise<Paybond> {
+async function readTextFile(envFile: string): Promise<string | undefined> {
+  // @ts-ignore Node builtins are available in agent and CLI Node runtimes.
+  const fs: { readFile(path: string, encoding: "utf8"): Promise<string> } = await import("node:fs/promises");
+  try {
+    return await fs.readFile(envFile, "utf8");
+  } catch (err) {
+    if ((err as { code?: unknown })?.code === "ENOENT") return undefined;
+    throw err;
+  }
+}
+
+export async function loadPaybondEnvFile(envFile = ".env.local"): Promise<void> {
+  if (process.env.PAYBOND_API_KEY?.trim()) return;
+  const body = await readTextFile(envFile);
+  if (body === undefined) return;
+  const apiKey = readEnvValue(body, "PAYBOND_API_KEY");
+  if (apiKey) {
+    process.env.PAYBOND_API_KEY = apiKey;
+  }
+}
+
+export async function openPaybondFromEnv(options: OpenPaybondFromEnvOptions = {}): Promise<Paybond> {
+  if (options.envFile !== false) {
+    await loadPaybondEnvFile(options.envFile ?? ".env.local");
+  }
   const apiKey = process.env.PAYBOND_API_KEY?.trim();
   if (!apiKey) {
-    throw new Error("PAYBOND_API_KEY is required");
+    throw new Error("PAYBOND_API_KEY is required; run paybond login or configure your agent host to pass it");
   }
 
   return Paybond.open({
@@ -219,56 +262,6 @@ export async function submitSandboxEvidence(
     requestedSpendCents: options.requestedSpendCents ?? guardrail.requested_spend_cents,
     metadata: options.metadata,
     idempotencyKey: options.idempotencyKey,
-  });
-}
-
-export async function replaceableSmokeTestPaidTool(
-  input: SmokePaidToolInput,
-): Promise<SmokePaidToolResult> {
-  // Replace this sandbox smoke-test function with the real paid side-effecting tool.
-  return {
-    confirmationId: "sandbox-confirmation-" + input.itemId,
-    itemId: input.itemId,
-    chargedCents: Math.min(input.maxPriceCents, DEFAULT_REQUESTED_SPEND_CENTS),
-    sandbox: true,
-  };
-}
-
-export async function runSandboxSmokePath(): Promise<{
-  guardrail: SandboxGuardrailBootstrapResult;
-  toolResult: SmokePaidToolResult;
-  evidence: SandboxGuardrailEvidenceResult;
-}> {
-  const paybond = await openPaybondFromEnv();
-  const guardrail = await bootstrapSandboxGuardrailIntent(paybond);
-  const guardedTool = wrapPaidTool(paybond, guardrail, replaceableSmokeTestPaidTool);
-  const toolResult = await guardedTool({
-    itemId: "replace-with-your-tool-input",
-    maxPriceCents: DEFAULT_REQUESTED_SPEND_CENTS,
-  });
-  const evidence = await submitSandboxEvidence(paybond, guardrail, {
-    confirmation_id: toolResult.confirmationId,
-    charged_cents: toolResult.chargedCents,
-    item_id: toolResult.itemId,
-    sandbox: toolResult.sandbox,
-  });
-  return { guardrail, toolResult, evidence };
-}
-
-async function main(): Promise<void> {
-  const result = await runSandboxSmokePath();
-  console.log(JSON.stringify(result, null, 2));
-}
-
-function normalizeFileURL(url: string): string {
-  return url.startsWith("file:///var/") ? url.replace("file:///var/", "file:///private/var/") : url;
-}
-
-const invokedPath = process.argv[1] ? normalizeFileURL(new URL("file://" + process.argv[1]).href) : "";
-if (invokedPath && normalizeFileURL(import.meta.url) === invokedPath) {
-  main().catch((err) => {
-    console.error(err instanceof Error ? err.message : String(err));
-    process.exitCode = 1;
   });
 }
 `;

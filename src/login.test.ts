@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertGitIgnored, runLogin, writeEnvFile } from "./login.js";
+import { assertGitIgnored, parseArgs, runLogin, writeEnvFile } from "./login.js";
 
 const RAW_KEY =
   "paybond_sk_sandbox_0123456789abcdef0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -93,10 +93,13 @@ describe("paybond login", () => {
     expect(stdout.text()).not.toContain("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   });
 
-  it("requests live, warns, and accepts a live operator key", async () => {
+  it("rejects live device login flags before network access", () => {
+    expect(() => parseArgs(["login", "--env", "live"])).toThrow(/live device login is not supported/);
+    expect(() => parseArgs(["login", "--live"])).toThrow(/live device login is not supported/);
+  });
+
+  it("rejects a live key when sandbox was requested", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
-    const envPath = join(cwd, ".env.local");
-    const stdout = outputCollector();
     const liveKey = "paybond_sk_live_fixture_not_a_real_secret";
     const fetchMock = vi
       .fn()
@@ -105,7 +108,6 @@ describe("paybond login", () => {
           device_code: "device-code",
           user_code: "ABCD-EFGH",
           verification_uri: "https://paybond.ai/device",
-          verification_uri_complete: "https://paybond.ai/device?code=ABCD-EFGH",
           expires_in: 600,
           interval: 5,
         }),
@@ -118,58 +120,15 @@ describe("paybond login", () => {
           tenant_uuid: "550e8400-e29b-41d4-a716-446655440000",
           environment: "live",
           service_account_role: "operator",
-          expires_at: "2026-06-06T10:00:00Z",
         }),
       );
 
     await expect(
       runLogin(
-        { envFile: ".env.local", gateway: "https://gateway.test", environment: "live", noOpen: true, force: false },
-        { cwd, fetch: fetchMock, sleep: async () => {}, stdout: stdout.writer, now: () => 0 },
-      ),
-    ).resolves.toBe(0);
-
-    expect(await readFile(envPath, "utf8")).toBe(`PAYBOND_API_KEY=${liveKey}\n`);
-    expect(stdout.text()).toContain("Paybond live login");
-    expect(stdout.text()).toContain("PRODUCTION operator API key");
-    expect(stdout.text()).toContain("Target live tenant: tenant-live");
-    expect(stdout.text()).toContain("auto-expires at 2026-06-06T10:00:00Z");
-    expect(stdout.text()).not.toContain(liveKey);
-
-    const startBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
-    expect(startBody.requested_environment).toBe("live");
-  });
-
-  it("rejects a sandbox key when live was requested", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        jsonResponse({
-          device_code: "device-code",
-          user_code: "ABCD-EFGH",
-          verification_uri: "https://paybond.ai/device",
-          expires_in: 600,
-          interval: 5,
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          access_token: RAW_KEY,
-          token_type: "bearer",
-          tenant_id: "tenant-sandbox",
-          tenant_uuid: "550e8400-e29b-41d4-a716-446655440000",
-          environment: "sandbox",
-          service_account_role: "operator",
-        }),
-      );
-
-    await expect(
-      runLogin(
-        { envFile: ".env.local", gateway: "https://gateway.test", environment: "live", noOpen: true, force: false },
+        { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
         { cwd, fetch: fetchMock, sleep: async () => {}, now: () => 0 },
       ),
-    ).rejects.toThrow(/sandbox key but live was requested/);
+    ).rejects.toThrow(/live key but sandbox was requested/);
   });
 
   it("refuses to overwrite PAYBOND_API_KEY without force", async () => {
@@ -212,5 +171,41 @@ describe("paybond login", () => {
     await writeFile(join(cwd, ".gitignore"), "paybond-login-secrets\n", "utf8");
 
     await expect(assertGitIgnored(join(cwd, "paybond-login-secrets"), cwd)).resolves.toBeUndefined();
+  });
+
+  it("adds the default env file to .gitignore during login", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        jsonResponse({
+          device_code: "device-code",
+          user_code: "ABCD-EFGH",
+          verification_uri: "https://paybond.ai/device",
+          expires_in: 600,
+          interval: 5,
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          access_token: RAW_KEY,
+          token_type: "bearer",
+          tenant_id: "tenant-sandbox",
+          tenant_uuid: "550e8400-e29b-41d4-a716-446655440000",
+          environment: "sandbox",
+          service_account_role: "operator",
+        }),
+      );
+
+    await expect(
+      runLogin(
+        { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
+        { cwd, fetch: fetchMock, sleep: async () => {}, now: () => 0 },
+      ),
+    ).resolves.toBe(0);
+
+    expect(await readFile(join(cwd, ".gitignore"), "utf8")).toContain(".env.local");
+    await expect(assertGitIgnored(join(cwd, ".env.local"), cwd)).resolves.toBeUndefined();
   });
 });

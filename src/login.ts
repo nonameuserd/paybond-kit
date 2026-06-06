@@ -18,7 +18,7 @@ const MIN_POLL_INTERVAL_SECONDS = 1;
 
 type Writable = { write(chunk: string): boolean };
 
-export type DeviceEnvironment = "sandbox" | "live";
+export type DeviceEnvironment = "sandbox";
 
 export type LoginOptions = {
   envFile: string;
@@ -92,20 +92,23 @@ class OAuthPollError extends PaybondLoginError {
 
 function usage(): string {
   return [
-    "Usage: paybond login [--env sandbox|live] [--env-file .env.local] [--gateway https://api.paybond.ai] [--no-open] [--force]",
+    "Usage: paybond login [--env sandbox] [--env-file .env.local] [--gateway https://api.paybond.ai] [--no-open] [--force]",
     "",
-    "Starts a device login and writes PAYBOND_API_KEY to an ignored env file.",
-    "Defaults to the sandbox environment. Pass --env live to mint a production operator key;",
-    "a tenant admin must approve it from an active live console session.",
+    "Starts a device login and writes PAYBOND_API_KEY to a local env file.",
+    "The default .env.local target is added to .gitignore when needed.",
+    "Defaults to the sandbox environment. Production keys are created in Console and stored in secret managers.",
   ].join("\n");
 }
 
 function parseEnvironment(raw: string): DeviceEnvironment {
   const value = raw.trim().toLowerCase();
-  if (value === "sandbox" || value === "live") {
+  if (value === "sandbox") {
     return value;
   }
-  throw new PaybondLoginError("invalid --env (expected sandbox or live)");
+  if (value === "live") {
+    throw new PaybondLoginError("live device login is not supported; create production keys in Console and store them in a secret manager");
+  }
+  throw new PaybondLoginError("invalid --env (expected sandbox)");
 }
 
 export function parseArgs(argv: string[]): LoginOptions | "help" {
@@ -140,13 +143,12 @@ export function parseArgs(argv: string[]): LoginOptions | "help" {
       continue;
     }
     if (arg === "--live") {
-      environment = "live";
-      continue;
+      throw new PaybondLoginError("live device login is not supported; create production keys in Console and store them in a secret manager");
     }
     if (arg === "--env" || arg.startsWith("--env=")) {
       const raw = arg === "--env" ? rest[++i] : arg.slice("--env=".length);
       if (!raw || raw.startsWith("-")) {
-        throw new PaybondLoginError("invalid --env (expected sandbox or live)");
+        throw new PaybondLoginError("invalid --env (expected sandbox)");
       }
       environment = parseEnvironment(raw);
       continue;
@@ -260,6 +262,10 @@ async function resolveEnvFile(envFile: string, cwd: string): Promise<string> {
 }
 
 export async function assertGitIgnored(envPath: string, cwd: string): Promise<void> {
+  await ensureGitIgnored(envPath, cwd, false);
+}
+
+async function ensureGitIgnored(envPath: string, cwd: string, autoAddDefaultEnvFile: boolean): Promise<void> {
   const path = await pathModule();
   const fs = await fsModule();
   const rootResult = await spawnCommand("git", ["rev-parse", "--show-toplevel"], cwd);
@@ -279,6 +285,23 @@ export async function assertGitIgnored(envPath: string, cwd: string): Promise<vo
     return;
   }
   if (ignoreResult.code === 1) {
+    if (autoAddDefaultEnvFile && relativeTarget === DEFAULT_ENV_FILE) {
+      const gitignorePath = path.resolve(repoRoot, ".gitignore");
+      let existing = "";
+      try {
+        existing = await fs.readFile(gitignorePath, "utf8");
+      } catch (err) {
+        if (!(err && typeof err === "object" && "code" in err && err.code === "ENOENT")) {
+          throw err;
+        }
+      }
+      const suffix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
+      await fs.writeFile(gitignorePath, `${existing}${suffix}${DEFAULT_ENV_FILE}\n`, { encoding: "utf8", mode: 0o644 });
+      const recheck = await spawnCommand("git", ["-C", repoRoot, "check-ignore", "--quiet", "--", relativeTarget], cwd);
+      if (recheck.code === 0) {
+        return;
+      }
+    }
     throw new PaybondLoginError(
       `Refusing to write ${target} because it is not ignored by git. Add ${relativeTarget} to .gitignore or pass --env-file pointing outside the repo.`,
     );
@@ -502,19 +525,11 @@ export async function runLogin(options: LoginOptions, deps: LoginDependencies = 
   const envPath = await resolveEnvFile(options.envFile, cwd);
 
   await assertCanWriteEnvFile(envPath, options.force);
-  await assertGitIgnored(envPath, cwd);
+  await ensureGitIgnored(envPath, cwd, options.envFile === DEFAULT_ENV_FILE);
 
   const start = await startDeviceFlow(fetchFn, options.gateway, options.environment);
   const verificationUrl = start.verification_uri_complete || start.verification_uri;
   stdout.write(`Paybond ${options.environment} login\n`);
-  if (options.environment === "live") {
-    stdout.write(
-      `WARNING: this mints a PRODUCTION operator API key with access to live tenant data and money movement.\n`,
-    );
-    stdout.write(
-      `A tenant admin must approve it from an active live console session and confirm the live environment.\n`,
-    );
-  }
   stdout.write(`Verification URL: ${verificationUrl}\n`);
   stdout.write(`Code: ${start.user_code}\n`);
   if (!options.noOpen) {
