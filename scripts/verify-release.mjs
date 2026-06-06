@@ -1,7 +1,7 @@
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -31,6 +31,23 @@ function runLogged(cmd, args, cwd) {
       NPM_CONFIG_CACHE: npmCache,
     },
   });
+}
+
+function runCombined(cmd, args, cwd) {
+  const result = spawnSync(cmd, args, {
+    cwd,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      NPM_CONFIG_CACHE: npmCache,
+    },
+  });
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  if (result.status !== 0) {
+    throw new Error(`${cmd} ${args.join(" ")} exited ${result.status}:\n${output}`);
+  }
+  return output;
 }
 
 function assertIncludesAll(text, fragments, label) {
@@ -83,6 +100,14 @@ try {
   symlinkSync(resolve(repoRoot, "node_modules", "uuid"), join(consumerNodeModules, "uuid"), "dir");
   symlinkSync(resolve(repoRoot, "node_modules", "blake3"), join(consumerNodeModules, "blake3"), "dir");
   symlinkSync(resolve(repoRoot, "node_modules", "@noble"), join(consumerNodeModules, "@noble"), "dir");
+  const consumerBinRoot = join(consumerNodeModules, ".bin");
+  mkdirSync(consumerBinRoot, { recursive: true });
+  const loginBin = join(consumerBinRoot, "paybond");
+  const initBin = join(consumerBinRoot, "paybond-init");
+  const mcpBin = join(consumerBinRoot, "paybond-mcp-server");
+  symlinkSync(join(consumerNodeModules, "@paybond", "kit", "dist", "login.js"), loginBin, "file");
+  symlinkSync(join(consumerNodeModules, "@paybond", "kit", "dist", "init.js"), initBin, "file");
+  symlinkSync(join(consumerNodeModules, "@paybond", "kit", "dist", "mcp-server.js"), mcpBin, "file");
 
   writeFileSync(
     join(consumerRoot, "package.json"),
@@ -139,8 +164,15 @@ try {
   const loginCli = join(consumerNodeModules, "@paybond", "kit", "dist", "login.js");
   const loginHelp = run("node", [loginCli, "--help"], consumerRoot);
   assertIncludesAll(loginHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond login help");
+  const loginBinHelp = run("node", [loginBin, "--help"], consumerRoot);
+  assertIncludesAll(loginBinHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond .bin help");
 
   const initCli = join(consumerNodeModules, "@paybond", "kit", "dist", "init.js");
+  const initBinHelp = run("node", [initBin, "--help"], consumerRoot);
+  assertIncludesAll(initBinHelp, ["paybond-init", "paid-tool-guard", "--framework"], "paybond-init .bin help");
+  const mcpBinHelp = runCombined("node", [mcpBin, "--help"], consumerRoot);
+  assertIncludesAll(mcpBinHelp, ["paybond-mcp-server", "PAYBOND_API_KEY"], "paybond-mcp-server .bin help");
+
   const scaffoldPath = join(consumerRoot, "paybond-paid-tool-guard.ts");
   runLogged(
     "node",
@@ -171,6 +203,25 @@ try {
       "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
     ],
     "paybond-init scaffold",
+  );
+  const symlinkScaffoldPath = join(consumerRoot, "paybond-symlink-tool-guard.ts");
+  runLogged(
+    "node",
+    [
+      initBin,
+      "--preset",
+      "paid-tool-guard",
+      "--framework",
+      "provider-agnostic",
+      "--out",
+      symlinkScaffoldPath,
+    ],
+    consumerRoot,
+  );
+  assertIncludesAll(
+    readFileSync(symlinkScaffoldPath, "utf8"),
+    ["openPaybondFromEnv", "bootstrapSandboxGuardrailIntent", "submitSandboxEvidence"],
+    "paybond-init .bin scaffold",
   );
   writeFileSync(
     join(consumerRoot, "tsconfig.json"),

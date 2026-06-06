@@ -571,16 +571,46 @@ function normalizeFileURL(url: string): string {
   return url.startsWith("file:///var/") ? url.replace("file:///var/", "file:///private/var/") : url;
 }
 
-function invokedFromCLI(): boolean {
-  const invokedPath = process.argv[1] ? normalizeFileURL(new URL("file://" + process.argv[1]).href) : "";
-  return Boolean(invokedPath && normalizeFileURL(import.meta.url) === invokedPath);
+async function invokedFromCLI(): Promise<boolean> {
+  const scriptPath = process.argv[1];
+  if (!scriptPath) {
+    return false;
+  }
+  // @ts-ignore Node builtins are available in the published CLI runtime.
+  const fs = (await import("node:fs/promises")) as { realpath(path: string): Promise<string> };
+  // @ts-ignore Node builtins are available in the published CLI runtime.
+  const path = (await import("node:path")) as { resolve(...parts: string[]): string };
+  // @ts-ignore Node builtins are available in the published CLI runtime.
+  const url = (await import("node:url")) as {
+    fileURLToPath(value: string): string;
+    pathToFileURL(value: string): { href: string };
+  };
+
+  async function realFileURL(filePath: string): Promise<string> {
+    let resolved = path.resolve(filePath);
+    try {
+      resolved = await fs.realpath(resolved);
+    } catch {
+      // If realpath fails, compare the absolute path. This keeps direct execution
+      // working even when the script path disappears during process startup.
+    }
+    return normalizeFileURL(url.pathToFileURL(resolved).href);
+  }
+
+  return (await realFileURL(scriptPath)) === (await realFileURL(url.fileURLToPath(import.meta.url)));
 }
 
-if (invokedFromCLI()) {
+invokedFromCLI().then((invoked) => {
+  if (!invoked) {
+    return;
+  }
   main().then((code) => {
     process.exitCode = code;
   }, (err) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exitCode = 1;
   });
-}
+}, (err) => {
+  process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+  process.exitCode = 1;
+});
