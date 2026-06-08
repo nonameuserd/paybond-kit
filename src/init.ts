@@ -198,7 +198,7 @@ export async function openPaybondFromEnv(options: OpenPaybondFromEnvOptions = {}
 
   return Paybond.open({
     apiKey,
-    gatewayBaseUrl: process.env.PAYBOND_GATEWAY_BASE_URL,
+    gatewayBaseUrl: process.env.PAYBOND_GATEWAY_URL ?? process.env.PAYBOND_GATEWAY_BASE_URL,
     expectedEnvironment: "sandbox",
   });
 }

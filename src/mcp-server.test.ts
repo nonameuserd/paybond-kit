@@ -1,9 +1,13 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { PaybondMCPServer, settingsFromEnv } from "./mcp-server.js";
+
+const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+  version: string;
+};
 
 function apiKey(): string {
   return `paybond_sk_${"a".repeat(32)}_${"b".repeat(64)}`;
@@ -40,18 +44,175 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_submit_evidence")).toBe(true);
     expect(names.has("paybond_submit_spend_evidence")).toBe(true);
     expect(names.has("paybond_create_intent_legacy")).toBe(false);
-    expect(toolByName.get("paybond_authorize_agent_spend")?.description).toContain(
-      "Provider-agnostic spend gate",
-    );
-    expect(toolByName.get("paybond_create_spend_intent")?.description).toContain(
-      "intent_id and capability_token",
-    );
-    expect(toolByName.get("paybond_fund_intent")?.description).toContain(
-      "paybond_authorize_agent_spend",
-    );
-    expect(toolByName.get("paybond_bootstrap_sandbox_guardrail")?.description).toContain(
-      "sandbox-only",
-    );
+    const assertSpendControlTool = (
+      name: string,
+      expected: {
+        title: string;
+        destructiveHint?: boolean;
+        descriptionFragments: string[];
+        outputProperties: string[];
+      },
+    ): void => {
+      const tool = toolByName.get(name);
+      expect(tool?.title, name).toBe(expected.title);
+      for (const fragment of expected.descriptionFragments) {
+        expect(tool?.description, name).toEqual(expect.stringContaining(fragment));
+      }
+      expect(tool?.annotations, name).toEqual(
+        expect.objectContaining({
+          title: expected.title,
+          readOnlyHint: false,
+          destructiveHint: expected.destructiveHint ?? false,
+          idempotentHint: false,
+          openWorldHint: true,
+        }),
+      );
+      expect(tool?.outputSchema, name).toEqual(
+        expect.objectContaining({
+          type: "object",
+          properties: expect.any(Object),
+        }),
+      );
+      const properties = (tool?.outputSchema as { properties?: Record<string, unknown> } | undefined)?.properties;
+      for (const property of expected.outputProperties) {
+        expect(properties, `${name}.${property}`).toHaveProperty(property);
+      }
+    };
+
+    const authorize = toolByName.get("paybond_authorize_agent_spend");
+    expect(authorize?.title).toBe("Authorize Agent Spend");
+    expect(authorize?.description).toContain("Use this when");
+    expect(authorize?.description).toContain("Do not use this for");
+    expect(authorize?.annotations).toMatchObject({
+      title: "Authorize Agent Spend",
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+    expect(authorize?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        allow: { type: "boolean" },
+        tenant: { type: "string" },
+        intent_id: { type: "string" },
+      },
+    });
+    expect(toolByName.get("paybond_create_spend_intent")).toMatchObject({
+      title: "Create Spend Intent",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          intent_id: { type: "string" },
+          capability_token: { type: "string" },
+        },
+      },
+    });
+    expect(toolByName.get("paybond_fund_intent")).toMatchObject({
+      title: "Fund Intent",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    });
+    expect(toolByName.get("paybond_get_principal")).toMatchObject({
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+    });
+    expect(toolByName.get("paybond_bootstrap_sandbox_guardrail")?.description).toContain("sandbox-only");
+    for (const expected of [
+      {
+        name: "paybond_verify_capability",
+        title: "Verify Paybond Capability",
+        descriptionFragments: ["Use this when", "Do not use this"],
+        outputProperties: ["allow", "tenant", "intent_id", "audit_id"],
+      },
+      {
+        name: "paybond_authorize_agent_spend",
+        title: "Authorize Agent Spend",
+        descriptionFragments: ["Use this when", "Do not use this"],
+        outputProperties: ["allow", "tenant", "intent_id", "audit_id"],
+      },
+      {
+        name: "paybond_bootstrap_sandbox_guardrail",
+        title: "Bootstrap Sandbox Guardrail",
+        descriptionFragments: ["Use this when", "sandbox-only", "Do not use this"],
+        outputProperties: [
+          "tenant_id",
+          "intent_id",
+          "capability_token",
+          "operation",
+          "requested_spend_cents",
+          "sandbox_lifecycle_status",
+        ],
+      },
+      {
+        name: "paybond_submit_sandbox_guardrail_evidence",
+        title: "Submit Sandbox Guardrail Evidence",
+        descriptionFragments: ["Use this when", "sandbox guardrail intent", "Do not use this"],
+        outputProperties: [
+          "tenant_id",
+          "intent_id",
+          "operation",
+          "requested_spend_cents",
+          "sandbox_lifecycle_status",
+          "predicate_passed",
+        ],
+      },
+      {
+        name: "paybond_create_spend_intent",
+        title: "Create Spend Intent",
+        descriptionFragments: ["Use this when", "Do not use this"],
+        outputProperties: ["intent_id", "state", "capability_token"],
+      },
+      {
+        name: "paybond_fund_intent",
+        title: "Fund Intent",
+        destructiveHint: true,
+        descriptionFragments: ["Use this when", "Do not use this"],
+        outputProperties: ["intent_id", "state", "capability_token"],
+      },
+      {
+        name: "paybond_submit_spend_evidence",
+        title: "Submit Spend Evidence",
+        descriptionFragments: ["Use this when", "Do not use this"],
+        outputProperties: ["intent_id", "state", "evidence_id"],
+      },
+    ]) {
+      assertSpendControlTool(expected.name, expected);
+    }
+  });
+
+  it("returns enriched initialize serverInfo while keeping the negotiated protocol", async () => {
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+
+    const response = await server.handleMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+    });
+
+    expect(response?.result).toMatchObject({
+      protocolVersion: "2025-11-25",
+      serverInfo: {
+        name: "Paybond MCP",
+        title: "Paybond MCP",
+        version: packageJson.version,
+        description: expect.stringContaining("agent spend controls"),
+        websiteUrl: "https://paybond.ai",
+      },
+    });
   });
 
   it("loads PAYBOND_API_KEY from the local env file when process env is absent", () => {
@@ -62,6 +223,18 @@ describe("PaybondMCPServer", () => {
     expect(settingsFromEnv({ PAYBOND_ENV_FILE: envFile })).toMatchObject({
       apiKey: apiKey(),
       gatewayBaseUrl: "https://api.paybond.ai",
+    });
+  });
+
+  it("accepts PAYBOND_GATEWAY_URL as the registry-facing gateway override", () => {
+    expect(
+      settingsFromEnv({
+        PAYBOND_API_KEY: apiKey(),
+        PAYBOND_GATEWAY_URL: "https://gateway.registry.test",
+        PAYBOND_GATEWAY_BASE_URL: "https://gateway.legacy.test",
+      }),
+    ).toMatchObject({
+      gatewayBaseUrl: "https://gateway.registry.test",
     });
   });
 

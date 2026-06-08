@@ -1,0 +1,78 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nonameuserd/paybond",
+  "title": "Paybond MCP Server",
+  "description": "Tenant-bound MCP tools for Paybond agent spend controls, evidence, receipts, and settlement.",
+  "websiteUrl": "https://paybond.ai/docs/kit/mcp-server",
+  "repository": {
+    "url": "https://github.com/nonameuserd/paybond-kit",
+    "source": "github"
+  },
+  "version": "0.9.7",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@paybond/kit",
+      "version": "0.9.7",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PAYBOND_API_KEY",
+          "description": "Paybond service-account API key for the tenant-bound MCP session.",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "PAYBOND_GATEWAY_URL",
+          "description": "Optional Paybond gateway base URL. Defaults to the hosted Paybond API.",
+          "format": "string",
+          "isRequired": false,
+          "default": "https://api.paybond.ai"
+        },
+        {
+          "name": "PAYBOND_ENV_FILE",
+          "description": "Optional local env file path used to load PAYBOND_API_KEY when the host does not set it directly.",
+          "format": "filepath",
+          "isRequired": false,
+          "default": ".env.local"
+        }
+      ]
+    },
+    {
+      "registryType": "pypi",
+      "registryBaseUrl": "https://pypi.org",
+      "identifier": "paybond-kit",
+      "version": "0.9.7",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PAYBOND_API_KEY",
+          "description": "Paybond service-account API key for the tenant-bound MCP session.",
+          "format": "string",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "PAYBOND_GATEWAY_URL",
+          "description": "Optional Paybond gateway base URL. Defaults to the hosted Paybond API.",
+          "format": "string",
+          "isRequired": false,
+          "default": "https://api.paybond.ai"
+        },
+        {
+          "name": "PAYBOND_ENV_FILE",
+          "description": "Optional local env file path used to load PAYBOND_API_KEY when the host does not set it directly.",
+          "format": "filepath",
+          "isRequired": false,
+          "default": ".env.local"
+        }
+      ]
+    }
+  ]
+}

@@ -25,9 +25,10 @@ describe("paybond-init", () => {
     expect(stdout).toHaveBeenCalledWith(`Created Paybond guardrail integration: ${out}\n`);
     const body = await readFile(out, "utf8");
     for (const fragment of [
-	      "Production integration helpers only.",
-	      "loadPaybondEnvFile",
-	      "openPaybondFromEnv",
+      "Production integration helpers only.",
+      "loadPaybondEnvFile",
+      "openPaybondFromEnv",
+      "process.env.PAYBOND_GATEWAY_URL ?? process.env.PAYBOND_GATEWAY_BASE_URL",
       "bootstrapSandboxGuardrailIntent",
       "wrapPaidTool",
       "submitSandboxEvidence",

@@ -1,13 +1,17 @@
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const npmBin = process.env.npm_execpath ?? "npm";
 const tscBin = resolve(repoRoot, "node_modules", ".bin", "tsc");
 const npmCache = resolve(repoRoot, ".npm-cache");
+
+function readJson(pathname) {
+  return JSON.parse(readFileSync(pathname, "utf8"));
+}
 
 function run(cmd, args, cwd, options = {}) {
   return execFileSync(cmd, args, {
@@ -58,8 +62,50 @@ function assertIncludesAll(text, fragments, label) {
   }
 }
 
+const packageJson = readJson(resolve(repoRoot, "package.json"));
+const serverJsonPath = [resolve(repoRoot, "server.json"), resolve(repoRoot, "..", "..", "server.json")].find((path) =>
+  existsSync(path),
+);
+if (!serverJsonPath) {
+  throw new Error("could not find server.json in package root or monorepo root");
+}
+const rootServerJson = readJson(serverJsonPath);
+const mcpServerSource = readFileSync(resolve(repoRoot, "src", "mcp-server.ts"), "utf8");
+const mcpVersion = mcpServerSource.match(/const SERVER_VERSION = "([^"]+)";/)?.[1];
+if (!mcpVersion) {
+  throw new Error("could not read TypeScript MCP SERVER_VERSION from src/mcp-server.ts");
+}
+if (packageJson.version !== rootServerJson.version || packageJson.version !== mcpVersion) {
+  throw new Error(
+    `MCP version mismatch: kit/ts/package.json=${packageJson.version}, server.json=${rootServerJson.version}, src/mcp-server.ts=${mcpVersion}`,
+  );
+}
+for (const pkg of rootServerJson.packages ?? []) {
+  if (pkg.registryType === "npm" && pkg.version !== packageJson.version) {
+    throw new Error(`server.json npm package version ${pkg.version} does not match ${packageJson.version}`);
+  }
+}
+
+async function assertBuiltMcpServerInfoVersion(expectedVersion) {
+  const { PaybondMCPServer } = await import(pathToFileURL(resolve(repoRoot, "dist", "mcp-server.js")).href);
+  const server = new PaybondMCPServer({
+    gatewayBaseUrl: "https://gateway.test",
+    apiKey: `paybond_sk_${"a".repeat(32)}_${"b".repeat(64)}`,
+  });
+  const response = await server.handleMessage({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+  });
+  const serverInfoVersion = response?.result?.serverInfo?.version;
+  if (serverInfoVersion !== expectedVersion) {
+    throw new Error(`TypeScript MCP initialize.serverInfo.version ${serverInfoVersion} does not match ${expectedVersion}`);
+  }
+}
+
 runLogged(npmBin, ["run", "test"], repoRoot);
 runLogged(npmBin, ["run", "build"], repoRoot);
+await assertBuiltMcpServerInfoVersion(packageJson.version);
 
 const packJson = run(npmBin, ["pack", "--json"], repoRoot);
 const packMeta = JSON.parse(packJson);
@@ -105,9 +151,15 @@ try {
   const loginBin = join(consumerBinRoot, "paybond");
   const initBin = join(consumerBinRoot, "paybond-init");
   const mcpBin = join(consumerBinRoot, "paybond-mcp-server");
-  symlinkSync(join(consumerNodeModules, "@paybond", "kit", "dist", "login.js"), loginBin, "file");
-  symlinkSync(join(consumerNodeModules, "@paybond", "kit", "dist", "init.js"), initBin, "file");
-  symlinkSync(join(consumerNodeModules, "@paybond", "kit", "dist", "mcp-server.js"), mcpBin, "file");
+  const loginTarget = join(consumerNodeModules, "@paybond", "kit", "dist", "login.js");
+  const initTarget = join(consumerNodeModules, "@paybond", "kit", "dist", "init.js");
+  const mcpTarget = join(consumerNodeModules, "@paybond", "kit", "dist", "mcp-server.js");
+  chmodSync(loginTarget, 0o755);
+  chmodSync(initTarget, 0o755);
+  chmodSync(mcpTarget, 0o755);
+  symlinkSync(loginTarget, loginBin, "file");
+  symlinkSync(initTarget, initBin, "file");
+  symlinkSync(mcpTarget, mcpBin, "file");
 
   writeFileSync(
     join(consumerRoot, "package.json"),
@@ -164,14 +216,22 @@ try {
   const loginCli = join(consumerNodeModules, "@paybond", "kit", "dist", "login.js");
   const loginHelp = run("node", [loginCli, "--help"], consumerRoot);
   assertIncludesAll(loginHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond login help");
-  const loginBinHelp = run("node", [loginBin, "--help"], consumerRoot);
-  assertIncludesAll(loginBinHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond .bin help");
+  const loginBinHelpViaNode = run("node", [loginBin, "--help"], consumerRoot);
+  assertIncludesAll(loginBinHelpViaNode, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond .bin help via node");
+  const loginBinHelp = run(loginBin, ["--help"], consumerRoot);
+  assertIncludesAll(loginBinHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond .bin executable help");
+  const loginCommandHelp = run(loginBin, ["login", "--help"], consumerRoot);
+  assertIncludesAll(loginCommandHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond login .bin executable help");
 
   const initCli = join(consumerNodeModules, "@paybond", "kit", "dist", "init.js");
-  const initBinHelp = run("node", [initBin, "--help"], consumerRoot);
-  assertIncludesAll(initBinHelp, ["paybond-init", "paid-tool-guard", "--framework"], "paybond-init .bin help");
-  const mcpBinHelp = runCombined("node", [mcpBin, "--help"], consumerRoot);
-  assertIncludesAll(mcpBinHelp, ["paybond-mcp-server", "PAYBOND_API_KEY"], "paybond-mcp-server .bin help");
+  const initBinHelpViaNode = run("node", [initBin, "--help"], consumerRoot);
+  assertIncludesAll(initBinHelpViaNode, ["paybond-init", "paid-tool-guard", "--framework"], "paybond-init .bin help via node");
+  const initBinHelp = run(initBin, ["--help"], consumerRoot);
+  assertIncludesAll(initBinHelp, ["paybond-init", "paid-tool-guard", "--framework"], "paybond-init .bin executable help");
+  const mcpBinHelpViaNode = runCombined("node", [mcpBin, "--help"], consumerRoot);
+  assertIncludesAll(mcpBinHelpViaNode, ["paybond-mcp-server", "PAYBOND_API_KEY"], "paybond-mcp-server .bin help via node");
+  const mcpBinHelp = runCombined(mcpBin, ["--help"], consumerRoot);
+  assertIncludesAll(mcpBinHelp, ["paybond-mcp-server", "PAYBOND_API_KEY"], "paybond-mcp-server .bin executable help");
 
   const scaffoldPath = join(consumerRoot, "paybond-paid-tool-guard.ts");
   runLogged(
@@ -193,6 +253,7 @@ try {
       "declare const process",
       "openPaybondFromEnv",
       "loadPaybondEnvFile",
+      "process.env.PAYBOND_GATEWAY_URL ?? process.env.PAYBOND_GATEWAY_BASE_URL",
       "Production integration helpers only.",
       "bootstrapSandboxGuardrailIntent",
       "wrapPaidTool",

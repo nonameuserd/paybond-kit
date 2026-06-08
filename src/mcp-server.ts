@@ -32,7 +32,7 @@ declare const Buffer: {
 };
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.6.0";
+const SERVER_VERSION = "0.9.7";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -60,9 +60,317 @@ type JSONRPCResponse = {
 
 type MCPToolDefinition = {
   name: string;
+  title?: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  annotations?: MCPToolAnnotations;
   call: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+};
+
+type MCPToolAnnotations = {
+  title?: string;
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+};
+
+type MCPToolSelectionMetadata = {
+  title: string;
+  description?: string;
+  outputSchema?: Record<string, unknown>;
+  annotations: MCPToolAnnotations;
+};
+
+const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
+  paybond_get_principal: {
+    title: "Get Paybond Principal",
+    annotations: readOnlyToolAnnotations("Get Paybond Principal"),
+    outputSchema: outputObjectSchema({
+      tenant_id: { type: "string", description: "Tenant bound to the configured Paybond API key." },
+      subject: { type: "string" },
+      roles: { type: "array", items: { type: "string" } },
+    }),
+  },
+  paybond_verify_capability: {
+    title: "Verify Paybond Capability",
+    description:
+      "Use this when you need raw capability-token verification for one tenant-bound Harbor intent. " +
+      "Do not use this to create, fund, or modify intents; use paybond_authorize_agent_spend as the clearer gate before side-effecting agent tools.",
+    annotations: additiveMutationToolAnnotations("Verify Paybond Capability"),
+    outputSchema: outputObjectSchema(
+      {
+        allow: { type: "boolean", description: "Whether the requested operation is allowed." },
+        tenant: { type: "string", description: "Tenant echoed by the gateway." },
+        intent_id: { type: "string", description: "Verified Harbor intent UUID." },
+        audit_id: { type: "string", description: "Gateway audit identifier when available." },
+      },
+      ["tenant", "intent_id"],
+    ),
+  },
+  paybond_authorize_agent_spend: {
+    title: "Authorize Agent Spend",
+    description:
+      "Use this when an agent has an intent_id and capability_token and needs a tenant-bound spend gate before calling a side-effecting tool, paid API, vendor action, or settlement workflow. " +
+      "Do not use this for creating, funding, or changing intents; call paybond_create_spend_intent or paybond_fund_intent first when no funded capability token exists.",
+    annotations: additiveMutationToolAnnotations("Authorize Agent Spend"),
+    outputSchema: outputObjectSchema(
+      {
+        allow: { type: "boolean", description: "Whether the requested operation is allowed." },
+        tenant: { type: "string", description: "Tenant echoed by the gateway." },
+        intent_id: { type: "string", description: "Verified Harbor intent UUID." },
+        audit_id: { type: "string", description: "Gateway audit identifier when available." },
+      },
+      ["tenant", "intent_id"],
+    ),
+  },
+  paybond_bootstrap_sandbox_guardrail: {
+    title: "Bootstrap Sandbox Guardrail",
+    description:
+      "Use this when building or testing a first paid-tool integration and you need a sandbox-only guardrail intent with no live settlement rails. " +
+      "Do not use this for production live money movement or already-created Harbor intents.",
+    annotations: additiveMutationToolAnnotations("Bootstrap Sandbox Guardrail"),
+    outputSchema: outputObjectSchema(
+      {
+        tenant_id: { type: "string" },
+        intent_id: { type: "string" },
+        capability_token: { type: "string" },
+        operation: { type: "string" },
+        requested_spend_cents: { type: "integer" },
+        sandbox_lifecycle_status: { type: "string" },
+        settlement_rail: { type: "string" },
+        settlement_mode: { type: "string" },
+      },
+      ["tenant_id", "intent_id", "capability_token", "operation", "requested_spend_cents", "sandbox_lifecycle_status"],
+    ),
+  },
+  paybond_submit_sandbox_guardrail_evidence: {
+    title: "Submit Sandbox Guardrail Evidence",
+    description:
+      "Use this when a sandbox guardrail intent needs evidence to complete simulator settlement or predicate checks. " +
+      "Do not use this for live Harbor spend evidence; use paybond_submit_spend_evidence for production spend intents.",
+    annotations: additiveMutationToolAnnotations("Submit Sandbox Guardrail Evidence"),
+    outputSchema: outputObjectSchema(
+      {
+        tenant_id: { type: "string" },
+        intent_id: { type: "string" },
+        operation: { type: "string" },
+        requested_spend_cents: { type: "integer" },
+        sandbox_lifecycle_status: { type: "string" },
+        predicate_passed: { type: "boolean" },
+        payload_digest: { type: "string" },
+      },
+      ["tenant_id", "intent_id", "operation", "requested_spend_cents", "sandbox_lifecycle_status"],
+    ),
+  },
+  paybond_list_intents: {
+    title: "List Harbor Intents",
+    annotations: readOnlyToolAnnotations("List Harbor Intents"),
+    outputSchema: outputObjectSchema({
+      items: { type: "array", items: { type: "object", additionalProperties: true } },
+      next_cursor: { type: "string" },
+    }),
+  },
+  paybond_get_intent: {
+    title: "Get Harbor Intent",
+    annotations: readOnlyToolAnnotations("Get Harbor Intent"),
+    outputSchema: outputObjectSchema({
+      intent_id: { type: "string" },
+      state: { type: "string" },
+      tenant_id: { type: "string" },
+    }),
+  },
+  paybond_get_reputation_receipt: {
+    title: "Get Reputation Receipt",
+    annotations: readOnlyToolAnnotations("Get Reputation Receipt"),
+    outputSchema: outputObjectSchema({
+      tenant_id: { type: "string" },
+      operator_did: { type: "string" },
+      signature_hex: { type: "string" },
+    }),
+  },
+  paybond_get_portfolio_summary: {
+    title: "Get Portfolio Summary",
+    annotations: readOnlyToolAnnotations("Get Portfolio Summary"),
+    outputSchema: outputObjectSchema({
+      tenant_id: { type: "string" },
+      score_model_version: { type: "string" },
+      operators: { type: "array", items: { type: "object", additionalProperties: true } },
+    }),
+  },
+  paybond_get_signed_portfolio_artifact: {
+    title: "Get Signed Portfolio Artifact",
+    annotations: readOnlyToolAnnotations("Get Signed Portfolio Artifact"),
+    outputSchema: outputObjectSchema({
+      tenant_id: { type: "string" },
+      kind: { type: "string" },
+      signature_hex: { type: "string" },
+      checkpoint_last_ledger_seq: { type: "integer" },
+    }),
+  },
+  paybond_get_fraud_assessment: {
+    title: "Get Fraud Assessment",
+    annotations: readOnlyToolAnnotations("Get Fraud Assessment"),
+    outputSchema: outputObjectSchema({
+      tenant_id: { type: "string" },
+      operator_did: { type: "string" },
+      fraud_assessment: { type: "object", additionalProperties: true },
+    }),
+  },
+  paybond_get_fraud_metrics: {
+    title: "Get Fraud Metrics",
+    annotations: readOnlyToolAnnotations("Get Fraud Metrics"),
+    outputSchema: outputObjectSchema({
+      tenant_id: { type: "string" },
+      window: { type: "string" },
+      flagged_operator_count: { type: "integer" },
+      critical_signal_count: { type: "integer" },
+    }),
+  },
+  paybond_get_a2a_agent_card: {
+    title: "Get A2A Agent Card",
+    annotations: readOnlyToolAnnotations("Get A2A Agent Card"),
+    outputSchema: outputObjectSchema({
+      name: { type: "string" },
+      version: { type: "string" },
+      skills: { type: "array", items: { type: "object", additionalProperties: true } },
+    }),
+  },
+  paybond_list_a2a_task_contracts: {
+    title: "List A2A Task Contracts",
+    annotations: readOnlyToolAnnotations("List A2A Task Contracts"),
+    outputSchema: outputObjectSchema({
+      contracts: { type: "array", items: { type: "object", additionalProperties: true } },
+    }),
+  },
+  paybond_get_a2a_task_contract: {
+    title: "Get A2A Task Contract",
+    annotations: readOnlyToolAnnotations("Get A2A Task Contract"),
+    outputSchema: outputObjectSchema({
+      id: { type: "string" },
+      name: { type: "string" },
+      description: { type: "string" },
+    }),
+  },
+  paybond_verify_agent_mandate_v1: {
+    title: "Verify Agent Mandate",
+    annotations: readOnlyToolAnnotations("Verify Agent Mandate"),
+    outputSchema: outputObjectSchema({
+      valid: { type: "boolean" },
+      mandate_digest_sha256_hex: { type: "string" },
+    }),
+  },
+  paybond_verify_agent_recognition_proof_v1: {
+    title: "Verify Agent Recognition Proof",
+    annotations: readOnlyToolAnnotations("Verify Agent Recognition Proof"),
+    outputSchema: outputObjectSchema({
+      valid: { type: "boolean" },
+      proof: { type: "object", additionalProperties: true },
+    }),
+  },
+  paybond_import_agent_mandate_v1: {
+    title: "Import Agent Mandate",
+    annotations: additiveMutationToolAnnotations("Import Agent Mandate"),
+    outputSchema: outputObjectSchema({
+      valid: { type: "boolean" },
+      intent_id: { type: "string" },
+      mandate_digest_sha256_hex: { type: "string" },
+      authorization_receipt: { type: "object", additionalProperties: true },
+    }),
+  },
+  paybond_get_settlement_receipt_v1: {
+    title: "Get Settlement Receipt",
+    annotations: readOnlyToolAnnotations("Get Settlement Receipt"),
+    outputSchema: outputObjectSchema(
+      {
+        tenant_id: { type: "string" },
+        receipt_id: { type: "string" },
+        intent_id: { type: "string" },
+      },
+      ["tenant_id", "receipt_id"],
+    ),
+  },
+  paybond_verify_protocol_receipt_v1: {
+    title: "Verify Protocol Receipt",
+    annotations: readOnlyToolAnnotations("Verify Protocol Receipt"),
+    outputSchema: outputObjectSchema({
+      valid: { type: "boolean" },
+      receipt_id: { type: "string" },
+    }),
+  },
+  paybond_create_intent: {
+    title: "Create Harbor Intent",
+    description:
+      "Use this when you already have a fully signed Harbor intent request body and replay-safe recognition proof for the gateway /harbor/intents route. " +
+      "Do not use this for the normal agent spend-control path unless you specifically need the low-level Harbor API; prefer paybond_create_spend_intent.",
+    annotations: additiveMutationToolAnnotations("Create Harbor Intent"),
+    outputSchema: outputObjectSchema({
+      intent_id: { type: "string" },
+      state: { type: "string" },
+      capability_token: { type: "string" },
+    }),
+  },
+  paybond_create_spend_intent: {
+    title: "Create Spend Intent",
+    description:
+      "Use this when an agent workflow needs a new Paybond spend intent with bounded budget, allowed operations, evidence requirements, and settlement review. " +
+      "Do not use this for checking an already funded capability token; use paybond_authorize_agent_spend before the paid action.",
+    annotations: additiveMutationToolAnnotations("Create Spend Intent"),
+    outputSchema: outputObjectSchema({
+      intent_id: { type: "string" },
+      state: { type: "string" },
+      capability_token: { type: "string" },
+    }),
+  },
+  paybond_fund_intent: {
+    title: "Fund Intent",
+    description:
+      "Use this when an existing Harbor intent needs to advance through funding via the gateway and you have a replay-safe recognition proof. " +
+      "Do not use this to create a new intent or to authorize a downstream tool call; use the returned intent_id and capability_token with paybond_authorize_agent_spend.",
+    annotations: liveMutationToolAnnotations("Fund Intent"),
+    outputSchema: outputObjectSchema({
+      intent_id: { type: "string" },
+      state: { type: "string" },
+      capability_token: { type: "string" },
+    }),
+  },
+  paybond_submit_evidence: {
+    title: "Submit Harbor Evidence",
+    description:
+      "Use this when you already have a Harbor evidence request body and recognition proof for the gateway /harbor/intents/{id}/evidence route. " +
+      "Do not use this for the high-level spend-control path unless you need the low-level Harbor API; prefer paybond_submit_spend_evidence.",
+    annotations: additiveMutationToolAnnotations("Submit Harbor Evidence"),
+    outputSchema: outputObjectSchema({
+      intent_id: { type: "string" },
+      state: { type: "string" },
+      evidence_id: { type: "string" },
+    }),
+  },
+  paybond_submit_spend_evidence: {
+    title: "Submit Spend Evidence",
+    description:
+      "Use this when a Paybond spend intent needs signed evidence so release, refund, review, and receipt generation use the same audit-ready record. " +
+      "Do not use this to create or fund intents, and do not use it for sandbox guardrail evidence.",
+    annotations: additiveMutationToolAnnotations("Submit Spend Evidence"),
+    outputSchema: outputObjectSchema({
+      intent_id: { type: "string" },
+      state: { type: "string" },
+      evidence_id: { type: "string" },
+    }),
+  },
+  paybond_confirm_settlement: {
+    title: "Confirm Settlement",
+    description:
+      "Use this when a Harbor intent is ready for final settlement confirmation and you have the signed body plus recognition proof. " +
+      "Do not use this for evidence submission or capability authorization.",
+    annotations: liveMutationToolAnnotations("Confirm Settlement"),
+    outputSchema: outputObjectSchema({
+      intent_id: { type: "string" },
+      state: { type: "string" },
+      receipt_id: { type: "string" },
+    }),
+  },
 };
 
 type MCPCallToolResult = {
@@ -603,8 +911,11 @@ export class PaybondMCPServer {
   listTools(): Array<Record<string, unknown>> {
     return this.tools.map((tool) => ({
       name: tool.name,
+      title: tool.title,
       description: tool.description,
       inputSchema: tool.inputSchema,
+      ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
+      ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
     }));
   }
 
@@ -659,7 +970,11 @@ export class PaybondMCPServer {
             },
             serverInfo: {
               name: SERVER_NAME,
+              title: "Paybond MCP",
               version: SERVER_VERSION,
+              description:
+                "Tenant-bound Paybond gateway tools for agent spend controls, Harbor intents, Signal reputation, fraud review, and protocol verification.",
+              websiteUrl: "https://paybond.ai",
             },
             instructions:
               "This MCP server is tenant-bound to the configured Paybond service-account API key. " +
@@ -1196,7 +1511,7 @@ export class PaybondMCPServer {
       },
     ];
 
-    return tools;
+    return tools.map((tool) => toolWithSelectionMetadata(tool));
   }
 }
 
@@ -1207,7 +1522,10 @@ export function settingsFromEnv(env: Record<string, string | undefined> = proces
     throw new Error("PAYBOND_API_KEY is required; run paybond login or configure your MCP host environment");
   }
   return {
-    gatewayBaseUrl: optionalEnv(env.PAYBOND_GATEWAY_BASE_URL) ?? DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+    gatewayBaseUrl:
+      optionalEnv(env.PAYBOND_GATEWAY_URL) ??
+      optionalEnv(env.PAYBOND_GATEWAY_BASE_URL) ??
+      DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     apiKey,
     principalPath: optionalEnv(env.PAYBOND_PRINCIPAL_PATH) ?? DEFAULT_PRINCIPAL_PATH,
     maxRetries: optionalEnv(env.PAYBOND_MCP_MAX_RETRIES)
@@ -1325,6 +1643,57 @@ function emptyObjectSchema(): Record<string, unknown> {
     type: "object",
     properties: {},
     additionalProperties: false,
+  };
+}
+
+function outputObjectSchema(properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> {
+  return {
+    type: "object",
+    properties,
+    additionalProperties: true,
+    ...(required.length === 0 ? {} : { required }),
+  };
+}
+
+function readOnlyToolAnnotations(title: string): MCPToolAnnotations {
+  return {
+    title,
+    readOnlyHint: true,
+    openWorldHint: false,
+  };
+}
+
+function additiveMutationToolAnnotations(title: string): MCPToolAnnotations {
+  return {
+    title,
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: false,
+    openWorldHint: true,
+  };
+}
+
+function liveMutationToolAnnotations(title: string): MCPToolAnnotations {
+  return {
+    title,
+    readOnlyHint: false,
+    destructiveHint: true,
+    idempotentHint: false,
+    openWorldHint: true,
+  };
+}
+
+function toolWithSelectionMetadata(tool: MCPToolDefinition): MCPToolDefinition {
+  const metadata = TOOL_SELECTION_METADATA[tool.name];
+  if (metadata === undefined) {
+    throw new Error(`missing MCP tool selection metadata for ${tool.name}`);
+  }
+  return {
+    ...tool,
+    title: metadata.title,
+    description: metadata.description ?? tool.description,
+    outputSchema: metadata.outputSchema,
+    annotations: metadata.annotations,
   };
 }
 
