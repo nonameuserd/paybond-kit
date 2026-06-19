@@ -16,6 +16,11 @@ declare const Buffer: {
   };
 };
 
+export type SpendScope = {
+  scope_type: string;
+  scope_key: string;
+};
+
 export type VerifyCapabilityResult = {
   allow: boolean;
   auditId: string;
@@ -23,7 +28,102 @@ export type VerifyCapabilityResult = {
   intentId: string;
   code?: string;
   message?: string;
+  decisionId?: string;
+  approvalRequestId?: string;
+  policyVersion?: number;
+  reasonCodes?: string[];
+  spendScope?: SpendScope;
+  remainingCents?: number;
+  retryAfter?: number;
+  /** True when gateway policy requires operator approval before execution may proceed. */
+  approvalRequired?: boolean;
 };
+
+export type PaybondSpendAuthorizationInput = {
+  operation: string;
+  requestedSpendCents?: number;
+  vendorId?: string;
+  taskId?: string;
+  workflowId?: string;
+  toolCallId?: string;
+  toolName?: string;
+  currency?: string;
+  agentSubject?: string;
+  approvalToken?: string;
+  idempotencyKey?: string;
+};
+
+function parseVerifyCapabilityBody(
+  body: Record<string, unknown>,
+  expectedTenant: string,
+  expectedIntentId: string,
+): VerifyCapabilityResult {
+  const tenant = String(body.tenant ?? "");
+  const intentId = String(body.intent_id ?? "");
+  if (tenant !== expectedTenant) {
+    throw new Error(`verify tenant mismatch: client=${expectedTenant} remote=${tenant}`);
+  }
+  if (intentId !== expectedIntentId) {
+    throw new Error(`verify intent mismatch: requested=${expectedIntentId} remote=${intentId}`);
+  }
+  const reasonCodes = Array.isArray(body.reason_codes)
+    ? body.reason_codes.map((value) => String(value))
+    : undefined;
+  const spendScope =
+    body.spend_scope && typeof body.spend_scope === "object" && !Array.isArray(body.spend_scope)
+      ? {
+          scope_type: String((body.spend_scope as Record<string, unknown>).scope_type ?? ""),
+          scope_key: String((body.spend_scope as Record<string, unknown>).scope_key ?? ""),
+        }
+      : undefined;
+  const code = body.code != null ? String(body.code) : undefined;
+  const approvalRequired =
+    code === "approval_required" ||
+    reasonCodes?.includes("approval_threshold_exceeded") ||
+    reasonCodes?.includes("approval_required_pending") ||
+    reasonCodes?.includes("anomaly_new_vendor") ||
+    reasonCodes?.includes("anomaly_amount_spike") ||
+    reasonCodes?.includes("anomaly_rapid_auth") ||
+    reasonCodes?.includes("anomaly_cap_proximity") ||
+    false;
+  return {
+    allow: Boolean(body.allow),
+    auditId: String(body.audit_id ?? ""),
+    tenant,
+    intentId,
+    code,
+    message: body.message != null ? String(body.message) : undefined,
+    decisionId: body.decision_id != null ? String(body.decision_id) : undefined,
+    approvalRequestId: body.approval_request_id != null ? String(body.approval_request_id) : undefined,
+    policyVersion: typeof body.policy_version === "number" ? body.policy_version : undefined,
+    reasonCodes,
+    spendScope,
+    remainingCents: typeof body.remaining_cents === "number" ? body.remaining_cents : undefined,
+    retryAfter: typeof body.retry_after === "number" ? body.retry_after : undefined,
+    approvalRequired,
+  };
+}
+
+function verifyCapabilityPayload(
+  input: PaybondSpendAuthorizationInput & { intentId: string; token: string },
+): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    intent_id: input.intentId,
+    token: input.token,
+    operation: input.operation,
+    requested_spend_cents: input.requestedSpendCents ?? 0,
+  };
+  if (input.vendorId?.trim()) payload.vendor_id = input.vendorId.trim();
+  if (input.taskId?.trim()) payload.task_id = input.taskId.trim();
+  if (input.workflowId?.trim()) payload.workflow_id = input.workflowId.trim();
+  if (input.toolCallId?.trim()) payload.tool_call_id = input.toolCallId.trim();
+  if (input.toolName?.trim()) payload.tool_name = input.toolName.trim();
+  if (input.currency?.trim()) payload.currency = input.currency.trim();
+  if (input.agentSubject?.trim()) payload.agent_subject = input.agentSubject.trim();
+  if (input.approvalToken?.trim()) payload.approval_token = input.approvalToken.trim();
+  if (input.idempotencyKey?.trim()) payload.idempotency_key = input.idempotencyKey.trim();
+  return payload;
+}
 
 export type SubmitEvidenceResult = {
   intentId: string;
@@ -898,10 +998,9 @@ export class PaybondCapabilityBinding {
 
   async verifySpendCapability(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
     return this.harbor.verifyCapability({
+      ...input,
       intentId: this.intentId,
       token: this.capabilityToken,
-      operation: input.operation,
-      requestedSpendCents: input.requestedSpendCents,
     });
   }
 
@@ -911,15 +1010,26 @@ export class PaybondCapabilityBinding {
 }
 
 export type PaybondSpendGuardInit = {
-  harbor: Pick<HarborClient | GatewayHarborClient, "tenantId" | "verifyCapability">;
+  harbor: Pick<HarborClient | GatewayHarborClient, "tenantId" | "verifyCapability"> & {
+    completeSpendDecision?: (input: {
+      decisionId: string;
+      outcome: "consumed" | "released";
+    }) => Promise<void>;
+  };
   intentId: string;
   capabilityToken: string;
 };
 
-export type PaybondSpendAuthorizationInput = {
-  operation: string;
-  requestedSpendCents?: number;
-};
+export class PaybondSpendApprovalRequiredError extends Error {
+  readonly result: VerifyCapabilityResult;
+
+  constructor(result: VerifyCapabilityResult) {
+    const reason = result.message ?? result.code ?? "approval_required";
+    super(`Paybond spend authorization requires approval: ${reason}`);
+    this.name = "PaybondSpendApprovalRequiredError";
+    this.result = result;
+  }
+}
 
 export class PaybondSpendDeniedError extends Error {
   readonly result: VerifyCapabilityResult;
@@ -941,7 +1051,7 @@ export type PaybondGuardedToolHandler<TArgs extends unknown[], TResult> = (
 ) => Promise<Awaited<TResult>>;
 
 export class PaybondSpendGuard {
-  public readonly harbor: Pick<HarborClient | GatewayHarborClient, "tenantId" | "verifyCapability">;
+  public readonly harbor: PaybondSpendGuardInit["harbor"];
   public readonly intentId: string;
   public readonly capabilityToken: string;
 
@@ -953,10 +1063,9 @@ export class PaybondSpendGuard {
 
   async verifySpendCapability(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
     return this.harbor.verifyCapability({
+      ...input,
       intentId: this.intentId,
       token: this.capabilityToken,
-      operation: input.operation,
-      requestedSpendCents: input.requestedSpendCents,
     });
   }
 
@@ -967,9 +1076,24 @@ export class PaybondSpendGuard {
   async assertSpendAuthorized(input: PaybondSpendAuthorizationInput): Promise<VerifyCapabilityResult> {
     const result = await this.authorizeSpend(input);
     if (!result.allow) {
+      if (result.approvalRequired) {
+        throw new PaybondSpendApprovalRequiredError(result);
+      }
       throw new PaybondSpendDeniedError(result);
     }
     return result;
+  }
+
+  /** Finalizes scope reservations tied to an authorization decision after tool execution. */
+  async completeSpendAuthorization(
+    decisionId: string,
+    outcome: "consumed" | "released",
+  ): Promise<void> {
+    const complete = this.harbor.completeSpendDecision;
+    if (!complete) {
+      return;
+    }
+    await complete.call(this.harbor, { decisionId, outcome });
   }
 
   guardTool<TArgs extends unknown[], TResult>(
@@ -977,8 +1101,23 @@ export class PaybondSpendGuard {
     handler: PaybondToolHandler<TArgs, TResult>,
   ): PaybondGuardedToolHandler<TArgs, TResult> {
     return async (...args: TArgs): Promise<Awaited<TResult>> => {
-      await this.assertSpendAuthorized(input);
-      return await handler(...args);
+      const auth = await this.assertSpendAuthorized(input);
+      try {
+        const result = await handler(...args);
+        if (auth.decisionId) {
+          await this.completeSpendAuthorization(auth.decisionId, "consumed");
+        }
+        return result;
+      } catch (err) {
+        if (auth.decisionId) {
+          try {
+            await this.completeSpendAuthorization(auth.decisionId, "released");
+          } catch {
+            // Best-effort release when the guarded handler fails.
+          }
+        }
+        throw err;
+      }
     };
   }
 }
@@ -1051,6 +1190,9 @@ export function paybondRuntimeToolCallAdapter<TCall, TResult>(
     if (!result.allow) {
       if (init.onDeny) {
         return await init.onDeny(result, call);
+      }
+      if (result.approvalRequired) {
+        throw new PaybondSpendApprovalRequiredError(result);
       }
       throw new PaybondSpendDeniedError(result);
     }
@@ -1214,19 +1356,12 @@ export class HarborClient {
    * @throws HarborHttpError when HTTP fails
    * @throws Error when Harbor echoes a different tenant / intent than requested
    */
-  async verifyCapability(input: {
+  async verifyCapability(input: PaybondSpendAuthorizationInput & {
     intentId: string;
     token: string;
-    operation: string;
-    requestedSpendCents?: number;
   }): Promise<VerifyCapabilityResult> {
     const url = `${this.base}verify`;
-    const payload = {
-      intent_id: input.intentId,
-      token: input.token,
-      operation: input.operation,
-      requested_spend_cents: input.requestedSpendCents ?? 0,
-    };
+    const payload = verifyCapabilityPayload(input);
     const res = await this.fetchWithRetries(
       url,
       {
@@ -1234,6 +1369,7 @@ export class HarborClient {
         headers: {
           "content-type": "application/json",
           "x-tenant-id": this.tenantId,
+          ...(input.idempotencyKey?.trim() ? { "idempotency-key": input.idempotencyKey.trim() } : {}),
         },
         body: JSON.stringify(payload),
       },
@@ -1247,32 +1383,8 @@ export class HarborClient {
         bodyText: text,
       });
     }
-    const body = JSON.parse(text) as {
-      allow: boolean;
-      audit_id: string;
-      tenant: string;
-      intent_id: string;
-      code?: string;
-      message?: string;
-    };
-    if (body.tenant !== this.tenantId) {
-      throw new Error(
-        `verify tenant mismatch: client=${this.tenantId} harbor=${body.tenant}`,
-      );
-    }
-    if (body.intent_id !== input.intentId) {
-      throw new Error(
-        `verify intent mismatch: requested=${input.intentId} harbor=${body.intent_id}`,
-      );
-    }
-    return {
-      allow: body.allow,
-      auditId: body.audit_id,
-      tenant: body.tenant,
-      intentId: body.intent_id,
-      code: body.code,
-      message: body.message,
-    };
+    const body = JSON.parse(text) as Record<string, unknown>;
+    return parseVerifyCapabilityBody(body, this.tenantId, input.intentId);
   }
 
   async verifySpendCapability(input: {
@@ -1646,19 +1758,16 @@ export class GatewayHarborClient {
     });
   }
 
-  async verifyCapability(input: {
+  async verifyCapability(input: PaybondSpendAuthorizationInput & {
     intentId: string;
     token: string;
-    operation: string;
-    requestedSpendCents?: number;
   }): Promise<VerifyCapabilityResult> {
-    const payload = {
-      intent_id: input.intentId,
-      token: input.token,
-      operation: input.operation,
-      requested_spend_cents: input.requestedSpendCents ?? 0,
-    };
-    const { res, text, url } = await this.postJSON("/verify", payload);
+    const payload = verifyCapabilityPayload(input);
+    const headers: Record<string, string> = {};
+    if (input.idempotencyKey?.trim()) {
+      headers["idempotency-key"] = input.idempotencyKey.trim();
+    }
+    const { res, text, url } = await this.postJSON("/verify", payload, headers);
     if (!res.ok) {
       throw new HarborHttpError(`Gateway verify HTTP ${res.status}: ${text}`, {
         statusCode: res.status,
@@ -1666,28 +1775,8 @@ export class GatewayHarborClient {
         bodyText: text,
       });
     }
-    const body = JSON.parse(text) as {
-      allow: boolean;
-      audit_id: string;
-      tenant: string;
-      intent_id: string;
-      code?: string;
-      message?: string;
-    };
-    if (body.tenant !== this.tenantId) {
-      throw new Error(`verify tenant mismatch: client=${this.tenantId} gateway=${body.tenant}`);
-    }
-    if (body.intent_id !== input.intentId) {
-      throw new Error(`verify intent mismatch: requested=${input.intentId} gateway=${body.intent_id}`);
-    }
-    return {
-      allow: body.allow,
-      auditId: body.audit_id,
-      tenant: body.tenant,
-      intentId: body.intent_id,
-      code: body.code,
-      message: body.message,
-    };
+    const body = JSON.parse(text) as Record<string, unknown>;
+    return parseVerifyCapabilityBody(body, this.tenantId, input.intentId);
   }
 
   async verifySpendCapability(input: {
@@ -1706,6 +1795,24 @@ export class GatewayHarborClient {
     requestedSpendCents?: number;
   }): Promise<VerifyCapabilityResult> {
     return this.verifyCapability(input);
+  }
+
+  /** Finalizes active spend reservations after tool execution completes or is aborted. */
+  async completeSpendDecision(input: {
+    decisionId: string;
+    outcome: "consumed" | "released";
+  }): Promise<void> {
+    const { res, text, url } = await this.postJSON(
+      `/v1/spend/decisions/${encodeURIComponent(input.decisionId)}/complete`,
+      { outcome: input.outcome },
+    );
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway spend complete HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
   }
 
   async createIntent(

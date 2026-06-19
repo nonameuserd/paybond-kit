@@ -9,6 +9,7 @@ import {
   HarborHttpError,
   Paybond,
   PaybondIntents,
+  PaybondSpendApprovalRequiredError,
   PaybondSpendDeniedError,
   PaybondSpendGuard,
   ProtocolHttpError,
@@ -327,6 +328,48 @@ describe("PaybondSpendGuard", () => {
       guard.guardTool({ operation: "travel.book_hotel" }, tool)(),
     ).rejects.toBeInstanceOf(PaybondSpendDeniedError);
     expect(tool).not.toHaveBeenCalled();
+  });
+
+  it("raises approval-required separately from hard denial", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
+      allow: false,
+      auditId: "550e8400-e29b-41d4-a716-446655440001",
+      tenant: "tenant-a",
+      intentId,
+      code: "approval_required",
+      message: "operator approval required",
+      approvalRequestId: "550e8400-e29b-41d4-a716-446655440002",
+      approvalRequired: true,
+    });
+    const guard = new PaybondSpendGuard({ harbor, intentId, capabilityToken: "cap-token" });
+    const tool = vi.fn(async () => "ok");
+    await expect(
+      guard.guardTool({ operation: "travel.book_hotel", vendorId: "vendor_acme" }, tool)(),
+    ).rejects.toBeInstanceOf(PaybondSpendApprovalRequiredError);
+    expect(tool).not.toHaveBeenCalled();
+  });
+
+  it("runtime adapter raises approval-required separately from hard denial", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
+      allow: false,
+      auditId: "550e8400-e29b-41d4-a716-446655440001",
+      tenant: "tenant-a",
+      intentId,
+      code: "approval_required",
+      approvalRequired: true,
+    });
+    const execute = vi.fn(async () => ({ status: "ok" }));
+    const run = paybondRuntimeToolCallAdapter({
+      source: { harbor, intentId, capabilityToken: "cap-token" },
+      operation: "travel.book_hotel",
+      execute,
+    });
+    await expect(run({})).rejects.toBeInstanceOf(PaybondSpendApprovalRequiredError);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("exports runtime-neutral guard aliases", () => {

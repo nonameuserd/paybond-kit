@@ -32,7 +32,7 @@ declare const Buffer: {
 };
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.9.7";
+const SERVER_VERSION = "0.9.8";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
