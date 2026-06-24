@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSignedCreateIntentBody, intentCreationSignBytesRaw } from "./principal-intent.js";
+import { buildSignedCreateIntentBody, intentCreationSignBytesRaw } from "../src/principal-intent.js";
 
 describe("intentCreationSignBytesRaw", () => {
   it("matches harbor-intent-escrow signing golden", () => {

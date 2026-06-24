@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { main } from "./init.js";
+import { main } from "../src/init.js";
 
 describe("paybond-init", () => {
   const originalExitCode = process.exitCode;

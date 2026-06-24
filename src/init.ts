@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import { runCli } from "./cli/router.js";
+
 declare const process: {
   argv: string[];
   cwd(): string;
@@ -107,7 +113,8 @@ function parseArgs(argv: string[]): { preset: Preset; framework: Framework; out:
 }
 
 function template(framework: Framework): string {
-  return `import {
+  return `import fs from "node:fs/promises";
+import {
   Paybond,
   type SandboxGuardrailBootstrapResult,
   type SandboxGuardrailEvidenceResult,
@@ -167,8 +174,6 @@ function readEnvValue(body: string, key: string): string | undefined {
 }
 
 async function readTextFile(envFile: string): Promise<string | undefined> {
-  // @ts-ignore Node builtins are available in agent and CLI Node runtimes.
-  const fs: { readFile(path: string, encoding: "utf8"): Promise<string> } = await import("node:fs/promises");
   try {
     return await fs.readFile(envFile, "utf8");
   } catch (err) {
@@ -268,8 +273,6 @@ export async function submitSandboxEvidence(
 }
 
 async function writeScaffold(out: string, body: string, force: boolean): Promise<void> {
-  // @ts-expect-error Node builtins are available in the published CLI runtime.
-  const fs = await import("node:fs/promises");
   try {
     await fs.stat(out);
     if (!force) {
@@ -315,15 +318,6 @@ async function invokedFromCLI(): Promise<boolean> {
   if (!scriptPath) {
     return false;
   }
-  // @ts-ignore Node builtins are available in the published CLI runtime.
-  const fs = (await import("node:fs/promises")) as { realpath(path: string): Promise<string> };
-  // @ts-ignore Node builtins are available in the published CLI runtime.
-  const path = (await import("node:path")) as { resolve(...parts: string[]): string };
-  // @ts-ignore Node builtins are available in the published CLI runtime.
-  const url = (await import("node:url")) as {
-    fileURLToPath(value: string): string;
-    pathToFileURL(value: string): { href: string };
-  };
 
   async function realFileURL(filePath: string): Promise<string> {
     let resolved = path.resolve(filePath);
@@ -333,17 +327,17 @@ async function invokedFromCLI(): Promise<boolean> {
       // If realpath fails, compare the absolute path. This keeps direct execution
       // working even when the script path disappears during process startup.
     }
-    return normalizeFileURL(url.pathToFileURL(resolved).href);
+    return normalizeFileURL(pathToFileURL(resolved).href);
   }
 
-  return (await realFileURL(scriptPath)) === (await realFileURL(url.fileURLToPath(import.meta.url)));
+  return (await realFileURL(scriptPath)) === (await realFileURL(fileURLToPath(import.meta.url)));
 }
 
 invokedFromCLI().then((invoked) => {
   if (!invoked) {
     return;
   }
-  main().then((code) => {
+  runCli(["init", "guardrail", ...process.argv.slice(2)]).then((code) => {
     process.exitCode = code;
   }, (err) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { assertGitIgnored, parseArgs, runLogin, writeEnvFile } from "./login.js";
+import { assertGitIgnored, parseArgs, runLogin, writeEnvFile } from "../src/login.js";
 
 const RAW_KEY =
   "paybond_sk_sandbox_0123456789abcdef0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -68,20 +68,22 @@ describe("paybond login", () => {
         }),
       );
 
-    await expect(
-      runLogin(
-        { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
-        {
-          cwd,
-          fetch: fetchMock,
-          sleep: async (ms) => {
-            sleeps.push(ms);
-          },
-          stdout: stdout.writer,
-          now: () => 0,
+    const result = await runLogin(
+      { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
+      {
+        cwd,
+        fetch: fetchMock,
+        sleep: async (ms) => {
+          sleeps.push(ms);
         },
-      ),
-    ).resolves.toBe(0);
+        stdout: stdout.writer,
+        now: () => 0,
+      },
+    );
+
+    expect(result.keyWritten).toBe(true);
+    expect(result.keyMasked).toBe("paybond_sk_sandbox_01234567...cdef");
+    expect(result.tenantId).toBe("tenant-sandbox");
 
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(sleeps).toEqual([5000, 5000]);
@@ -198,12 +200,12 @@ describe("paybond login", () => {
         }),
       );
 
-    await expect(
-      runLogin(
-        { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
-        { cwd, fetch: fetchMock, sleep: async () => {}, now: () => 0 },
-      ),
-    ).resolves.toBe(0);
+    const result = await runLogin(
+      { envFile: ".env.local", gateway: "https://gateway.test", environment: "sandbox", noOpen: true, force: false },
+      { cwd, fetch: fetchMock, sleep: async () => {}, now: () => 0 },
+    );
+
+    expect(result.keyWritten).toBe(true);
 
     expect(await readFile(join(cwd, ".gitignore"), "utf8")).toContain(".env.local");
     await expect(assertGitIgnored(join(cwd, ".env.local"), cwd)).resolves.toBeUndefined();

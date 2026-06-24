@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   GatewayA2AClient,
-  GatewayAuthError,
   GatewayFraudClient,
   GatewayProtocolClient,
   GatewaySignalClient,
@@ -19,7 +18,7 @@ import {
   paybondAgentToolSpendGuard,
   paybondRuntimeNeutralToolSpendGuard,
   paybondRuntimeToolCallAdapter,
-} from "./index.js";
+} from "../src/index.js";
 
 describe("HarborClient", () => {
   afterEach(() => {
@@ -31,18 +30,19 @@ describe("HarborClient", () => {
     const intent = "550e8400-e29b-41d4-a716-446655440000";
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            allow: true,
-            audit_id: "550e8400-e29b-41d4-a716-446655440001",
-            tenant: "other",
-            intent_id: intent,
-            code: null,
-            message: null,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              allow: true,
+              audit_id: "550e8400-e29b-41d4-a716-446655440001",
+              tenant: "other",
+              intent_id: intent,
+              code: null,
+              message: null,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     const c = new HarborClient("https://harbor.test", "tenant-a");
@@ -80,34 +80,36 @@ describe("HarborClient", () => {
     const intent = "550e8400-e29b-41d4-a716-446655440010";
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            intent_id: intent,
-            tenant: "tenant-a",
-            state: "open",
-            settlement_rail: "x402_usdc_base",
-            currency: "usd",
-            amount_cents: 2000,
-            funded: false,
-            funding: {
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              intent_id: intent,
+              tenant: "tenant-a",
+              state: "open",
               settlement_rail: "x402_usdc_base",
-              harbor_fund_endpoint: `/intents/${intent}/fund`,
-              status: "authorization_pending",
-              payment_session_id: "paymentSession_test",
-              payment_url: "https://pay.coinbase.com/payment-sessions/paymentSession_test",
-              asset: "usdc",
-              network: "base",
+              currency: "usd",
+              amount_cents: 2000,
+              funded: false,
+              funding: {
+                settlement_rail: "x402_usdc_base",
+                harbor_fund_endpoint: `/intents/${intent}/fund`,
+                status: "authorization_pending",
+                payment_session_id: "paymentSession_test",
+                payment_url:
+                  "https://pay.coinbase.com/payment-sessions/paymentSession_test",
+                asset: "usdc",
+                network: "base",
+              },
+            }),
+            {
+              status: 402,
+              headers: {
+                "content-type": "application/json",
+                "payment-required": "x402-requirements",
+              },
             },
-          }),
-          {
-            status: 402,
-            headers: {
-              "content-type": "application/json",
-              "payment-required": "x402-requirements",
-            },
-          },
-        ),
+          ),
       ),
     );
     const c = new HarborClient("https://harbor.test", "tenant-a");
@@ -127,39 +129,40 @@ describe("HarborClient", () => {
     const intent = "550e8400-e29b-41d4-a716-446655440011";
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            intent_id: intent,
-            tenant: "tenant-a",
-            state: "open",
-            settlement_rail: "stripe_ach_debit",
-            currency: "usd",
-            amount_cents: 4200,
-            funded: false,
-            funding: {
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              intent_id: intent,
+              tenant: "tenant-a",
+              state: "open",
               settlement_rail: "stripe_ach_debit",
-              harbor_fund_endpoint: `/intents/${intent}/fund`,
-              status: "requires_payment_method",
-              stripe_payment_intent_id: "pi_ach_123",
-              client_secret: "pi_ach_123_secret_abc",
-              stripe_connect_destination: "acct_123",
-              stripe_customer_id: "cus_123",
-              payment_method_id: "pm_123",
-              mandate_id: "mandate_123",
-              financial_connections_account_id: "fca_123",
-              bank_last4: "6789",
-              bank_fingerprint: "bankfp_123",
-              bank_name: "Test Bank",
-              expected_debit_date: "2026-06-05",
-              payment_reference: "PAYBOND-ACH-123",
+              currency: "usd",
+              amount_cents: 4200,
+              funded: false,
+              funding: {
+                settlement_rail: "stripe_ach_debit",
+                harbor_fund_endpoint: `/intents/${intent}/fund`,
+                status: "requires_payment_method",
+                stripe_payment_intent_id: "pi_ach_123",
+                client_secret: "pi_ach_123_secret_abc",
+                stripe_connect_destination: "acct_123",
+                stripe_customer_id: "cus_123",
+                payment_method_id: "pm_123",
+                mandate_id: "mandate_123",
+                financial_connections_account_id: "fca_123",
+                bank_last4: "6789",
+                bank_fingerprint: "bankfp_123",
+                bank_name: "Test Bank",
+                expected_debit_date: "2026-06-05",
+                payment_reference: "PAYBOND-ACH-123",
+              },
+            }),
+            {
+              status: 202,
+              headers: { "content-type": "application/json" },
             },
-          }),
-          {
-            status: 202,
-            headers: { "content-type": "application/json" },
-          },
-        ),
+          ),
       ),
     );
     const c = new HarborClient("https://harbor.test", "tenant-a");
@@ -188,17 +191,18 @@ describe("HarborClient", () => {
   it("getLedgerTip rejects ledger tenant echo mismatch", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            schema_version: 1,
-            tenant_id: "other",
-            seq: 0,
-            entry_commitment_hex: "00".repeat(32),
-            empty: true,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              schema_version: 1,
+              tenant_id: "other",
+              seq: 0,
+              entry_commitment_hex: "00".repeat(32),
+              empty: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     const c = new HarborClient("https://harbor.test", "tenant-a");
@@ -235,12 +239,14 @@ describe("PaybondIntents", () => {
   it("defaults evidence artifacts and submitted-at timestamp", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
     const harbor = new HarborClient("https://harbor.test", "tenant-a");
-    const submitEvidence = vi.spyOn(harbor, "submitEvidence").mockResolvedValue({
-      intentId,
-      tenant: "tenant-a",
-      state: "evidence_submitted",
-      predicatePassed: true,
-    });
+    const submitEvidence = vi
+      .spyOn(harbor, "submitEvidence")
+      .mockResolvedValue({
+        intentId,
+        tenant: "tenant-a",
+        state: "evidence_submitted",
+        predicatePassed: true,
+      });
 
     const intents = new PaybondIntents(harbor);
     await intents.submitEvidence({
@@ -260,9 +266,11 @@ describe("PaybondIntents", () => {
 
   it("exposes createSpendIntent as an alias for create", async () => {
     const harbor = new HarborClient("https://harbor.test", "tenant-a");
-    const create = vi.spyOn(PaybondIntents.prototype, "create").mockResolvedValue({
-      intent_id: "550e8400-e29b-41d4-a716-446655440000",
-    });
+    const create = vi
+      .spyOn(PaybondIntents.prototype, "create")
+      .mockResolvedValue({
+        intent_id: "550e8400-e29b-41d4-a716-446655440000",
+      });
     const intents = new PaybondIntents(harbor);
     await expect(
       intents.createSpendIntent({
@@ -300,7 +308,11 @@ describe("PaybondSpendGuard", () => {
       tenant: "tenant-a",
       intentId,
     });
-    const guard = new PaybondSpendGuard({ harbor, intentId, capabilityToken: "cap-token" });
+    const guard = new PaybondSpendGuard({
+      harbor,
+      intentId,
+      capabilityToken: "cap-token",
+    });
     const tool = vi.fn(async (city: string) => ({ city }));
     await expect(
       guard.guardTool(
@@ -322,7 +334,11 @@ describe("PaybondSpendGuard", () => {
       code: "policy_mismatch",
       message: "budget exceeded",
     });
-    const guard = new PaybondSpendGuard({ harbor, intentId, capabilityToken: "cap-token" });
+    const guard = new PaybondSpendGuard({
+      harbor,
+      intentId,
+      capabilityToken: "cap-token",
+    });
     const tool = vi.fn(async () => "ok");
     await expect(
       guard.guardTool({ operation: "travel.book_hotel" }, tool)(),
@@ -343,10 +359,17 @@ describe("PaybondSpendGuard", () => {
       approvalRequestId: "550e8400-e29b-41d4-a716-446655440002",
       approvalRequired: true,
     });
-    const guard = new PaybondSpendGuard({ harbor, intentId, capabilityToken: "cap-token" });
+    const guard = new PaybondSpendGuard({
+      harbor,
+      intentId,
+      capabilityToken: "cap-token",
+    });
     const tool = vi.fn(async () => "ok");
     await expect(
-      guard.guardTool({ operation: "travel.book_hotel", vendorId: "vendor_acme" }, tool)(),
+      guard.guardTool(
+        { operation: "travel.book_hotel", vendorId: "vendor_acme" },
+        tool,
+      )(),
     ).rejects.toBeInstanceOf(PaybondSpendApprovalRequiredError);
     expect(tool).not.toHaveBeenCalled();
   });
@@ -368,7 +391,9 @@ describe("PaybondSpendGuard", () => {
       operation: "travel.book_hotel",
       execute,
     });
-    await expect(run({})).rejects.toBeInstanceOf(PaybondSpendApprovalRequiredError);
+    await expect(run({})).rejects.toBeInstanceOf(
+      PaybondSpendApprovalRequiredError,
+    );
     expect(execute).not.toHaveBeenCalled();
   });
 
@@ -386,9 +411,11 @@ describe("PaybondSpendGuard", () => {
       tenant: "tenant-a",
       intentId,
     });
-    const execute = vi.fn(async (call: { name: string; spend: number; city: string }) => ({
-      confirmation: `demo-${call.city}`,
-    }));
+    const execute = vi.fn(
+      async (call: { name: string; spend: number; city: string }) => ({
+        confirmation: `demo-${call.city}`,
+      }),
+    );
     const run = paybondRuntimeToolCallAdapter({
       source: { harbor, intentId, capabilityToken: "cap-token" },
       operation: (call: { name: string }) => call.name,
@@ -427,7 +454,10 @@ describe("PaybondSpendGuard", () => {
       onDeny: (result) => ({ status: "blocked", reason: result.message }),
     });
 
-    await expect(run({})).resolves.toEqual({ status: "blocked", reason: "budget exceeded" });
+    await expect(run({})).resolves.toEqual({
+      status: "blocked",
+      reason: "budget exceeded",
+    });
     expect(execute).not.toHaveBeenCalled();
   });
 });
@@ -522,7 +552,9 @@ describe("Paybond", () => {
             { status: 201, headers: { "content-type": "application/json" } },
           );
         }
-        expect(url).toBe(`https://api.paybond.ai/v1/sandbox/guardrails/${intent}/evidence`);
+        expect(url).toBe(
+          `https://api.paybond.ai/v1/sandbox/guardrails/${intent}/evidence`,
+        );
         expect(JSON.parse(String(init?.body))).toMatchObject({
           operation: "vendor.lookup",
           requested_spend_cents: 250,
@@ -544,7 +576,10 @@ describe("Paybond", () => {
       }),
     );
 
-    const paybond = await Paybond.open({ apiKey, expectedEnvironment: "sandbox" });
+    const paybond = await Paybond.open({
+      apiKey,
+      expectedEnvironment: "sandbox",
+    });
     await expect(
       paybond.guardrails.bootstrapSandbox({
         operation: "vendor.lookup",
@@ -572,7 +607,9 @@ describe("Paybond", () => {
       requested_spend_cents: 250,
       sandbox_lifecycle_status: "released",
     });
-    expect(calls.filter((call) => call.url.includes("/v1/sandbox/guardrails/"))).toHaveLength(2);
+    expect(
+      calls.filter((call) => call.url.includes("/v1/sandbox/guardrails/")),
+    ).toHaveLength(2);
   });
 
   it("rejects sandbox guardrail tenant drift", async () => {
@@ -601,7 +638,10 @@ describe("Paybond", () => {
       }),
     );
 
-    const paybond = await Paybond.open({ apiKey, expectedEnvironment: "sandbox" });
+    const paybond = await Paybond.open({
+      apiKey,
+      expectedEnvironment: "sandbox",
+    });
     await expect(
       paybond.guardrails.bootstrapSandbox({
         operation: "vendor.lookup",
@@ -620,35 +660,41 @@ describe("GatewaySignalClient", () => {
   it("rejects tenant drift on portfolio summary", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            schema_version: 1,
-            tenant_id: "other",
-            score_model_version: "1.0",
-            scoring_model: "paybond.signal.v1",
-            checkpoint_last_ledger_seq: 1,
-            operator_count: 0,
-            average_score: 0,
-            total_terminal_intents: 0,
-            total_receipted_volume_cents: 0,
-            operators_under_review: 0,
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              schema_version: 1,
+              tenant_id: "other",
+              score_model_version: "1.0",
+              scoring_model: "paybond.signal.v1",
+              checkpoint_last_ledger_seq: 1,
+              operator_count: 0,
+              average_score: 0,
+              total_terminal_intents: 0,
+              total_receipted_volume_cents: 0,
+              operators_under_review: 0,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     const c = new GatewaySignalClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
-    await expect(c.getPortfolioSummary()).rejects.toThrow(/signal tenant mismatch/);
+    await expect(c.getPortfolioSummary()).rejects.toThrow(
+      /signal tenant mismatch/,
+    );
   });
 
   it("fetches the signed portfolio artifact", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        expect(input.toString()).toBe("https://gw.test/signal/v1/portfolio/signed-export");
+        expect(input.toString()).toBe(
+          "https://gw.test/signal/v1/portfolio/signed-export",
+        );
         return new Response(
           JSON.stringify({
             schema_version: 1,
@@ -677,7 +723,8 @@ describe("GatewaySignalClient", () => {
       }),
     );
     const c = new GatewaySignalClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     await expect(c.getSignedPortfolioArtifact()).resolves.toMatchObject({
       tenant_id: "tenant-a",
@@ -744,47 +791,56 @@ describe("GatewayFraudClient", () => {
       }),
     );
     const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
-    await expect(c.getFraudAssessment("did:example:alpha", "1.0")).resolves.toMatchObject({
+    await expect(
+      c.getFraudAssessment("did:example:alpha", "1.0"),
+    ).resolves.toMatchObject({
       tenant_id: "tenant-a",
       operator_did: "did:example:alpha",
       fraud_assessment: { level: "high" },
-      fraud_signals: [{ signal_source: "signal_model", intent_refs: ["intent-1"] }],
+      fraud_signals: [
+        { signal_source: "signal_model", intent_refs: ["intent-1"] },
+      ],
     });
   });
 
   it("rejects fraud assessment tenant drift", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            schema_version: 1,
-            tenant_id: "other",
-            operator_did: "did:example:alpha",
-            score_model_version: "1.0",
-            review_state: "open",
-            review_reasons: [],
-            fraud_signals: [],
-            fraud_assessment: {
-              fraud_signal_version: "1.0.4",
-              level: "none",
-              highest_severity: "none",
-              review_priority: "normal",
-              signal_count: 0,
-              severe_signal_count: 0,
-              summary: "level=none",
-            },
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              schema_version: 1,
+              tenant_id: "other",
+              operator_did: "did:example:alpha",
+              score_model_version: "1.0",
+              review_state: "open",
+              review_reasons: [],
+              fraud_signals: [],
+              fraud_assessment: {
+                fraud_signal_version: "1.0.4",
+                level: "none",
+                highest_severity: "none",
+                review_priority: "normal",
+                signal_count: 0,
+                severe_signal_count: 0,
+                summary: "level=none",
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
-    await expect(c.getFraudAssessment("did:example:alpha")).rejects.toThrow(/fraud tenant mismatch/);
+    await expect(c.getFraudAssessment("did:example:alpha")).rejects.toThrow(
+      /fraud tenant mismatch/,
+    );
   });
 
   it("lists the fraud-filtered review queue", async () => {
@@ -806,10 +862,16 @@ describe("GatewayFraudClient", () => {
       }),
     );
     const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     await expect(
-      c.listFraudReviewQueue({ state: "all", severity: "high", limit: 25, scoreVersion: "1.0" }),
+      c.listFraudReviewQueue({
+        state: "all",
+        severity: "high",
+        limit: 25,
+        scoreVersion: "1.0",
+      }),
     ).resolves.toMatchObject({ tenant_id: "tenant-a", items: [] });
   });
 
@@ -817,7 +879,9 @@ describe("GatewayFraudClient", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        expect(input.toString()).toBe("https://gw.test/signal/v1/fraud/metrics?window=7d");
+        expect(input.toString()).toBe(
+          "https://gw.test/signal/v1/fraud/metrics?window=7d",
+        );
         return new Response(
           JSON.stringify({
             schema_version: 1,
@@ -858,7 +922,8 @@ describe("GatewayFraudClient", () => {
       }),
     );
     const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     await expect(c.getFraudMetrics({ window: "7d" })).resolves.toMatchObject({
       tenant_id: "tenant-a",
@@ -867,88 +932,107 @@ describe("GatewayFraudClient", () => {
   });
 
   it("reads and updates the fraud release gate mode", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = input.toString();
-      if (init?.method === "PUT") {
-        expect(url).toBe("https://gw.test/signal/v1/fraud/release-gate");
-        expect(init.body).toBe(JSON.stringify({ mode: "critical_hold" }));
-      } else {
-        expect(url).toBe("https://gw.test/signal/v1/fraud/release-gate?score_version=1.0");
-      }
-      return new Response(
-        JSON.stringify({
-          schema_version: 1,
-          tenant_id: "tenant-a",
-          score_model_version: "1.0",
-          fraud_signal_version: "1.0.7",
-          generated_at: "2026-05-23T00:00:00Z",
-          config: { mode: init?.method === "PUT" ? "critical_hold" : "review_only" },
-          metrics_reliability: {
-            reliable: true,
-            reviewed_count: 10,
-            labeled_outcome_count: 5,
-            review_precision_bps: 9000,
-            min_reviewed_count: 10,
-            min_labeled_outcome_count: 5,
-            min_review_precision_bps: 8000,
-            reasons: [],
-            summary: "reliable",
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        if (init?.method === "PUT") {
+          expect(url).toBe("https://gw.test/signal/v1/fraud/release-gate");
+          expect(init.body).toBe(JSON.stringify({ mode: "critical_hold" }));
+        } else {
+          expect(url).toBe(
+            "https://gw.test/signal/v1/fraud/release-gate?score_version=1.0",
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            schema_version: 1,
+            tenant_id: "tenant-a",
+            score_model_version: "1.0",
+            fraud_signal_version: "1.0.7",
+            generated_at: "2026-05-23T00:00:00Z",
+            config: {
+              mode: init?.method === "PUT" ? "critical_hold" : "review_only",
+            },
+            metrics_reliability: {
+              reliable: true,
+              reviewed_count: 10,
+              labeled_outcome_count: 5,
+              review_precision_bps: 9000,
+              min_reviewed_count: 10,
+              min_labeled_outcome_count: 5,
+              min_review_precision_bps: 8000,
+              reasons: [],
+              summary: "reliable",
+            },
+          }),
+          {
+            status: init?.method === "PUT" ? 202 : 200,
+            headers: { "content-type": "application/json" },
           },
-        }),
-        { status: init?.method === "PUT" ? 202 : 200, headers: { "content-type": "application/json" } },
-      );
-    });
+        );
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
     const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
 
     await expect(c.getFraudReleaseGateConfig("1.0")).resolves.toMatchObject({
       tenant_id: "tenant-a",
       config: { mode: "review_only" },
     });
-    await expect(c.setFraudReleaseGateMode("critical_hold")).resolves.toMatchObject({
+    await expect(
+      c.setFraudReleaseGateMode("critical_hold"),
+    ).resolves.toMatchObject({
       tenant_id: "tenant-a",
       config: { mode: "critical_hold" },
     });
-    await expect(c.setFraudReleaseGateMode("enforce_all")).rejects.toThrow(/release gate mode/);
+    await expect(c.setFraudReleaseGateMode("enforce_all")).rejects.toThrow(
+      /release gate mode/,
+    );
   });
 
   it("records only supported fraud review event types", async () => {
-    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      expect(input.toString()).toBe("https://gw.test/signal/v1/operators/did%3Aexample%3Aalpha/review-events");
-      expect(init?.method).toBe("POST");
-      expect(init?.body).toBe(
-        JSON.stringify({
-          event_type: "review_outcome_recorded",
-          review_outcome: "confirmed_risk",
-          signal_code: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
-          intent_id: "00000000-0000-4000-8000-000000000123",
-          provider_event_id: "evt_review_signal",
-          summary: "Developer supplied appeal context",
-        }),
-      );
-      return new Response(
-        JSON.stringify({
-          schema_version: 1,
-          tenant_id: "tenant-a",
-          operator_did: "did:example:alpha",
-          score_model_version: "1.0",
-          requested_event_type: "review_outcome_recorded",
-          recorded_event_type: "review_outcome_recorded",
-          review_outcome: "confirmed_risk",
-          signal_code: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
-          intent_id: "00000000-0000-4000-8000-000000000123",
-          provider_event_id: "evt_review_signal",
-          accepted: true,
-          friction: { band: "normal" },
-        }),
-        { status: 202, headers: { "content-type": "application/json" } },
-      );
-    });
+    const fetchMock = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(input.toString()).toBe(
+          "https://gw.test/signal/v1/operators/did%3Aexample%3Aalpha/review-events",
+        );
+        expect(init?.method).toBe("POST");
+        expect(init?.body).toBe(
+          JSON.stringify({
+            event_type: "review_outcome_recorded",
+            review_outcome: "confirmed_risk",
+            signal_code: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
+            intent_id: "00000000-0000-4000-8000-000000000123",
+            provider_event_id: "evt_review_signal",
+            summary: "Developer supplied appeal context",
+          }),
+        );
+        return new Response(
+          JSON.stringify({
+            schema_version: 1,
+            tenant_id: "tenant-a",
+            operator_did: "did:example:alpha",
+            score_model_version: "1.0",
+            requested_event_type: "review_outcome_recorded",
+            recorded_event_type: "review_outcome_recorded",
+            review_outcome: "confirmed_risk",
+            signal_code: "PROVIDER_STRIPE_EARLY_FRAUD_WARNING",
+            intent_id: "00000000-0000-4000-8000-000000000123",
+            provider_event_id: "evt_review_signal",
+            accepted: true,
+            friction: { band: "normal" },
+          }),
+          { status: 202, headers: { "content-type": "application/json" } },
+        );
+      },
+    );
     vi.stubGlobal("fetch", fetchMock);
     const c = new GatewayFraudClient("https://gw.test", "tenant-a", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     await expect(
       c.recordFraudReviewEvent("did:example:alpha", {
@@ -986,8 +1070,12 @@ describe("GatewayA2AClient", () => {
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const headers = new Headers(init?.headers);
-        expect(headers.get("authorization")).toBe("Bearer paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64));
-        expect(input.toString()).toBe("https://gw.test/.well-known/agent-card.json");
+        expect(headers.get("authorization")).toBe(
+          "Bearer paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+        );
+        expect(input.toString()).toBe(
+          "https://gw.test/.well-known/agent-card.json",
+        );
         return new Response(
           JSON.stringify({
             name: "Paybond Protocol Trust Delegation",
@@ -1004,7 +1092,8 @@ describe("GatewayA2AClient", () => {
       }),
     );
     const client = new GatewayA2AClient("https://gw.test", {
-      staticGatewayBearerToken: "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
+      staticGatewayBearerToken:
+        "paybond_sk_" + "a".repeat(32) + "_" + "b".repeat(64),
     });
     await expect(client.getAgentCard()).resolves.toMatchObject({
       name: "Paybond Protocol Trust Delegation",
@@ -1015,30 +1104,33 @@ describe("GatewayA2AClient", () => {
   it("fetches a specific task contract", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (input: RequestInfo | URL) =>
-        new Response(
-          JSON.stringify({
-            schemaVersion: 1,
-            kind: "paybond.a2a.settlement_task_contract_v1",
-            id: "paybond.settlement.intent.create.v1",
-            name: "Create delegated commercial intent",
-            description: "desc",
-            url: input.toString(),
-            routeBindings: ["https://gw.test/harbor/intents"],
-            requiredTrustArtifacts: ["paybond.agent_mandate_v1"],
-            settlementPhases: ["authorize"],
-            participants: [],
-            inputModes: ["application/json"],
-            outputModes: ["application/json"],
-            inputFields: [],
-            resultFields: [],
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async (input: RequestInfo | URL) =>
+          new Response(
+            JSON.stringify({
+              schemaVersion: 1,
+              kind: "paybond.a2a.settlement_task_contract_v1",
+              id: "paybond.settlement.intent.create.v1",
+              name: "Create delegated commercial intent",
+              description: "desc",
+              url: input.toString(),
+              routeBindings: ["https://gw.test/harbor/intents"],
+              requiredTrustArtifacts: ["paybond.agent_mandate_v1"],
+              settlementPhases: ["authorize"],
+              participants: [],
+              inputModes: ["application/json"],
+              outputModes: ["application/json"],
+              inputFields: [],
+              resultFields: [],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     const client = new GatewayA2AClient("https://gw.test");
-    await expect(client.getTaskContract("paybond.settlement.intent.create.v1")).resolves.toMatchObject({
+    await expect(
+      client.getTaskContract("paybond.settlement.intent.create.v1"),
+    ).resolves.toMatchObject({
       id: "paybond.settlement.intent.create.v1",
       routeBindings: ["https://gw.test/harbor/intents"],
     });
@@ -1074,7 +1166,10 @@ describe("GatewayProtocolClient", () => {
               allowed_actions: ["intent.create"],
               allowed_tools: ["travel.book"],
               spend_ceiling: { amount_minor: 1000, currency: "usd" },
-              settlement: { default_rail: "stripe_connect", allowed_rails: ["stripe_connect"] },
+              settlement: {
+                default_rail: "stripe_connect",
+                allowed_rails: ["stripe_connect"],
+              },
               constraint: { kind: "policy", id: "travel_hold" },
               expires_at: "2030-01-01T00:00:00Z",
               nonce: "nonce-123",
@@ -1122,7 +1217,10 @@ describe("GatewayProtocolClient", () => {
               allowed_actions: ["intent.create"],
               allowed_tools: ["travel.book"],
               spend_ceiling: { amount_minor: 1000, currency: "usd" },
-              settlement: { default_rail: "stripe_connect", allowed_rails: ["stripe_connect"] },
+              settlement: {
+                default_rail: "stripe_connect",
+                allowed_rails: ["stripe_connect"],
+              },
               constraint: { kind: "policy", id: "travel_hold" },
               expires_at: "2030-01-01T00:00:00Z",
               nonce: "nonce-123",
@@ -1151,7 +1249,10 @@ describe("GatewayProtocolClient", () => {
               allowed_actions: ["intent.create"],
               allowed_tools: ["travel.book"],
               spend_ceiling: { amount_minor: 1000, currency: "usd" },
-              settlement: { default_rail: "stripe_connect", allowed_rails: ["stripe_connect"] },
+              settlement: {
+                default_rail: "stripe_connect",
+                allowed_rails: ["stripe_connect"],
+              },
               constraint: { kind: "policy", id: "travel_hold" },
               expires_at: "2030-01-01T00:00:00Z",
               nonce: "nonce-123",
@@ -1185,7 +1286,10 @@ describe("GatewayProtocolClient", () => {
           allowed_actions: ["intent.create"],
           allowed_tools: ["travel.book"],
           spend_ceiling: { amount_minor: 1000, currency: "usd" },
-          settlement: { default_rail: "stripe_connect", allowed_rails: ["stripe_connect"] },
+          settlement: {
+            default_rail: "stripe_connect",
+            allowed_rails: ["stripe_connect"],
+          },
           constraint: { kind: "policy", id: "travel_hold" },
           expires_at: "2030-01-01T00:00:00Z",
           nonce: "nonce-123",
@@ -1227,7 +1331,9 @@ describe("GatewayProtocolClient", () => {
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
         const headers = new Headers(init?.headers);
         expect(headers.get("x-tenant-id")).toBe("tenant-a");
-        expect(input.toString()).toBe("https://gw.test/protocol/v2/receipts/550e8400-e29b-41d4-a716-446655440000");
+        expect(input.toString()).toBe(
+          "https://gw.test/protocol/v2/receipts/550e8400-e29b-41d4-a716-446655440000",
+        );
         return new Response(
           JSON.stringify({
             schema_version: 1,
@@ -1261,7 +1367,9 @@ describe("GatewayProtocolClient", () => {
     );
 
     const client = new GatewayProtocolClient("https://gw.test", "tenant-a");
-    await expect(client.getSettlementReceiptV1("550e8400-e29b-41d4-a716-446655440000")).resolves.toMatchObject({
+    await expect(
+      client.getSettlementReceiptV1("550e8400-e29b-41d4-a716-446655440000"),
+    ).resolves.toMatchObject({
       kind: "paybond.protocol_settlement_receipt_v1",
       harbor_state: "released",
     });
@@ -1270,14 +1378,17 @@ describe("GatewayProtocolClient", () => {
   it("surfaces ProtocolHttpError for failed receipt verification", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            error: "protocol_binding_mismatch",
-            message: "harbor mandate digest does not match the stored gateway import binding",
-          }),
-          { status: 409, headers: { "content-type": "application/json" } },
-        )),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              error: "protocol_binding_mismatch",
+              message:
+                "harbor mandate digest does not match the stored gateway import binding",
+            }),
+            { status: 409, headers: { "content-type": "application/json" } },
+          ),
+      ),
     );
     const client = new GatewayProtocolClient("https://gw.test", "tenant-a");
     try {
@@ -1382,14 +1493,15 @@ describe("ServiceAccountSignalSession", () => {
   it("binds the tenant from gateway principal", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            tenant_id: "realm-z",
-            environment: "sandbox",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              tenant_id: "realm-z",
+              environment: "sandbox",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     const session = await ServiceAccountSignalSession.open({
@@ -1410,13 +1522,14 @@ describe("ServiceAccountFraudSession", () => {
   it("binds the tenant from gateway principal", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(
-          JSON.stringify({
-            tenant_id: "realm-z",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        ),
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              tenant_id: "realm-z",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
       ),
     );
     const session = await ServiceAccountFraudSession.open({

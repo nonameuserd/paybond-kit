@@ -28,5 +28,5 @@ export function jsonValueDigest(value: unknown): Uint8Array {
   const normalized = normalizeJson(value);
   const text = JSON.stringify(normalized);
   const buf = hash(text, { length: 32 });
-  return new Uint8Array(buf);
+  return new Uint8Array(buf as Uint8Array<ArrayBuffer>);
 }

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { PaybondMCPServer, settingsFromEnv } from "./mcp-server.js";
+import { PaybondMCPServer, formatMcpStdioFrame, settingsFromEnv } from "../src/mcp-server.js";
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -839,6 +839,34 @@ describe("PaybondMCPServer", () => {
     expect(result.structuredContent).toEqual({
       intent_id: "intent-123",
       state: "open",
+    });
+  });
+
+  it("readonly tool policy limits exposed tools", () => {
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+      toolPolicy: { policy: "readonly", allowlist: [] },
+    });
+    const names = new Set(server.listTools().map((tool) => String(tool.name)));
+    expect(names.has("paybond_get_principal")).toBe(true);
+    expect(names.has("paybond_create_spend_intent")).toBe(false);
+  });
+
+  it("stdio responses use MCP Content-Length framing", async () => {
+    const frame = formatMcpStdioFrame({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { ok: true },
+    });
+    expect(frame.startsWith("Content-Length:")).toBe(true);
+    expect(frame).toContain("\r\n\r\n");
+    expect(frame).not.toMatch(/^Starting /m);
+    const body = frame.split("\r\n\r\n", 2)[1];
+    expect(JSON.parse(body ?? "{}")).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { ok: true },
     });
   });
 });

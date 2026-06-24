@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.9.8",
+  "version": "0.10.0",
   "mcpName": "io.github.nonameuserd/paybond",
   "description": "Paybond Kit for TypeScript: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement.",
   "license": "Apache-2.0",
@@ -8,7 +8,8 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "paybond": "dist/login.js",
+    "paybond": "dist/cli.js",
+    "paybond-kit-login": "dist/login.js",
     "paybond-init": "dist/init.js",
     "paybond-mcp-server": "dist/mcp-server.js"
   },
@@ -77,6 +78,7 @@
   "scripts": {
     "clean": "node ./scripts/clean-dist.mjs",
     "build": "npm run clean && tsc -p tsconfig.json",
+    "generate:cli-contract": "node ../cli-parity/generate.mjs",
     "test": "vitest run",
     "pack:dry-run": "npm pack --dry-run",
     "verify:release": "node ./scripts/verify-release.mjs",
@@ -88,6 +90,7 @@
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@types/node": "^22.10.0",
     "typescript": "^5.7.2",
     "vitest": "^4.1.8"
   }

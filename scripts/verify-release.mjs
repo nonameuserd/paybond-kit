@@ -146,18 +146,21 @@ try {
   symlinkSync(resolve(repoRoot, "node_modules", "uuid"), join(consumerNodeModules, "uuid"), "dir");
   symlinkSync(resolve(repoRoot, "node_modules", "blake3"), join(consumerNodeModules, "blake3"), "dir");
   symlinkSync(resolve(repoRoot, "node_modules", "@noble"), join(consumerNodeModules, "@noble"), "dir");
+  symlinkSync(resolve(repoRoot, "node_modules", "@types"), join(consumerNodeModules, "@types"), "dir");
   const consumerBinRoot = join(consumerNodeModules, ".bin");
   mkdirSync(consumerBinRoot, { recursive: true });
   const loginBin = join(consumerBinRoot, "paybond");
   const initBin = join(consumerBinRoot, "paybond-init");
   const mcpBin = join(consumerBinRoot, "paybond-mcp-server");
+  const cliTarget = join(consumerNodeModules, "@paybond", "kit", "dist", "cli.js");
   const loginTarget = join(consumerNodeModules, "@paybond", "kit", "dist", "login.js");
   const initTarget = join(consumerNodeModules, "@paybond", "kit", "dist", "init.js");
   const mcpTarget = join(consumerNodeModules, "@paybond", "kit", "dist", "mcp-server.js");
+  chmodSync(cliTarget, 0o755);
   chmodSync(loginTarget, 0o755);
   chmodSync(initTarget, 0o755);
   chmodSync(mcpTarget, 0o755);
-  symlinkSync(loginTarget, loginBin, "file");
+  symlinkSync(cliTarget, loginBin, "file");
   symlinkSync(initTarget, initBin, "file");
   symlinkSync(mcpTarget, mcpBin, "file");
 
@@ -183,6 +186,7 @@ try {
           moduleResolution: "NodeNext",
           strict: true,
           noEmit: true,
+          types: ["node"],
         },
         include: ["index.ts"],
       },
@@ -217,21 +221,21 @@ try {
   const loginHelp = run("node", [loginCli, "--help"], consumerRoot);
   assertIncludesAll(loginHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond login help");
   const loginBinHelpViaNode = run("node", [loginBin, "--help"], consumerRoot);
-  assertIncludesAll(loginBinHelpViaNode, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond .bin help via node");
+  assertIncludesAll(loginBinHelpViaNode, ["paybond [--global-flags]", "login", "mcp", "doctor"], "paybond .bin root help via node");
   const loginBinHelp = run(loginBin, ["--help"], consumerRoot);
-  assertIncludesAll(loginBinHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond .bin executable help");
+  assertIncludesAll(loginBinHelp, ["paybond [--global-flags]", "login", "mcp", "doctor"], "paybond .bin executable root help");
   const loginCommandHelp = run(loginBin, ["login", "--help"], consumerRoot);
   assertIncludesAll(loginCommandHelp, ["paybond login", "--env-file", "--gateway", "--no-open", "--force"], "paybond login .bin executable help");
 
   const initCli = join(consumerNodeModules, "@paybond", "kit", "dist", "init.js");
   const initBinHelpViaNode = run("node", [initBin, "--help"], consumerRoot);
-  assertIncludesAll(initBinHelpViaNode, ["paybond-init", "paid-tool-guard", "--framework"], "paybond-init .bin help via node");
+  assertIncludesAll(initBinHelpViaNode, ["paybond init guardrail", "paid-tool-guard", "--framework"], "paybond-init .bin help via node");
   const initBinHelp = run(initBin, ["--help"], consumerRoot);
-  assertIncludesAll(initBinHelp, ["paybond-init", "paid-tool-guard", "--framework"], "paybond-init .bin executable help");
+  assertIncludesAll(initBinHelp, ["paybond init guardrail", "paid-tool-guard", "--framework"], "paybond-init .bin executable help");
   const mcpBinHelpViaNode = runCombined("node", [mcpBin, "--help"], consumerRoot);
-  assertIncludesAll(mcpBinHelpViaNode, ["paybond-mcp-server", "PAYBOND_API_KEY"], "paybond-mcp-server .bin help via node");
+  assertIncludesAll(mcpBinHelpViaNode, ["paybond mcp serve", "stdio MCP server"], "paybond-mcp-server .bin help via node");
   const mcpBinHelp = runCombined(mcpBin, ["--help"], consumerRoot);
-  assertIncludesAll(mcpBinHelp, ["paybond-mcp-server", "PAYBOND_API_KEY"], "paybond-mcp-server .bin executable help");
+  assertIncludesAll(mcpBinHelp, ["paybond mcp serve", "stdio MCP server"], "paybond-mcp-server .bin executable help");
 
   const scaffoldPath = join(consumerRoot, "paybond-paid-tool-guard.ts");
   runLogged(
@@ -294,6 +298,7 @@ try {
           moduleResolution: "NodeNext",
           strict: true,
           noEmit: true,
+          types: ["node"],
         },
         include: ["index.ts", "paybond-paid-tool-guard.ts"],
       },

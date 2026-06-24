@@ -1,8 +1,21 @@
 #!/usr/bin/env node
 
-// @ts-ignore Node builtins are available in the published CLI runtime.
+import { Buffer } from "node:buffer";
 import { readFileSync } from "node:fs";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { runCli } from "./cli/router.js";
+import {
+  MCP_TOOL_ALLOWLIST_ENV,
+  MCP_TOOL_POLICY_ENV,
+  type McpToolPolicyConfig,
+  mergeMcpToolPolicy,
+  parseMcpToolAllowlist,
+  parseMcpToolPolicy,
+  toolAllowedByPolicy,
+} from "./cli/mcp-policy.js";
 import {
   GatewayAuthError,
   GatewayFraudClient,
@@ -25,14 +38,9 @@ declare const process: {
   stderr: { write(chunk: string): boolean };
 };
 
-declare const Buffer: {
-  from(input: string, encoding?: string): {
-    toString(encoding?: string): string;
-  };
-};
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.9.8";
+const SERVER_VERSION = "0.10.0";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -65,7 +73,9 @@ type MCPToolDefinition = {
   inputSchema: Record<string, unknown>;
   outputSchema?: Record<string, unknown>;
   annotations?: MCPToolAnnotations;
-  call: (args: Record<string, unknown>) => Promise<Record<string, unknown> | null>;
+  call: (
+    args: Record<string, unknown>,
+  ) => Promise<Record<string, unknown> | null>;
 };
 
 type MCPToolAnnotations = {
@@ -88,7 +98,10 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     title: "Get Paybond Principal",
     annotations: readOnlyToolAnnotations("Get Paybond Principal"),
     outputSchema: outputObjectSchema({
-      tenant_id: { type: "string", description: "Tenant bound to the configured Paybond API key." },
+      tenant_id: {
+        type: "string",
+        description: "Tenant bound to the configured Paybond API key.",
+      },
       subject: { type: "string" },
       roles: { type: "array", items: { type: "string" } },
     }),
@@ -101,10 +114,22 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     annotations: additiveMutationToolAnnotations("Verify Paybond Capability"),
     outputSchema: outputObjectSchema(
       {
-        allow: { type: "boolean", description: "Whether the requested operation is allowed." },
-        tenant: { type: "string", description: "Tenant echoed by the gateway." },
-        intent_id: { type: "string", description: "Verified Harbor intent UUID." },
-        audit_id: { type: "string", description: "Gateway audit identifier when available." },
+        allow: {
+          type: "boolean",
+          description: "Whether the requested operation is allowed.",
+        },
+        tenant: {
+          type: "string",
+          description: "Tenant echoed by the gateway.",
+        },
+        intent_id: {
+          type: "string",
+          description: "Verified Harbor intent UUID.",
+        },
+        audit_id: {
+          type: "string",
+          description: "Gateway audit identifier when available.",
+        },
       },
       ["tenant", "intent_id"],
     ),
@@ -117,10 +142,22 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     annotations: additiveMutationToolAnnotations("Authorize Agent Spend"),
     outputSchema: outputObjectSchema(
       {
-        allow: { type: "boolean", description: "Whether the requested operation is allowed." },
-        tenant: { type: "string", description: "Tenant echoed by the gateway." },
-        intent_id: { type: "string", description: "Verified Harbor intent UUID." },
-        audit_id: { type: "string", description: "Gateway audit identifier when available." },
+        allow: {
+          type: "boolean",
+          description: "Whether the requested operation is allowed.",
+        },
+        tenant: {
+          type: "string",
+          description: "Tenant echoed by the gateway.",
+        },
+        intent_id: {
+          type: "string",
+          description: "Verified Harbor intent UUID.",
+        },
+        audit_id: {
+          type: "string",
+          description: "Gateway audit identifier when available.",
+        },
       },
       ["tenant", "intent_id"],
     ),
@@ -142,7 +179,14 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
         settlement_rail: { type: "string" },
         settlement_mode: { type: "string" },
       },
-      ["tenant_id", "intent_id", "capability_token", "operation", "requested_spend_cents", "sandbox_lifecycle_status"],
+      [
+        "tenant_id",
+        "intent_id",
+        "capability_token",
+        "operation",
+        "requested_spend_cents",
+        "sandbox_lifecycle_status",
+      ],
     ),
   },
   paybond_submit_sandbox_guardrail_evidence: {
@@ -150,7 +194,9 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     description:
       "Use this when a sandbox guardrail intent needs evidence to complete simulator settlement or predicate checks. " +
       "Do not use this for live Harbor spend evidence; use paybond_submit_spend_evidence for production spend intents.",
-    annotations: additiveMutationToolAnnotations("Submit Sandbox Guardrail Evidence"),
+    annotations: additiveMutationToolAnnotations(
+      "Submit Sandbox Guardrail Evidence",
+    ),
     outputSchema: outputObjectSchema(
       {
         tenant_id: { type: "string" },
@@ -161,14 +207,23 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
         predicate_passed: { type: "boolean" },
         payload_digest: { type: "string" },
       },
-      ["tenant_id", "intent_id", "operation", "requested_spend_cents", "sandbox_lifecycle_status"],
+      [
+        "tenant_id",
+        "intent_id",
+        "operation",
+        "requested_spend_cents",
+        "sandbox_lifecycle_status",
+      ],
     ),
   },
   paybond_list_intents: {
     title: "List Harbor Intents",
     annotations: readOnlyToolAnnotations("List Harbor Intents"),
     outputSchema: outputObjectSchema({
-      items: { type: "array", items: { type: "object", additionalProperties: true } },
+      items: {
+        type: "array",
+        items: { type: "object", additionalProperties: true },
+      },
       next_cursor: { type: "string" },
     }),
   },
@@ -196,7 +251,10 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     outputSchema: outputObjectSchema({
       tenant_id: { type: "string" },
       score_model_version: { type: "string" },
-      operators: { type: "array", items: { type: "object", additionalProperties: true } },
+      operators: {
+        type: "array",
+        items: { type: "object", additionalProperties: true },
+      },
     }),
   },
   paybond_get_signed_portfolio_artifact: {
@@ -234,14 +292,20 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     outputSchema: outputObjectSchema({
       name: { type: "string" },
       version: { type: "string" },
-      skills: { type: "array", items: { type: "object", additionalProperties: true } },
+      skills: {
+        type: "array",
+        items: { type: "object", additionalProperties: true },
+      },
     }),
   },
   paybond_list_a2a_task_contracts: {
     title: "List A2A Task Contracts",
     annotations: readOnlyToolAnnotations("List A2A Task Contracts"),
     outputSchema: outputObjectSchema({
-      contracts: { type: "array", items: { type: "object", additionalProperties: true } },
+      contracts: {
+        type: "array",
+        items: { type: "object", additionalProperties: true },
+      },
     }),
   },
   paybond_get_a2a_task_contract: {
@@ -384,6 +448,7 @@ export type PaybondMCPSettings = {
   gatewayBaseUrl?: string;
   principalPath?: string;
   maxRetries?: number;
+  toolPolicy?: McpToolPolicyConfig;
 };
 
 function readEnvFileValue(envFile: string, key: string): string | undefined {
@@ -394,7 +459,10 @@ function readEnvFileValue(envFile: string, key: string): string | undefined {
     if ((err as { code?: unknown })?.code === "ENOENT") return undefined;
     throw err;
   }
-  const pattern = new RegExp("^\\s*(?:export\\s+)?" + key + "\\s*=\\s*(.*)$", "m");
+  const pattern = new RegExp(
+    "^\\s*(?:export\\s+)?" + key + "\\s*=\\s*(.*)$",
+    "m",
+  );
   const match = body.match(pattern);
   if (!match) return undefined;
   let value = String(match[1] ?? "").trim();
@@ -419,7 +487,13 @@ class GatewayHTTPError extends Error {
 
   constructor(
     message: string,
-    init: { statusCode: number; url: string; bodyText: string; errorCode?: string; errorMessage?: string },
+    init: {
+      statusCode: number;
+      url: string;
+      bodyText: string;
+      errorCode?: string;
+      errorMessage?: string;
+    },
   ) {
     super(message);
     this.name = "GatewayHTTPError";
@@ -432,7 +506,10 @@ class GatewayHTTPError extends Error {
   }
 }
 
-function parseGatewayErrorEnvelope(text: string): { errorCode?: string; errorMessage?: string } {
+function parseGatewayErrorEnvelope(text: string): {
+  errorCode?: string;
+  errorMessage?: string;
+} {
   if (!text.trim().startsWith("{")) {
     return {};
   }
@@ -441,15 +518,26 @@ function parseGatewayErrorEnvelope(text: string): { errorCode?: string; errorMes
     if (body === null || Array.isArray(body) || typeof body !== "object") {
       return {};
     }
-    const errorCode = typeof body.error === "string" && body.error.trim() ? body.error.trim() : undefined;
-    const errorMessage = typeof body.message === "string" && body.message.trim() ? body.message.trim() : undefined;
+    const errorCode =
+      typeof body.error === "string" && body.error.trim()
+        ? body.error.trim()
+        : undefined;
+    const errorMessage =
+      typeof body.message === "string" && body.message.trim()
+        ? body.message.trim()
+        : undefined;
     return { errorCode, errorMessage };
   } catch {
     return {};
   }
 }
 
-function gatewayHTTPErrorMessage(method: "GET" | "POST", path: string, statusCode: number, bodyText: string): string {
+function gatewayHTTPErrorMessage(
+  method: "GET" | "POST",
+  path: string,
+  statusCode: number,
+  bodyText: string,
+): string {
   const parsed = parseGatewayErrorEnvelope(bodyText);
   if (parsed.errorCode) {
     return `Gateway ${method} ${path} HTTP ${statusCode} (${parsed.errorCode}): ${parsed.errorMessage ?? bodyText}`;
@@ -462,13 +550,20 @@ class GatewayAPIClient {
   private readonly apiKey: string;
   private readonly maxRetries: number;
 
-  constructor(init: { gatewayBaseUrl: string; apiKey: string; maxRetries?: number }) {
+  constructor(init: {
+    gatewayBaseUrl: string;
+    apiKey: string;
+    maxRetries?: number;
+  }) {
     this.gatewayBase = normalizeBase(init.gatewayBaseUrl);
     this.apiKey = init.apiKey.trim();
     this.maxRetries = Math.max(1, init.maxRetries ?? 3);
   }
 
-  async getJSON(path: string, extraHeaders?: Record<string, string>): Promise<Record<string, unknown>> {
+  async getJSON(
+    path: string,
+    extraHeaders?: Record<string, string>,
+  ): Promise<Record<string, unknown>> {
     return this.requestJSON("GET", path, undefined, extraHeaders);
   }
 
@@ -497,7 +592,9 @@ class GatewayAPIClient {
             accept: "application/json",
             authorization: `Bearer ${this.apiKey}`,
             ...(extraHeaders ?? {}),
-            ...(payload === undefined ? {} : { "content-type": "application/json" }),
+            ...(payload === undefined
+              ? {}
+              : { "content-type": "application/json" }),
           },
           ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
         });
@@ -510,22 +607,32 @@ class GatewayAPIClient {
         continue;
       }
 
-      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < this.maxRetries) {
-        const retryAfter = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        await delay(retryAfter != null ? retryAfter * 1000 : backoffMs(attempt));
+      if (
+        [429, 500, 502, 503, 504].includes(res.status) &&
+        attempt + 1 < this.maxRetries
+      ) {
+        const retryAfter = parseRetryAfterSeconds(
+          res.headers.get("retry-after"),
+        );
+        await delay(
+          retryAfter != null ? retryAfter * 1000 : backoffMs(attempt),
+        );
         continue;
       }
 
       const text = await res.text();
       if (!res.ok) {
         const parsed = parseGatewayErrorEnvelope(text);
-        throw new GatewayHTTPError(gatewayHTTPErrorMessage(method, path, res.status, text), {
-          statusCode: res.status,
-          url,
-          bodyText: text,
-          errorCode: parsed.errorCode,
-          errorMessage: parsed.errorMessage,
-        });
+        throw new GatewayHTTPError(
+          gatewayHTTPErrorMessage(method, path, res.status, text),
+          {
+            statusCode: res.status,
+            url,
+            bodyText: text,
+            errorCode: parsed.errorCode,
+            errorMessage: parsed.errorMessage,
+          },
+        );
       }
       return parseJSONObject(text, `Gateway ${method} ${path}`);
     }
@@ -535,7 +642,12 @@ class GatewayAPIClient {
 }
 
 class PaybondMCPRuntime {
-  private readonly settings: Required<Pick<PaybondMCPSettings, "gatewayBaseUrl" | "apiKey" | "principalPath" | "maxRetries">>;
+  private readonly settings: Required<
+    Pick<
+      PaybondMCPSettings,
+      "gatewayBaseUrl" | "apiKey" | "principalPath" | "maxRetries"
+    >
+  >;
   private readonly gateway: GatewayAPIClient;
   private principalValue: Promise<Record<string, unknown>> | null = null;
   private signalValue: Promise<GatewaySignalClient> | null = null;
@@ -543,7 +655,8 @@ class PaybondMCPRuntime {
 
   constructor(settings: PaybondMCPSettings) {
     this.settings = {
-      gatewayBaseUrl: settings.gatewayBaseUrl ?? DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+      gatewayBaseUrl:
+        settings.gatewayBaseUrl ?? DEFAULT_PAYBOND_GATEWAY_BASE_URL,
       apiKey: settings.apiKey,
       principalPath: settings.principalPath ?? DEFAULT_PRINCIPAL_PATH,
       maxRetries: Math.max(1, settings.maxRetries ?? 3),
@@ -571,19 +684,27 @@ class PaybondMCPRuntime {
 
   async signal(): Promise<GatewaySignalClient> {
     this.signalValue ??= (async () =>
-      new GatewaySignalClient(this.settings.gatewayBaseUrl, await this.tenantId(), {
-        staticGatewayBearerToken: this.settings.apiKey,
-        maxRetries: this.settings.maxRetries,
-      }))();
+      new GatewaySignalClient(
+        this.settings.gatewayBaseUrl,
+        await this.tenantId(),
+        {
+          staticGatewayBearerToken: this.settings.apiKey,
+          maxRetries: this.settings.maxRetries,
+        },
+      ))();
     return this.signalValue;
   }
 
   async fraud(): Promise<GatewayFraudClient> {
     this.fraudValue ??= (async () =>
-      new GatewayFraudClient(this.settings.gatewayBaseUrl, await this.tenantId(), {
-        staticGatewayBearerToken: this.settings.apiKey,
-        maxRetries: this.settings.maxRetries,
-      }))();
+      new GatewayFraudClient(
+        this.settings.gatewayBaseUrl,
+        await this.tenantId(),
+        {
+          staticGatewayBearerToken: this.settings.apiKey,
+          maxRetries: this.settings.maxRetries,
+        },
+      ))();
     return this.fraudValue;
   }
 
@@ -594,7 +715,9 @@ class PaybondMCPRuntime {
     cursor?: string;
   }): Promise<Record<string, unknown>> {
     const params = new URLSearchParams({
-      limit: String(Math.max(1, Math.min(intArg(init.limit ?? 20, "limit"), 200))),
+      limit: String(
+        Math.max(1, Math.min(intArg(init.limit ?? 20, "limit"), 200)),
+      ),
     });
     if (init.status?.trim()) {
       params.set("status", init.status.trim());
@@ -605,15 +728,21 @@ class PaybondMCPRuntime {
     if (init.cursor?.trim()) {
       params.set("cursor", init.cursor.trim());
     }
-    return this.gateway.getJSON(`/harbor/operator/v1/intents?${params.toString()}`, {
-      "x-tenant-id": await this.tenantId(),
-    });
+    return this.gateway.getJSON(
+      `/harbor/operator/v1/intents?${params.toString()}`,
+      {
+        "x-tenant-id": await this.tenantId(),
+      },
+    );
   }
 
   async getIntent(intentId: string): Promise<Record<string, unknown>> {
-    return this.gateway.getJSON(`/harbor/operator/v1/intents/${encodeURIComponent(intentId)}`, {
-      "x-tenant-id": await this.tenantId(),
-    });
+    return this.gateway.getJSON(
+      `/harbor/operator/v1/intents/${encodeURIComponent(intentId)}`,
+      {
+        "x-tenant-id": await this.tenantId(),
+      },
+    );
   }
 
   async getA2AAgentCard(): Promise<Record<string, unknown>> {
@@ -624,8 +753,12 @@ class PaybondMCPRuntime {
     return this.gateway.getJSON("/protocol/v2/a2a/task-contracts");
   }
 
-  async getA2ATaskContract(contractId: string): Promise<Record<string, unknown>> {
-    return this.gateway.getJSON(`/protocol/v2/a2a/task-contracts/${encodeURIComponent(contractId)}`);
+  async getA2ATaskContract(
+    contractId: string,
+  ): Promise<Record<string, unknown>> {
+    return this.gateway.getJSON(
+      `/protocol/v2/a2a/task-contracts/${encodeURIComponent(contractId)}`,
+    );
   }
 
   async verifyCapability(init: {
@@ -649,11 +782,15 @@ class PaybondMCPRuntime {
     const expectedTenant = await this.tenantId();
     const echoedTenant = String(body.tenant ?? "").trim();
     if (echoedTenant !== expectedTenant) {
-      throw new Error(`tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`);
+      throw new Error(
+        `tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`,
+      );
     }
     const echoedIntent = String(body.intent_id ?? "").trim();
     if (echoedIntent !== init.intentId) {
-      throw new Error(`verify intent mismatch: requested=${init.intentId} gateway=${echoedIntent}`);
+      throw new Error(
+        `verify intent mismatch: requested=${init.intentId} gateway=${echoedIntent}`,
+      );
     }
     return body;
   }
@@ -728,7 +865,9 @@ class PaybondMCPRuntime {
     assertSandboxGuardrailTenant(body, expectedTenant);
     const echoedIntent = stringArg(body.intent_id, "intent_id");
     if (echoedIntent !== init.intentId) {
-      throw new Error(`sandbox guardrail intent mismatch: requested=${init.intentId} gateway=${echoedIntent}`);
+      throw new Error(
+        `sandbox guardrail intent mismatch: requested=${init.intentId} gateway=${echoedIntent}`,
+      );
     }
     stringArg(body.operation, "operation");
     intArg(body.requested_spend_cents, "requested_spend_cents");
@@ -736,10 +875,16 @@ class PaybondMCPRuntime {
     return body;
   }
 
-  async verifyAgentMandateV1(signedMandate: Record<string, unknown>): Promise<Record<string, unknown>> {
-    return this.gateway.postJSON("/protocol/v2/mandates/verify", signedMandate, {
-      "x-tenant-id": await this.tenantId(),
-    });
+  async verifyAgentMandateV1(
+    signedMandate: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    return this.gateway.postJSON(
+      "/protocol/v2/mandates/verify",
+      signedMandate,
+      {
+        "x-tenant-id": await this.tenantId(),
+      },
+    );
   }
 
   async verifyAgentRecognitionProofV1(init: {
@@ -787,35 +932,53 @@ class PaybondMCPRuntime {
     );
     const expectedTenant = await this.tenantId();
     const mandate = ensureObject(body.mandate, "mandate");
-    const authorization = ensureObject(mandate.authorization, "mandate.authorization");
+    const authorization = ensureObject(
+      mandate.authorization,
+      "mandate.authorization",
+    );
     const echoedTenant = String(authorization.tenant_id ?? "").trim();
     if (echoedTenant !== expectedTenant) {
-      throw new Error(`tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`);
+      throw new Error(
+        `tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`,
+      );
     }
     const echoedIntent = String(body.intent_id ?? "").trim();
     if (echoedIntent !== init.intentId) {
-      throw new Error(`intent mismatch: requested=${init.intentId} gateway=${echoedIntent}`);
+      throw new Error(
+        `intent mismatch: requested=${init.intentId} gateway=${echoedIntent}`,
+      );
     }
     return body;
   }
 
-  async getSettlementReceiptV1(receiptId: string): Promise<Record<string, unknown>> {
-    const body = await this.gateway.getJSON(`/protocol/v2/receipts/${encodeURIComponent(receiptId)}`, {
-      "x-tenant-id": await this.tenantId(),
-    });
+  async getSettlementReceiptV1(
+    receiptId: string,
+  ): Promise<Record<string, unknown>> {
+    const body = await this.gateway.getJSON(
+      `/protocol/v2/receipts/${encodeURIComponent(receiptId)}`,
+      {
+        "x-tenant-id": await this.tenantId(),
+      },
+    );
     const expectedTenant = await this.tenantId();
     const echoedTenant = String(body.tenant_id ?? "").trim();
     if (echoedTenant !== expectedTenant) {
-      throw new Error(`tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`);
+      throw new Error(
+        `tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`,
+      );
     }
     const echoedReceipt = String(body.receipt_id ?? "").trim();
     if (echoedReceipt !== receiptId) {
-      throw new Error(`receipt mismatch: requested=${receiptId} gateway=${echoedReceipt}`);
+      throw new Error(
+        `receipt mismatch: requested=${receiptId} gateway=${echoedReceipt}`,
+      );
     }
     return body;
   }
 
-  async verifyProtocolReceiptV1(receipt: Record<string, unknown>): Promise<Record<string, unknown>> {
+  async verifyProtocolReceiptV1(
+    receipt: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     return this.gateway.postJSON("/protocol/v2/receipts/verify", receipt, {
       "x-tenant-id": await this.tenantId(),
     });
@@ -829,7 +992,11 @@ class PaybondMCPRuntime {
     return this.gateway.postJSON(
       "/harbor/intents",
       init.body,
-      gatewayMutationHeaders(await this.tenantId(), init.recognitionProof, optionalMutationHeaders(init.idempotencyKey)),
+      gatewayMutationHeaders(
+        await this.tenantId(),
+        init.recognitionProof,
+        optionalMutationHeaders(init.idempotencyKey),
+      ),
     );
   }
 
@@ -844,7 +1011,9 @@ class PaybondMCPRuntime {
       {},
       gatewayMutationHeaders(await this.tenantId(), init.recognitionProof, {
         ...optionalMutationHeaders(init.idempotencyKey),
-        ...(init.paymentSignature?.trim() ? { "payment-signature": init.paymentSignature.trim() } : {}),
+        ...(init.paymentSignature?.trim()
+          ? { "payment-signature": init.paymentSignature.trim() }
+          : {}),
       }),
     );
   }
@@ -858,7 +1027,11 @@ class PaybondMCPRuntime {
     return this.gateway.postJSON(
       `/harbor/intents/${encodeURIComponent(init.intentId)}/evidence`,
       init.body,
-      gatewayMutationHeaders(await this.tenantId(), init.recognitionProof, optionalMutationHeaders(init.idempotencyKey)),
+      gatewayMutationHeaders(
+        await this.tenantId(),
+        init.recognitionProof,
+        optionalMutationHeaders(init.idempotencyKey),
+      ),
     );
   }
 
@@ -871,12 +1044,18 @@ class PaybondMCPRuntime {
     return this.gateway.postJSON(
       `/harbor/intents/${encodeURIComponent(init.intentId)}/settlement/confirm`,
       init.body,
-      gatewayMutationHeaders(await this.tenantId(), init.recognitionProof, optionalMutationHeaders(init.idempotencyKey)),
+      gatewayMutationHeaders(
+        await this.tenantId(),
+        init.recognitionProof,
+        optionalMutationHeaders(init.idempotencyKey),
+      ),
     );
   }
 }
 
-function optionalMutationHeaders(idempotencyKey?: string): Record<string, string> {
+function optionalMutationHeaders(
+  idempotencyKey?: string,
+): Record<string, string> {
   if (!idempotencyKey?.trim()) {
     return {};
   }
@@ -891,21 +1070,31 @@ function gatewayMutationHeaders(
   return {
     ...(extraHeaders ?? {}),
     "x-tenant-id": tenantId,
-    [agentRecognitionProofHeader]: encodeRecognitionProofHeader(recognitionProof),
+    [agentRecognitionProofHeader]:
+      encodeRecognitionProofHeader(recognitionProof),
   };
+}
+
+export function formatMcpStdioFrame(response: JSONRPCResponse): string {
+  const body = JSON.stringify(response);
+  return `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
 }
 
 export class PaybondMCPServer {
   private readonly runtime: PaybondMCPRuntime;
   private readonly tools: MCPToolDefinition[];
+  private readonly toolPolicy: McpToolPolicyConfig;
   private initialized = false;
 
   constructor(settings: PaybondMCPSettings) {
     if (!settings.apiKey.trim()) {
       throw new Error("PAYBOND_API_KEY is required");
     }
+    this.toolPolicy = settings.toolPolicy ?? { policy: null, allowlist: [] };
     this.runtime = new PaybondMCPRuntime(settings);
-    this.tools = this.buildTools(settings);
+    this.tools = this.buildTools(settings).filter((tool) =>
+      toolAllowedByPolicy(tool.name, tool.annotations, this.toolPolicy),
+    );
   }
 
   listTools(): Array<Record<string, unknown>> {
@@ -914,16 +1103,34 @@ export class PaybondMCPServer {
       title: tool.title,
       description: tool.description,
       inputSchema: tool.inputSchema,
-      ...(tool.outputSchema === undefined ? {} : { outputSchema: tool.outputSchema }),
-      ...(tool.annotations === undefined ? {} : { annotations: tool.annotations }),
+      ...(tool.outputSchema === undefined
+        ? {}
+        : { outputSchema: tool.outputSchema }),
+      ...(tool.annotations === undefined
+        ? {}
+        : { annotations: tool.annotations }),
     }));
   }
 
-  async callTool(name: string, args: Record<string, unknown> = {}): Promise<MCPCallToolResult> {
+  async callTool(
+    name: string,
+    args: Record<string, unknown> = {},
+  ): Promise<MCPCallToolResult> {
     const tool = this.tools.find((candidate) => candidate.name === name);
     if (!tool) {
       return {
         content: [{ type: "text", text: `Unknown tool: ${name}` }],
+        isError: true,
+      };
+    }
+    if (!toolAllowedByPolicy(name, tool.annotations, this.toolPolicy)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Tool blocked by ${MCP_TOOL_POLICY_ENV}=${this.toolPolicy.policy ?? "unset"}: ${name}`,
+          },
+        ],
         isError: true,
       };
     }
@@ -938,7 +1145,9 @@ export class PaybondMCPServer {
     }
   }
 
-  async handleMessage(message: JSONRPCRequest): Promise<JSONRPCResponse | null> {
+  async handleMessage(
+    message: JSONRPCRequest,
+  ): Promise<JSONRPCResponse | null> {
     if (message.jsonrpc !== "2.0") {
       return responseError(message.id ?? null, -32600, "Invalid Request");
     }
@@ -1000,7 +1209,10 @@ export class PaybondMCPServer {
       case "tools/call": {
         const params = ensureObject(message.params, "tools/call params");
         const name = stringArg(params.name, "name");
-        const args = params.arguments === undefined ? {} : ensureObject(params.arguments, "arguments");
+        const args =
+          params.arguments === undefined
+            ? {}
+            : ensureObject(params.arguments, "arguments");
         return {
           jsonrpc: "2.0",
           id: message.id,
@@ -1013,26 +1225,39 @@ export class PaybondMCPServer {
   }
 
   runStdio(): void {
-    let buffer = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => {
-      buffer += chunk;
+    let buffer = Buffer.alloc(0);
+    process.stdin.on("data", (chunk: string | Buffer) => {
+      buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8")]);
       while (true) {
-        const newlineIndex = buffer.indexOf("\n");
-        if (newlineIndex < 0) {
+        const headerEnd = buffer.indexOf("\r\n\r\n");
+        if (headerEnd < 0) {
           break;
         }
-        const line = buffer.slice(0, newlineIndex).trim();
-        buffer = buffer.slice(newlineIndex + 1);
-        if (!line) {
-          continue;
+        const headerText = buffer.subarray(0, headerEnd).toString("ascii");
+        const contentLength = Number.parseInt(
+          headerText
+            .split("\r\n")
+            .find((line) => line.toLowerCase().startsWith("content-length:"))
+            ?.split(":", 2)[1]
+            ?.trim() ?? "",
+          10,
+        );
+        if (!Number.isFinite(contentLength) || contentLength <= 0) {
+          break;
         }
-        void this.handleLine(line);
+        const bodyStart = headerEnd + 4;
+        const frameEnd = bodyStart + contentLength;
+        if (buffer.length < frameEnd) {
+          break;
+        }
+        const body = buffer.subarray(bodyStart, frameEnd).toString("utf8");
+        buffer = buffer.subarray(frameEnd);
+        void this.handleLine(body);
       }
     });
     process.stdin.on("end", () => {
-      if (buffer.trim()) {
-        void this.handleLine(buffer.trim());
+      if (buffer.length > 0) {
+        void this.handleLine(buffer.toString("utf8"));
       }
     });
     process.stdin.resume();
@@ -1054,7 +1279,7 @@ export class PaybondMCPServer {
   }
 
   private writeResponse(response: JSONRPCResponse): void {
-    process.stdout.write(`${JSON.stringify(response)}\n`);
+    process.stdout.write(formatMcpStdioFrame(response));
   }
 
   private buildTools(settings: PaybondMCPSettings): MCPToolDefinition[] {
@@ -1072,15 +1297,23 @@ export class PaybondMCPServer {
           "Verify a capability token returned by a created or funded Paybond intent for one tenant-bound Harbor intent.",
         inputSchema: objectSchema(
           {
-            intent_id: { type: "string", description: "Canonical Harbor intent UUID." },
+            intent_id: {
+              type: "string",
+              description: "Canonical Harbor intent UUID.",
+            },
             token: {
               type: "string",
-              description: "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
+              description:
+                "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
             },
-            operation: { type: "string", description: "Delegated operation or tool name." },
+            operation: {
+              type: "string",
+              description: "Delegated operation or tool name.",
+            },
             requested_spend_cents: {
               type: "integer",
-              description: "Optional requested spend in cents for this tool call.",
+              description:
+                "Optional requested spend in cents for this tool call.",
             },
           },
           ["intent_id", "token", "operation"],
@@ -1102,15 +1335,23 @@ export class PaybondMCPServer {
           "Provider-agnostic spend gate: verify the funded intent's capability token before a side-effecting tool, paid API, vendor action, or settlement workflow executes.",
         inputSchema: objectSchema(
           {
-            intent_id: { type: "string", description: "Canonical Harbor intent UUID." },
+            intent_id: {
+              type: "string",
+              description: "Canonical Harbor intent UUID.",
+            },
             token: {
               type: "string",
-              description: "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
+              description:
+                "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
             },
-            operation: { type: "string", description: "Delegated operation or tool name." },
+            operation: {
+              type: "string",
+              description: "Delegated operation or tool name.",
+            },
             requested_spend_cents: {
               type: "integer",
-              description: "Optional requested spend in cents for this tool call.",
+              description:
+                "Optional requested spend in cents for this tool call.",
             },
           },
           ["intent_id", "token", "operation"],
@@ -1132,12 +1373,20 @@ export class PaybondMCPServer {
           "Bootstrap a sandbox-only Paybond guardrail intent for a first paid-tool integration. Tenant scope is derived from the configured service-account API key and the route never touches live settlement rails.",
         inputSchema: objectSchema(
           {
-            operation: { type: "string", description: "Delegated operation or paid tool name." },
+            operation: {
+              type: "string",
+              description: "Delegated operation or paid tool name.",
+            },
             requested_spend_cents: {
               type: "integer",
-              description: "Sandbox spend amount in cents to authorize for the sample tool call.",
+              description:
+                "Sandbox spend amount in cents to authorize for the sample tool call.",
             },
-            currency: { type: "string", description: "Optional ISO currency code; defaults at the gateway." },
+            currency: {
+              type: "string",
+              description:
+                "Optional ISO currency code; defaults at the gateway.",
+            },
             evidence_schema: { type: "object", additionalProperties: true },
             metadata: { type: "object", additionalProperties: true },
             idempotency_key: { type: "string" },
@@ -1147,11 +1396,19 @@ export class PaybondMCPServer {
         call: async (args) =>
           this.runtime.bootstrapSandboxGuardrail({
             operation: stringArg(args.operation, "operation"),
-            requestedSpendCents: intArg(args.requested_spend_cents, "requested_spend_cents"),
+            requestedSpendCents: intArg(
+              args.requested_spend_cents,
+              "requested_spend_cents",
+            ),
             currency: optionalString(args.currency),
             evidenceSchema:
-              args.evidence_schema === undefined ? undefined : ensureObject(args.evidence_schema, "evidence_schema"),
-            metadata: args.metadata === undefined ? undefined : ensureObject(args.metadata, "metadata"),
+              args.evidence_schema === undefined
+                ? undefined
+                : ensureObject(args.evidence_schema, "evidence_schema"),
+            metadata:
+              args.metadata === undefined
+                ? undefined
+                : ensureObject(args.metadata, "metadata"),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1161,13 +1418,21 @@ export class PaybondMCPServer {
           "Submit evidence for a sandbox-only Paybond guardrail intent. Tenant scope is derived from the configured service-account API key and simulator settlement remains sandbox-only.",
         inputSchema: objectSchema(
           {
-            intent_id: { type: "string", description: "Sandbox guardrail intent UUID." },
+            intent_id: {
+              type: "string",
+              description: "Sandbox guardrail intent UUID.",
+            },
             payload: { type: "object", additionalProperties: true },
             artifacts: { type: "array", items: { type: "string" } },
-            operation: { type: "string", description: "Optional operation override for the evidence record." },
+            operation: {
+              type: "string",
+              description:
+                "Optional operation override for the evidence record.",
+            },
             requested_spend_cents: {
               type: "integer",
-              description: "Optional sandbox spend amount override for the evidence record.",
+              description:
+                "Optional sandbox spend amount override for the evidence record.",
             },
             metadata: { type: "object", additionalProperties: true },
             idempotency_key: { type: "string" },
@@ -1177,14 +1442,23 @@ export class PaybondMCPServer {
         call: async (args) =>
           this.runtime.submitSandboxGuardrailEvidence({
             intentId: uuidArg(args.intent_id, "intent_id"),
-            payload: args.payload === undefined ? undefined : ensureObject(args.payload, "payload"),
-            artifacts: args.artifacts === undefined ? undefined : stringArrayArg(args.artifacts, "artifacts"),
+            payload:
+              args.payload === undefined
+                ? undefined
+                : ensureObject(args.payload, "payload"),
+            artifacts:
+              args.artifacts === undefined
+                ? undefined
+                : stringArrayArg(args.artifacts, "artifacts"),
             operation: optionalString(args.operation),
             requestedSpendCents:
               args.requested_spend_cents === undefined
                 ? undefined
                 : intArg(args.requested_spend_cents, "requested_spend_cents"),
-            metadata: args.metadata === undefined ? undefined : ensureObject(args.metadata, "metadata"),
+            metadata:
+              args.metadata === undefined
+                ? undefined
+                : ensureObject(args.metadata, "metadata"),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1208,14 +1482,19 @@ export class PaybondMCPServer {
       },
       {
         name: "paybond_get_intent",
-        description: "Fetch one tenant-scoped Harbor intent detail through the gateway operator view.",
+        description:
+          "Fetch one tenant-scoped Harbor intent detail through the gateway operator view.",
         inputSchema: objectSchema(
           {
-            intent_id: { type: "string", description: "Canonical Harbor intent UUID." },
+            intent_id: {
+              type: "string",
+              description: "Canonical Harbor intent UUID.",
+            },
           },
           ["intent_id"],
         ),
-        call: async (args) => this.runtime.getIntent(uuidArg(args.intent_id, "intent_id")),
+        call: async (args) =>
+          this.runtime.getIntent(uuidArg(args.intent_id, "intent_id")),
       },
       {
         name: "paybond_get_reputation_receipt",
@@ -1240,7 +1519,9 @@ export class PaybondMCPServer {
           score_version: { type: "string" },
         }),
         call: async (args) =>
-          (await this.runtime.signal()).getPortfolioSummary(optionalString(args.score_version)),
+          (await this.runtime.signal()).getPortfolioSummary(
+            optionalString(args.score_version),
+          ),
       },
       {
         name: "paybond_get_signed_portfolio_artifact",
@@ -1250,11 +1531,14 @@ export class PaybondMCPServer {
           score_version: { type: "string" },
         }),
         call: async (args) =>
-          (await this.runtime.signal()).getSignedPortfolioArtifact(optionalString(args.score_version)),
+          (await this.runtime.signal()).getSignedPortfolioArtifact(
+            optionalString(args.score_version),
+          ),
       },
       {
         name: "paybond_get_fraud_assessment",
-        description: "Fetch the read-only fraud assessment for one tenant-scoped operator DID.",
+        description:
+          "Fetch the read-only fraud assessment for one tenant-scoped operator DID.",
         inputSchema: objectSchema(
           {
             operator_did: { type: "string" },
@@ -1270,7 +1554,8 @@ export class PaybondMCPServer {
       },
       {
         name: "paybond_get_fraud_metrics",
-        description: "Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a supported active window.",
+        description:
+          "Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a supported active window.",
         inputSchema: objectSchema({
           window: { type: "string", enum: ["24h", "7d", "30d"] },
           score_version: { type: "string" },
@@ -1283,26 +1568,32 @@ export class PaybondMCPServer {
       },
       {
         name: "paybond_get_a2a_agent_card",
-        description: "Fetch the published Paybond A2A discovery card for protocol-trust delegation.",
+        description:
+          "Fetch the published Paybond A2A discovery card for protocol-trust delegation.",
         inputSchema: objectSchema({}),
         call: async () => this.runtime.getA2AAgentCard(),
       },
       {
         name: "paybond_list_a2a_task_contracts",
-        description: "Fetch the published catalog of Paybond A2A task contracts for delegated Harbor workflows.",
+        description:
+          "Fetch the published catalog of Paybond A2A task contracts for delegated Harbor workflows.",
         inputSchema: objectSchema({}),
         call: async () => this.runtime.getA2ATaskContracts(),
       },
       {
         name: "paybond_get_a2a_task_contract",
-        description: "Fetch one published Paybond A2A task contract by identifier.",
+        description:
+          "Fetch one published Paybond A2A task contract by identifier.",
         inputSchema: objectSchema(
           {
             contract_id: { type: "string" },
           },
           ["contract_id"],
         ),
-        call: async (args) => this.runtime.getA2ATaskContract(stringArg(args.contract_id, "contract_id")),
+        call: async (args) =>
+          this.runtime.getA2ATaskContract(
+            stringArg(args.contract_id, "contract_id"),
+          ),
       },
       {
         name: "paybond_verify_agent_mandate_v1",
@@ -1315,7 +1606,9 @@ export class PaybondMCPServer {
           ["signed_mandate"],
         ),
         call: async (args) =>
-          this.runtime.verifyAgentMandateV1(ensureObject(args.signed_mandate, "signed_mandate")),
+          this.runtime.verifyAgentMandateV1(
+            ensureObject(args.signed_mandate, "signed_mandate"),
+          ),
       },
       {
         name: "paybond_verify_agent_recognition_proof_v1",
@@ -1333,8 +1626,14 @@ export class PaybondMCPServer {
         call: async (args) =>
           this.runtime.verifyAgentRecognitionProofV1({
             proof: ensureObject(args.proof, "proof"),
-            expectedPurpose: stringArg(args.expected_purpose, "expected_purpose"),
-            expectedRequest: ensureObject(args.expected_request, "expected_request"),
+            expectedPurpose: stringArg(
+              args.expected_purpose,
+              "expected_purpose",
+            ),
+            expectedRequest: ensureObject(
+              args.expected_request,
+              "expected_request",
+            ),
             expectedVerifier:
               args.expected_verifier === undefined
                 ? undefined
@@ -1358,7 +1657,10 @@ export class PaybondMCPServer {
           this.runtime.importAgentMandateV1({
             signedMandate: ensureObject(args.signed_mandate, "signed_mandate"),
             intentId: uuidArg(args.intent_id, "intent_id"),
-            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            recognitionProof: ensureObject(
+              args.recognition_proof,
+              "recognition_proof",
+            ),
             transportBinding:
               args.transport_binding === undefined
                 ? undefined
@@ -1367,25 +1669,33 @@ export class PaybondMCPServer {
       },
       {
         name: "paybond_get_settlement_receipt_v1",
-        description: "Fetch the signed protocol-v2 settlement receipt for one Harbor intent.",
+        description:
+          "Fetch the signed protocol-v2 settlement receipt for one Harbor intent.",
         inputSchema: objectSchema(
           {
             receipt_id: { type: "string" },
           },
           ["receipt_id"],
         ),
-        call: async (args) => this.runtime.getSettlementReceiptV1(uuidArg(args.receipt_id, "receipt_id")),
+        call: async (args) =>
+          this.runtime.getSettlementReceiptV1(
+            uuidArg(args.receipt_id, "receipt_id"),
+          ),
       },
       {
         name: "paybond_verify_protocol_receipt_v1",
-        description: "Verify a protocol-v2 authorization or settlement receipt through the gateway.",
+        description:
+          "Verify a protocol-v2 authorization or settlement receipt through the gateway.",
         inputSchema: objectSchema(
           {
             receipt: { type: "object", additionalProperties: true },
           },
           ["receipt"],
         ),
-        call: async (args) => this.runtime.verifyProtocolReceiptV1(ensureObject(args.receipt, "receipt")),
+        call: async (args) =>
+          this.runtime.verifyProtocolReceiptV1(
+            ensureObject(args.receipt, "receipt"),
+          ),
       },
       {
         name: "paybond_create_intent",
@@ -1402,7 +1712,10 @@ export class PaybondMCPServer {
         call: async (args) =>
           this.runtime.createHarborIntent({
             body: ensureObject(args.body, "body"),
-            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            recognitionProof: ensureObject(
+              args.recognition_proof,
+              "recognition_proof",
+            ),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1421,7 +1734,10 @@ export class PaybondMCPServer {
         call: async (args) =>
           this.runtime.createHarborIntent({
             body: ensureObject(args.body, "body"),
-            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            recognitionProof: ensureObject(
+              args.recognition_proof,
+              "recognition_proof",
+            ),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1441,7 +1757,10 @@ export class PaybondMCPServer {
         call: async (args) =>
           this.runtime.fundHarborIntent({
             intentId: uuidArg(args.intent_id, "intent_id"),
-            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            recognitionProof: ensureObject(
+              args.recognition_proof,
+              "recognition_proof",
+            ),
             paymentSignature: optionalString(args.payment_signature),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
@@ -1463,7 +1782,10 @@ export class PaybondMCPServer {
           this.runtime.submitHarborEvidence({
             intentId: uuidArg(args.intent_id, "intent_id"),
             body: ensureObject(args.body, "body"),
-            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            recognitionProof: ensureObject(
+              args.recognition_proof,
+              "recognition_proof",
+            ),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1484,7 +1806,10 @@ export class PaybondMCPServer {
           this.runtime.submitHarborEvidence({
             intentId: uuidArg(args.intent_id, "intent_id"),
             body: ensureObject(args.body, "body"),
-            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            recognitionProof: ensureObject(
+              args.recognition_proof,
+              "recognition_proof",
+            ),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1505,7 +1830,10 @@ export class PaybondMCPServer {
           this.runtime.confirmHarborSettlement({
             intentId: uuidArg(args.intent_id, "intent_id"),
             body: ensureObject(args.body, "body"),
-            recognitionProof: ensureObject(args.recognition_proof, "recognition_proof"),
+            recognitionProof: ensureObject(
+              args.recognition_proof,
+              "recognition_proof",
+            ),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1515,11 +1843,17 @@ export class PaybondMCPServer {
   }
 }
 
-export function settingsFromEnv(env: Record<string, string | undefined> = process.env): PaybondMCPSettings {
+export function settingsFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): PaybondMCPSettings {
   const envFile = optionalEnv(env.PAYBOND_ENV_FILE) ?? DEFAULT_ENV_FILE;
-  const apiKey = String(env.PAYBOND_API_KEY ?? readEnvFileValue(envFile, "PAYBOND_API_KEY") ?? "").trim();
+  const apiKey = String(
+    env.PAYBOND_API_KEY ?? readEnvFileValue(envFile, "PAYBOND_API_KEY") ?? "",
+  ).trim();
   if (!apiKey) {
-    throw new Error("PAYBOND_API_KEY is required; run paybond login or configure your MCP host environment");
+    throw new Error(
+      "PAYBOND_API_KEY is required; run paybond login or configure your MCP host environment",
+    );
   }
   return {
     gatewayBaseUrl:
@@ -1527,10 +1861,18 @@ export function settingsFromEnv(env: Record<string, string | undefined> = proces
       optionalEnv(env.PAYBOND_GATEWAY_BASE_URL) ??
       DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     apiKey,
-    principalPath: optionalEnv(env.PAYBOND_PRINCIPAL_PATH) ?? DEFAULT_PRINCIPAL_PATH,
+    principalPath:
+      optionalEnv(env.PAYBOND_PRINCIPAL_PATH) ?? DEFAULT_PRINCIPAL_PATH,
     maxRetries: optionalEnv(env.PAYBOND_MCP_MAX_RETRIES)
-      ? intArg(optionalEnv(env.PAYBOND_MCP_MAX_RETRIES), "PAYBOND_MCP_MAX_RETRIES")
+      ? intArg(
+          optionalEnv(env.PAYBOND_MCP_MAX_RETRIES),
+          "PAYBOND_MCP_MAX_RETRIES",
+        )
       : 3,
+    toolPolicy: mergeMcpToolPolicy(
+      parseMcpToolPolicy(optionalEnv(env[MCP_TOOL_POLICY_ENV])),
+      parseMcpToolAllowlist(optionalEnv(env[MCP_TOOL_ALLOWLIST_ENV])),
+    ),
   };
 }
 
@@ -1543,7 +1885,9 @@ export function main(argv: string[] = process.argv.slice(2)): number {
     return 0;
   }
   if (argv.length > 0) {
-    process.stderr.write("paybond-mcp-server does not accept positional arguments\n");
+    process.stderr.write(
+      "paybond-mcp-server does not accept positional arguments\n",
+    );
     return 1;
   }
   try {
@@ -1559,7 +1903,10 @@ function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, "");
 }
 
-function parseJSONObject(text: string, context: string): Record<string, unknown> {
+function parseJSONObject(
+  text: string,
+  context: string,
+): Record<string, unknown> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -1602,7 +1949,11 @@ function intArg(value: unknown, field: string): number {
 
 function uuidArg(value: unknown, field: string): string {
   const raw = stringArg(value, field);
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw)) {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      raw,
+    )
+  ) {
     throw new Error(`${field} must be a canonical UUID`);
   }
   return raw;
@@ -1615,10 +1966,15 @@ function stringArrayArg(value: unknown, field: string): string[] {
   return value.map((item, index) => stringArg(item, `${field}[${index}]`));
 }
 
-function assertSandboxGuardrailTenant(body: Record<string, unknown>, expectedTenant: string): void {
+function assertSandboxGuardrailTenant(
+  body: Record<string, unknown>,
+  expectedTenant: string,
+): void {
   const echoedTenant = stringArg(body.tenant_id, "tenant_id");
   if (echoedTenant !== expectedTenant) {
-    throw new Error(`sandbox guardrail tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`);
+    throw new Error(
+      `sandbox guardrail tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`,
+    );
   }
 }
 
@@ -1646,7 +2002,10 @@ function emptyObjectSchema(): Record<string, unknown> {
   };
 }
 
-function outputObjectSchema(properties: Record<string, unknown>, required: string[] = []): Record<string, unknown> {
+function outputObjectSchema(
+  properties: Record<string, unknown>,
+  required: string[] = [],
+): Record<string, unknown> {
   return {
     type: "object",
     properties,
@@ -1697,7 +2056,9 @@ function toolWithSelectionMetadata(tool: MCPToolDefinition): MCPToolDefinition {
   };
 }
 
-function toToolResult(value: Record<string, unknown> | null): MCPCallToolResult {
+function toToolResult(
+  value: Record<string, unknown> | null,
+): MCPCallToolResult {
   if (value === null) {
     return {
       content: [{ type: "text", text: "null" }],
@@ -1709,20 +2070,11 @@ function toToolResult(value: Record<string, unknown> | null): MCPCallToolResult 
   };
 }
 
-function jsonObjectFromValue(value: unknown): Record<string, unknown> {
-  if (value === null) {
-    return {};
-  }
-  if (Array.isArray(value)) {
-    return { items: value };
-  }
-  if (typeof value !== "object") {
-    return { value };
-  }
-  return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
-}
-
-function responseError(id: JSONRPCID, code: number, message: string): JSONRPCResponse {
+function responseError(
+  id: JSONRPCID,
+  code: number,
+  message: string,
+): JSONRPCResponse {
   return {
     jsonrpc: "2.0",
     id,
@@ -1767,7 +2119,9 @@ function formatError(err: unknown): string {
 }
 
 function normalizeFileURL(url: string): string {
-  return url.startsWith("file:///var/") ? url.replace("file:///var/", "file:///private/var/") : url;
+  return url.startsWith("file:///var/")
+    ? url.replace("file:///var/", "file:///private/var/")
+    : url;
 }
 
 async function invokedFromCLI(): Promise<boolean> {
@@ -1775,15 +2129,6 @@ async function invokedFromCLI(): Promise<boolean> {
   if (!scriptPath) {
     return false;
   }
-  // @ts-ignore Node builtins are available in the published CLI runtime.
-  const fs = (await import("node:fs/promises")) as { realpath(path: string): Promise<string> };
-  // @ts-ignore Node builtins are available in the published CLI runtime.
-  const path = (await import("node:path")) as { resolve(...parts: string[]): string };
-  // @ts-ignore Node builtins are available in the published CLI runtime.
-  const url = (await import("node:url")) as {
-    fileURLToPath(value: string): string;
-    pathToFileURL(value: string): { href: string };
-  };
 
   async function realFileURL(filePath: string): Promise<string> {
     let resolved = path.resolve(filePath);
@@ -1793,17 +2138,32 @@ async function invokedFromCLI(): Promise<boolean> {
       // If realpath fails, compare the absolute path. This keeps direct execution
       // working even when the script path disappears during process startup.
     }
-    return normalizeFileURL(url.pathToFileURL(resolved).href);
+    return normalizeFileURL(pathToFileURL(resolved).href);
   }
 
-  return (await realFileURL(scriptPath)) === (await realFileURL(url.fileURLToPath(import.meta.url)));
+  return (
+    (await realFileURL(scriptPath)) ===
+    (await realFileURL(fileURLToPath(import.meta.url)))
+  );
 }
 
-invokedFromCLI().then((invoked) => {
-  if (invoked && main() !== 0) {
+invokedFromCLI().then(
+  (invoked) => {
+    if (!invoked) {
+      return;
+    }
+    runCli(["mcp", "serve", ...process.argv.slice(2)]).then(
+      (code) => {
+        process.exitCode = code;
+      },
+      (err) => {
+        process.stderr.write(`${formatError(err)}\n`);
+        process.exitCode = 1;
+      },
+    );
+  },
+  (err) => {
+    process.stderr.write(`${formatError(err)}\n`);
     process.exitCode = 1;
-  }
-}, (err) => {
-  process.stderr.write(`${formatError(err)}\n`);
-  process.exitCode = 1;
-});
+  },
+);
