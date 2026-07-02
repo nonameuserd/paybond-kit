@@ -1,0 +1,25 @@
+# Reference implementation — edit freely. Regenerate with:
+# edit paybond.policy.yaml directly
+
+version: 1
+name: mcp-coding-agent-v1
+default_deny: true
+
+tools:
+  search.web:
+    side_effecting: false
+
+  search.repo:
+    side_effecting: false
+
+  deploy.preview:
+    side_effecting: true
+    max_spend_cents: 500
+    evidence_preset: cost_and_completion
+
+intent:
+  allowed_tools:
+    - deploy.preview
+  budget:
+    currency: usd
+    max_spend_usd: 50

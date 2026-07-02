@@ -1,0 +1,17 @@
+{
+  "id": "saas",
+  "title": "SaaS provisioning agent",
+  "policy_default": {
+    "domain": "saas",
+    "guardrails": ["default_deny", "max_spend_usd_50"]
+  },
+  "primary_operation": "saas.provision_seat",
+  "completion_preset": "cost_and_completion",
+  "smoke": {
+    "result_body": {
+      "status": "completed",
+      "cost_cents": 2900
+    },
+    "evidence_preset": "cost_and_completion"
+  }
+}

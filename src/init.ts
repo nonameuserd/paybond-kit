@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { runCli } from "./cli/router.js";
+import { getCompletionPreset, jsonLiteral } from "./completion-catalog.js";
 
 declare const process: {
   argv: string[];
@@ -26,7 +27,14 @@ type Framework =
   | "langgraph"
   | "mcp";
 
-type Preset = "paid-tool-guard";
+type AgentMiddlewareFramework =
+  | "generic"
+  | "claude-agents"
+  | "langgraph"
+  | "vercel-ai"
+  | "openai";
+
+type Preset = "paid-tool-guard" | "agent-middleware";
 
 const FRAMEWORKS = new Set<Framework>([
   "generic",
@@ -41,7 +49,24 @@ const FRAMEWORKS = new Set<Framework>([
   "mcp",
 ]);
 
-const PRESETS = new Set<Preset>(["paid-tool-guard"]);
+const AGENT_MIDDLEWARE_FRAMEWORKS = new Set<AgentMiddlewareFramework>([
+  "generic",
+  "claude-agents",
+  "openai",
+  "langgraph",
+  "vercel-ai",
+]);
+
+const AGENT_MIDDLEWARE_FRAMEWORK_ALIASES: Record<string, AgentMiddlewareFramework> = {
+  "provider-agnostic": "generic",
+};
+
+const PRESETS = new Set<Preset>(["paid-tool-guard", "agent-middleware"]);
+
+const PRESET_DEFAULT_OUT: Record<Preset, string> = {
+  "paid-tool-guard": "paybond-paid-tool-guard.ts",
+  "agent-middleware": "paybond-agent-middleware.ts",
+};
 
 const FRAMEWORK_NOTES: Record<Framework, string> = {
   generic: "Wrap the returned function around any side-effecting tool handler.",
@@ -58,16 +83,44 @@ const FRAMEWORK_NOTES: Record<Framework, string> = {
 
 function usage(): string {
   return [
-    "Usage: paybond-init [--preset paid-tool-guard] [--framework generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp] [--out paybond-paid-tool-guard.ts] [--force]",
+    "Usage: paybond-init [--preset paid-tool-guard|agent-middleware] [--framework <name>] [--out <path>] [--force]",
     "",
-    "Scaffolds a production-shaped Paybond guardrail integration helper.",
+    "Presets:",
+    "  paid-tool-guard     Per-tool guardTool helper (default)",
+    "  agent-middleware    PaybondAgentRun + tool registry middleware",
+    "",
+    "Frameworks (paid-tool-guard): generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp",
+    "Frameworks (agent-middleware): generic|claude-agents|openai|langgraph|vercel-ai",
   ].join("\n");
+}
+
+function normalizeAgentMiddlewareFramework(framework: Framework): AgentMiddlewareFramework {
+  const alias = AGENT_MIDDLEWARE_FRAMEWORK_ALIASES[framework];
+  if (alias) {
+    return alias;
+  }
+  if (!AGENT_MIDDLEWARE_FRAMEWORKS.has(framework as AgentMiddlewareFramework)) {
+    throw new Error("invalid --framework for agent-middleware preset");
+  }
+  return framework as AgentMiddlewareFramework;
+}
+
+function validateFrameworkForPreset(preset: Preset, framework: Framework): void {
+  if (preset === "agent-middleware") {
+    normalizeAgentMiddlewareFramework(framework);
+    return;
+  }
+  if (!FRAMEWORKS.has(framework)) {
+    throw new Error("invalid --framework");
+  }
 }
 
 function parseArgs(argv: string[]): { preset: Preset; framework: Framework; out: string; force: boolean } {
   let preset: Preset = "paid-tool-guard";
   let framework: Framework = "provider-agnostic";
-  let out = "paybond-paid-tool-guard.ts";
+  let frameworkExplicit = false;
+  let out = PRESET_DEFAULT_OUT["paid-tool-guard"];
+  let outExplicit = false;
   let force = false;
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -87,15 +140,19 @@ function parseArgs(argv: string[]): { preset: Preset; framework: Framework; out:
         throw new Error("invalid --preset");
       }
       preset = raw as Preset;
+      if (!outExplicit) {
+        out = PRESET_DEFAULT_OUT[preset];
+      }
       continue;
     }
     if (arg === "--framework") {
       const raw = argv[i + 1];
       i += 1;
-      if (!raw || !FRAMEWORKS.has(raw as Framework)) {
+      if (!raw) {
         throw new Error("invalid --framework");
       }
       framework = raw as Framework;
+      frameworkExplicit = true;
       continue;
     }
     if (arg === "--out") {
@@ -105,55 +162,21 @@ function parseArgs(argv: string[]): { preset: Preset; framework: Framework; out:
         throw new Error("invalid --out");
       }
       out = raw;
+      outExplicit = true;
       continue;
     }
     throw new Error(`unknown argument: ${arg}`);
   }
+  if (preset === "agent-middleware" && !frameworkExplicit) {
+    framework = "generic";
+  }
+  validateFrameworkForPreset(preset, framework);
   return { preset, framework, out, force };
 }
 
-function template(framework: Framework): string {
-  return `import fs from "node:fs/promises";
-import {
-  Paybond,
-  type SandboxGuardrailBootstrapResult,
-  type SandboxGuardrailEvidenceResult,
-} from "@paybond/kit";
-
-declare const process: {
+function envHelpersBlock(): string {
+  return `declare const process: {
   env: Record<string, string | undefined>;
-};
-
-// Production integration helpers only. Add your paid-tool handler in
-// application code and pass it to wrapPaidTool(...).
-const DEFAULT_OPERATION = "paid_tool.operation";
-const DEFAULT_REQUESTED_SPEND_CENTS = 500;
-
-export type PaidToolHandler<TInput, TResult> = (input: TInput) => TResult | Promise<TResult>;
-
-export type SandboxGuardrailIntentOptions = {
-  operation?: string;
-  requestedSpendCents?: number;
-  currency?: string;
-  evidenceSchema?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-  idempotencyKey?: string;
-};
-
-export type SubmitSandboxEvidenceOptions = {
-  operation?: string;
-  requestedSpendCents?: number;
-  metadata?: Record<string, unknown>;
-  artifacts?: string[];
-  idempotencyKey?: string;
-};
-
-export type OpenPaybondFromEnvOptions = {
-  /**
-   * Load PAYBOND_API_KEY from this local env file when the process environment
-   * does not already provide it. Pass false when your agent host injects secrets.
-   */
-  envFile?: string | false;
 };
 
 function readEnvValue(body: string, key: string): string | undefined {
@@ -192,6 +215,14 @@ export async function loadPaybondEnvFile(envFile = ".env.local"): Promise<void> 
   }
 }
 
+export type OpenPaybondFromEnvOptions = {
+  /**
+   * Load PAYBOND_API_KEY from this local env file when the process environment
+   * does not already provide it. Pass false when your agent host injects secrets.
+   */
+  envFile?: string | false;
+};
+
 export async function openPaybondFromEnv(options: OpenPaybondFromEnvOptions = {}): Promise<Paybond> {
   if (options.envFile !== false) {
     await loadPaybondEnvFile(options.envFile ?? ".env.local");
@@ -206,7 +237,295 @@ export async function openPaybondFromEnv(options: OpenPaybondFromEnvOptions = {}
     gatewayBaseUrl: process.env.PAYBOND_GATEWAY_URL ?? process.env.PAYBOND_GATEWAY_BASE_URL,
     expectedEnvironment: "sandbox",
   });
+}`;
 }
+
+function agentMiddlewareFrameworkBlock(framework: AgentMiddlewareFramework): string {
+  switch (framework) {
+    case "claude-agents":
+      return `import { tool } from "@anthropic-ai/claude-agent-sdk";
+import { z } from "zod";
+import {
+  createGuardedAgent,
+  createGuardedAgentRunner,
+  type CreateGuardedAgentResult,
+} from "@paybond/kit/agent";
+
+const TRAVEL_AGENT_POLICY = {
+  version: 1,
+  name: "travel-agent-v1",
+  default_deny: true,
+  tools: {
+    "travel.book_hotel": {
+      side_effecting: true,
+      max_spend_cents: DEFAULT_REQUESTED_SPEND_CENTS,
+      evidence_preset: COMPLETION_PRESET_ID,
+    },
+    "search.web": {
+      side_effecting: false,
+    },
+  },
+  intent: {
+    allowed_tools: ["travel.book_hotel"],
+    budget: { currency: "usd", max_spend_usd: 200 },
+  },
+} as const;
+
+/** Policy-driven Claude Agent SDK wiring: bind run, wrap \`tool()\` handlers, expose MCP server config. */
+export async function createClaudeAgentsGuardedRunner(
+  paybond: Paybond,
+): Promise<CreateGuardedAgentResult> {
+  const sdkTools = [
+    tool(
+      "travel.book_hotel",
+      "Book a hotel room",
+      { city: z.string(), estimatedPriceCents: z.number().int().nonnegative() },
+      async (args) => ({
+        content: [{ type: "text" as const, text: JSON.stringify(await bookHotel(args)) }],
+        structuredContent: await bookHotel(args),
+      }),
+    ),
+  ];
+  return createGuardedAgent(paybond, {
+    policy: TRAVEL_AGENT_POLICY,
+    framework: "claude-agents",
+    tools: sdkTools,
+    bootstrap: {
+      operation: DEFAULT_OPERATION,
+      requestedSpendCents: DEFAULT_REQUESTED_SPEND_CENTS,
+      completionPreset: COMPLETION_PRESET_ID,
+    },
+  });
+}
+
+/** Alias matching {@link createGuardedAgentRunner} naming. */
+export const createClaudeAgentsGuardedAgentRunner = createClaudeAgentsGuardedRunner;
+
+export { createGuardedAgentRunner };`;
+    case "openai":
+      return `import { createOpenAIAgentsAdapter } from "@paybond/kit/openai-agents";
+import type { FunctionTool } from "@openai/agents";
+
+/** Wrap OpenAI Agents SDK function tools with Paybond middleware (verify → execute → auto-evidence). */
+export function wrapOpenAIAgentTools<TContext>(
+  run: PaybondAgentRun,
+  tools: Array<FunctionTool<TContext>>,
+): Array<FunctionTool<TContext>> {
+  return createOpenAIAgentsAdapter(run).guardFunctionTools(tools);
+}`;
+    case "langgraph":
+      return `import { paybondAwrapToolCall, paybondToolNode } from "@paybond/kit/langgraph";
+import type { PaybondAgentRun } from "@paybond/kit/agent";
+
+/** LangGraph ToolNode hook — use with \`paybondToolNode(tools, run)\` or \`new ToolNode(tools, { awrapToolCall })\` when supported. */
+export function createLangGraphToolCallWrapper(run: PaybondAgentRun) {
+  return paybondAwrapToolCall(run);
+}
+
+/** Convenience factory around LangGraph \`ToolNode\` with Paybond interceptor wiring. */
+export function createPaybondLangGraphToolNode(
+  run: PaybondAgentRun,
+  tools: Parameters<typeof paybondToolNode>[0],
+) {
+  return paybondToolNode(tools, run);
+}`;
+    case "vercel-ai":
+      return `import { generateText, tool } from "ai";
+import { z } from "zod";
+import {
+  paybondVercelToolApproval,
+  paybondVercelWrapTools,
+} from "@paybond/kit/vercel-ai";
+
+export function createGuardedVercelTools(run: PaybondAgentRun) {
+  const tools = {
+    bookHotel: tool({
+      description: "Book a hotel room",
+      inputSchema: z.object({
+        city: z.string(),
+        estimatedPriceCents: z.number().int().nonnegative(),
+      }),
+      execute: async (args) => bookHotel(args),
+    }),
+    searchWeb: tool({
+      description: "Search the web",
+      inputSchema: z.object({ query: z.string() }),
+      execute: async (args) => searchWeb(args),
+    }),
+  };
+  return paybondVercelWrapTools(run, tools);
+}
+
+/** Example \`generateText\` wiring with Paybond \`toolApproval\` + wrapped tools. */
+export async function runGuardedGenerateText(
+  run: PaybondAgentRun,
+  model: Parameters<typeof generateText>[0]["model"],
+  prompt: string,
+) {
+  const tools = createGuardedVercelTools(run);
+  return generateText({
+    model,
+    tools,
+    toolApproval: paybondVercelToolApproval(run),
+    prompt,
+  });
+}`;
+    default:
+      return `import { createPaybondGenericAgentConfig } from "@paybond/kit/agent";
+
+/** Recommended default when the agent framework is unknown. */
+export function createGenericAgentConfig(
+  run: PaybondAgentRun,
+  tools: Array<{ name: string; execute: (args: unknown) => unknown | Promise<unknown> }>,
+) {
+  return createPaybondGenericAgentConfig(run, tools);
+}
+
+/** Wrap \`{ name, execute }\` tools for any agent-agnostic runtime. */
+export function wrapAgentTools(
+  run: PaybondAgentRun,
+  tools: Array<{ name: string; execute: (args: unknown) => unknown | Promise<unknown> }>,
+) {
+  return createGenericAgentConfig(run, tools).tools;
+}`;
+  }
+}
+
+function agentMiddlewareTemplate(framework: AgentMiddlewareFramework): string {
+  const completionPreset = getCompletionPreset("cost_and_completion");
+  const evidenceSchema = jsonLiteral(completionPreset.evidence_schema, 2);
+  return `import fs from "node:fs/promises";
+import { Paybond } from "@paybond/kit";
+import {
+  createPaybondToolRegistry,
+  type PaybondAgentRun,
+  type PaybondAgentRunBindInput,
+} from "@paybond/kit/agent";
+
+${envHelpersBlock()}
+
+// Agent middleware preset maps to completion catalog archetype: cost_and_completion (${completionPreset.harbor_template_id}).
+const COMPLETION_PRESET_ID = "cost_and_completion";
+const DEFAULT_OPERATION = "travel.book_hotel";
+const DEFAULT_REQUESTED_SPEND_CENTS = 20_000;
+
+export type BookHotelArgs = {
+  city: string;
+  estimatedPriceCents: number;
+};
+
+export async function bookHotel(args: BookHotelArgs) {
+  return {
+    reservation: {
+      status: "confirmed" as const,
+      price_cents: args.estimatedPriceCents,
+      city: args.city,
+    },
+  };
+}
+
+export async function searchWeb(args: { query: string }) {
+  return { hits: [{ title: args.query, url: "https://example.com" }] };
+}
+
+export function createAgentToolRegistry() {
+  return createPaybondToolRegistry({
+    sideEffecting: {
+      "travel.book_hotel": {
+        spendCents: (args: BookHotelArgs) => args.estimatedPriceCents,
+        evidencePreset: COMPLETION_PRESET_ID,
+        evidenceMapper: (result: Awaited<ReturnType<typeof bookHotel>>) => ({
+          status: result.reservation.status === "confirmed" ? "completed" : result.reservation.status,
+          cost_cents: result.reservation.price_cents,
+        }),
+      },
+    },
+    defaultDeny: true,
+  });
+}
+
+export type BindAgentRunOptions = {
+  operation?: string;
+  requestedSpendCents?: number;
+  evidenceSchema?: Record<string, unknown>;
+  runId?: string;
+};
+
+export async function bindAgentRun(
+  paybond: Paybond,
+  registry: ReturnType<typeof createAgentToolRegistry>,
+  options: BindAgentRunOptions = {},
+): Promise<PaybondAgentRun> {
+  const bindInput: PaybondAgentRunBindInput = {
+    bootstrap: {
+      kind: "sandbox",
+      operation: options.operation ?? DEFAULT_OPERATION,
+      requestedSpendCents: options.requestedSpendCents ?? DEFAULT_REQUESTED_SPEND_CENTS,
+      completionPreset: COMPLETION_PRESET_ID,
+      evidenceSchema: options.evidenceSchema ?? ${evidenceSchema},
+    },
+    registry,
+    runId: options.runId,
+  };
+  return paybond.agentRun.bind(bindInput);
+}
+
+${agentMiddlewareFrameworkBlock(framework)}
+`;
+}
+
+function paidToolGuardTemplate(framework: Framework): string {
+  const completionPreset = getCompletionPreset("cost_and_completion");
+  const evidenceSchema = jsonLiteral(completionPreset.evidence_schema, 2);
+  return `import fs from "node:fs/promises";
+import {
+  Paybond,
+  type SandboxGuardrailBootstrapResult,
+  type SandboxGuardrailEvidenceResult,
+} from "@paybond/kit";
+
+${envHelpersBlock()}
+
+// Paid-tool guardrail preset maps to completion catalog archetype: cost_and_completion (${completionPreset.harbor_template_id}).
+const COMPLETION_PRESET_ID = "cost_and_completion";
+const HARBOR_TEMPLATE_ID = "${completionPreset.harbor_template_id}";
+
+export type CompletionEvidence = {
+  status: string;
+  cost_cents: number;
+};
+
+export function buildCompletionEvidence(fields: CompletionEvidence): Record<string, unknown> {
+  return { ...fields };
+}
+
+// Production: use buildSignedCreateIntentBodyWithPolicyBinding from @paybond/kit after publishing ${completionPreset.harbor_template_id}.
+export const policyBindingStub = {
+  template_id: HARBOR_TEMPLATE_ID,
+  parameters: ${jsonLiteral(completionPreset.parameters, 2)} as const,
+};
+
+const DEFAULT_OPERATION = "paid_tool.operation";
+const DEFAULT_REQUESTED_SPEND_CENTS = 500;
+
+export type PaidToolHandler<TInput, TResult> = (input: TInput) => TResult | Promise<TResult>;
+
+export type SandboxGuardrailIntentOptions = {
+  operation?: string;
+  requestedSpendCents?: number;
+  currency?: string;
+  evidenceSchema?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  idempotencyKey?: string;
+};
+
+export type SubmitSandboxEvidenceOptions = {
+  operation?: string;
+  requestedSpendCents?: number;
+  metadata?: Record<string, unknown>;
+  artifacts?: string[];
+  idempotencyKey?: string;
+};
 
 export async function bootstrapSandboxGuardrailIntent(
   paybond: Paybond,
@@ -216,14 +535,8 @@ export async function bootstrapSandboxGuardrailIntent(
     operation: options.operation ?? DEFAULT_OPERATION,
     requestedSpendCents: options.requestedSpendCents ?? DEFAULT_REQUESTED_SPEND_CENTS,
     currency: options.currency ?? "usd",
-    evidenceSchema: options.evidenceSchema ?? {
-      type: "object",
-      required: ["confirmation_id", "charged_cents"],
-      properties: {
-        confirmation_id: { type: "string" },
-        charged_cents: { type: "integer" },
-      },
-    },
+    evidenceSchema: options.evidenceSchema ?? ${evidenceSchema},
+    completionPreset: COMPLETION_PRESET_ID,
     metadata: options.metadata,
     idempotencyKey: options.idempotencyKey,
   });
@@ -269,7 +582,20 @@ export async function submitSandboxEvidence(
     idempotencyKey: options.idempotencyKey,
   });
 }
+
+// Prefer buildCompletionEvidence({ status: "completed", cost_cents }) for catalog-aligned evidence.
 `;
+}
+
+function scaffoldBody(preset: Preset, framework: Framework): string {
+  if (preset === "agent-middleware") {
+    return agentMiddlewareTemplate(normalizeAgentMiddlewareFramework(framework));
+  }
+  return paidToolGuardTemplate(framework);
+}
+
+function scaffoldLabel(preset: Preset): string {
+  return preset === "agent-middleware" ? "agent middleware integration" : "guardrail integration";
 }
 
 async function writeScaffold(out: string, body: string, force: boolean): Promise<void> {
@@ -300,12 +626,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<numb
     return 0;
   }
   try {
-    await writeScaffold(parsed.out, template(parsed.framework), parsed.force);
+    await writeScaffold(parsed.out, scaffoldBody(parsed.preset, parsed.framework), parsed.force);
   } catch (err) {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     return 1;
   }
-  process.stdout.write(`Created Paybond guardrail integration: ${parsed.out}\n`);
+  process.stdout.write(`Created Paybond ${scaffoldLabel(parsed.preset)}: ${parsed.out}\n`);
   return 0;
 }
 
@@ -337,7 +663,15 @@ invokedFromCLI().then((invoked) => {
   if (!invoked) {
     return;
   }
-  runCli(["init", "guardrail", ...process.argv.slice(2)]).then((code) => {
+  const argv = process.argv.slice(2);
+  const hasTemplateInit = argv.some((arg, index) => {
+    if (arg === "--template" || arg === "--repo") {
+      return Boolean(argv[index + 1]);
+    }
+    return false;
+  });
+  const initPath = hasTemplateInit ? ["init", ...argv] : ["init", "guardrail", ...argv];
+  runCli(initPath).then((code) => {
     process.exitCode = code;
   }, (err) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);

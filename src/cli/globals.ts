@@ -1,6 +1,7 @@
 import { generateRequestId } from "./request-id.js";
 import { parseColorMode, resolveColorModeFromEnv } from "./color.js";
 import { formatUnknownGlobalFlagMessage } from "./suggest.js";
+import { InsecureGatewayURLError, requireSecureGatewayUrl } from "../gateway-url.js";
 import { CliError, type GlobalOptions, type OutputFormat } from "./types.js";
 
 export const DEFAULT_GATEWAY = "https://api.paybond.ai";
@@ -15,6 +16,15 @@ export function rejectsTenantOverrideFlag(arg: string): boolean {
     }
   }
   return false;
+}
+
+export function validateCliGateway(url: string): string {
+  try {
+    return requireSecureGatewayUrl(url);
+  } catch (err) {
+    const message = err instanceof InsecureGatewayURLError ? err.message : String(err);
+    throw new CliError(message, { category: "validation", code: "cli.validation.insecure_gateway" });
+  }
 }
 
 export function parseRequiredNonNegativeInt(raw: string, field: string): number {
@@ -145,7 +155,7 @@ export function parseCliArgv(argv: string[]): ParsedCliArgv {
       if (!value.trim()) {
         throw new CliError("invalid --gateway", { category: "usage", code: "cli.usage.invalid_gateway" });
       }
-      globals.gateway = value.trim();
+      globals.gateway = validateCliGateway(value.trim());
       i += consumed;
       continue;
     }

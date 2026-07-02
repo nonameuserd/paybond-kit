@@ -1,0 +1,17 @@
+{
+  "id": "shopping",
+  "title": "Shopping checkout agent",
+  "policy_default": {
+    "domain": "shopping",
+    "guardrails": ["default_deny", "max_spend_usd_100"]
+  },
+  "primary_operation": "commerce.checkout",
+  "completion_preset": "cost_and_completion",
+  "smoke": {
+    "result_body": {
+      "status": "completed",
+      "cost_cents": 4500
+    },
+    "evidence_preset": "cost_and_completion"
+  }
+}

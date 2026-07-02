@@ -5,10 +5,59 @@
 
 import {
   buildSignedCreateIntentBody,
+  buildSignedCreateIntentBodyWithPolicyBinding,
   type BuildSignedCreateIntentParams,
+  type BuildSignedCreateIntentWithPolicyBindingParams,
+  type PolicyBindingRef,
+  type PublishedPolicyHead,
   type SettlementRail,
 } from "./principal-intent.js";
 import { signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
+import {
+  PaybondAgentRunFacade,
+  PaybondInstrumentBuilder,
+  PaybondInstrumentRuntime,
+  PaybondToolRegistry,
+  createGuardedAgent,
+  createGuardedAgentRunner,
+  createPaybondAgent,
+  createPaybondToolRegistry,
+  instrumentPaybondAgent,
+  instrumentPaybondClaudeAgents,
+  instrumentPaybondLangGraph,
+  instrumentPaybondMCP,
+  instrumentPaybondOpenAI,
+  instrumentPaybondVercel,
+  resolveAgentPolicySource,
+  wrapPaybondTools,
+  type CreateGuardedAgentInput,
+  type CreateGuardedAgentResult,
+  type PaybondAgentInput,
+  type PaybondAgentResult,
+  type PaybondInlinePolicy,
+  type PaybondInstrumentAgentOptions,
+  type PaybondInstrumentInput,
+  type PaybondInstrumented,
+  type PaybondToolRegistryConfig,
+  type PaybondWrapToolsOptions,
+} from "./agent/index.js";
+import {
+  GatewayAgentRunTraceReporter,
+  type AgentRunUpsertInput,
+} from "./agent/gateway-trace-reporter.js";
+import {
+  parsePolicyRemoteValidateResponse,
+  policyValidateQueryString,
+  type PolicyRemoteValidateOptions,
+  type PolicyRemoteValidateResult,
+} from "./policy/validate-remote.js";
+import {
+  parsePolicyEffectiveResolveResponse,
+  type PolicyEffectiveResolveResult,
+} from "./policy/load-effective.js";
+import { paybondPolicyPresets } from "./policy/policy-api.js";
+import { paybondSolutionPresets } from "./solutions/api.js";
+import { requireSecureGatewayUrl } from "./gateway-url.js";
 
 declare const Buffer: {
   from(input: string, encoding?: string): {
@@ -195,11 +244,16 @@ export type SandboxGuardrailBootstrapInput = {
   evidenceSchema?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   idempotencyKey?: string;
+  completionPreset?: string;
+  templateId?: string;
+  parameters?: Record<string, unknown>;
 };
 
 export type SandboxGuardrailEvidenceInput = {
   intentId: string;
   payload?: Record<string, unknown>;
+  /** Raw vendor response for vendor_pack presets; forwarded to Harbor schema drift checks. */
+  vendorPayload?: Record<string, unknown>;
   artifacts?: string[];
   operation?: string;
   requestedSpendCents?: number;
@@ -232,6 +286,13 @@ export type SandboxGuardrailEvidenceResult = {
   predicate_passed?: boolean | null;
   payload_digest?: string;
   artifacts_digest?: string;
+  schema_validation?: {
+    vendor_schema_ok: boolean;
+    canonical_schema_ok: boolean;
+    quality_fields_missing: string[];
+    pack_stale: boolean;
+    drift_kinds: string[];
+  };
   simulator_event?: unknown;
 };
 
@@ -239,7 +300,7 @@ export const DEFAULT_PAYBOND_GATEWAY_BASE_URL = "https://api.paybond.ai";
 
 function defaultGatewayBaseUrl(value?: string): string {
   const trimmed = value?.trim();
-  return trimmed ? trimmed : DEFAULT_PAYBOND_GATEWAY_BASE_URL;
+  return requireSecureGatewayUrl(trimmed || DEFAULT_PAYBOND_GATEWAY_BASE_URL);
 }
 
 /** Async supplier for upstream Harbor bearer tokens on low-level direct clients. */
@@ -941,7 +1002,7 @@ function protocolHTTPErrorMessage(prefix: string, statusCode: number, bodyText: 
 }
 
 function normalizeBase(url: string): string {
-  return url.trim().replace(/\/+$/, "");
+  return requireSecureGatewayUrl(url);
 }
 
 function backoffMs(attempt: number): number {
@@ -1096,6 +1157,18 @@ export class PaybondSpendGuard {
     await complete.call(this.harbor, { decisionId, outcome });
   }
 
+  /**
+   * Authorize spend for `input.operation`, then invoke `handler`.
+   *
+   * The `operation` label and `requestedSpendCents` are sent to Harbor for
+   * policy evaluation only. This wrapper does not inspect or constrain what
+   * `handler` actually does — callers must keep the authorization label,
+   * spend amount, and handler side effects aligned with the bound intent's
+   * `allowedTools` and policy predicates.
+   *
+   * For registry-backed operation-to-handler coupling, prefer
+   * `paybond.instrument()` or `wrapTools()` over per-tool `guardTool`.
+   */
   guardTool<TArgs extends unknown[], TResult>(
     input: PaybondSpendAuthorizationInput,
     handler: PaybondToolHandler<TArgs, TResult>,
@@ -1129,6 +1202,7 @@ export async function authorizeSpend(
   return new PaybondSpendGuard(source).authorizeSpend(input);
 }
 
+/** Standalone alias for {@link PaybondSpendGuard.guardTool}. */
 export function guardTool<TArgs extends unknown[], TResult>(
   source: PaybondSpendGuardInit | PaybondCapabilityBinding,
   input: PaybondSpendAuthorizationInput,
@@ -1196,7 +1270,22 @@ export function paybondRuntimeToolCallAdapter<TCall, TResult>(
       }
       throw new PaybondSpendDeniedError(result);
     }
-    return await init.execute(call);
+    try {
+      const out = await init.execute(call);
+      if (result.decisionId) {
+        await guard.completeSpendAuthorization(result.decisionId, "consumed");
+      }
+      return out;
+    } catch (err) {
+      if (result.decisionId) {
+        try {
+          await guard.completeSpendAuthorization(result.decisionId, "released");
+        } catch {
+          // Best-effort release when the guarded handler fails.
+        }
+      }
+      throw err;
+    }
   };
 }
 
@@ -1730,9 +1819,26 @@ export class GatewayHarborClient {
     payload: Record<string, unknown>,
     extraHeaders?: HeadersInit,
   ): Promise<{ res: Response; text: string; url: string }> {
+    return this.requestJSON("POST", path, payload, extraHeaders);
+  }
+
+  private async putJSON(
+    path: string,
+    payload: Record<string, unknown>,
+    extraHeaders?: HeadersInit,
+  ): Promise<{ res: Response; text: string; url: string }> {
+    return this.requestJSON("PUT", path, payload, extraHeaders);
+  }
+
+  private async requestJSON(
+    method: "POST" | "PUT",
+    path: string,
+    payload: Record<string, unknown>,
+    extraHeaders?: HeadersInit,
+  ): Promise<{ res: Response; text: string; url: string }> {
     const url = `${this.base}${path.replace(/^\/+/, "")}`;
     const res = await this.fetchWithRetries(url, {
-      method: "POST",
+      method,
       headers: this.headers({
         "content-type": "application/json",
         ...(extraHeaders ?? {}),
@@ -1741,6 +1847,70 @@ export class GatewayHarborClient {
     });
     const text = await res.text();
     return { res, text, url };
+  }
+
+  private async getJSON(path: string): Promise<{ res: Response; text: string; url: string }> {
+    const url = `${this.base}${path.replace(/^\/+/, "")}`;
+    const res = await this.fetchWithRetries(url, {
+      method: "GET",
+      headers: this.headers(),
+    });
+    const text = await res.text();
+    return { res, text, url };
+  }
+
+  /** Tenant-scoped Harbor operator intent detail (for attach run binding). */
+  async getIntent(intentId: string): Promise<Record<string, unknown>> {
+    const trimmed = intentId.trim();
+    if (!trimmed) {
+      throw new Error("getIntent requires a non-empty intentId");
+    }
+    const { res, text, url } = await this.getJSON(
+      `/harbor/operator/v1/intents/${encodeURIComponent(trimmed)}`,
+    );
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway Harbor get intent HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    const body = JSON.parse(text) as Record<string, unknown>;
+    const tenant = String(body.tenant_id ?? "").trim();
+    if (tenant !== this.tenantId) {
+      throw new Error(`intent tenant mismatch: client=${this.tenantId} gateway=${tenant}`);
+    }
+    return body;
+  }
+
+  /** Gateway-backed middleware trace reporter for tenant console agent-runs view. */
+  createAgentRunTraceReporter(runId: string): GatewayAgentRunTraceReporter {
+    const trimmed = runId.trim();
+    if (!trimmed) {
+      throw new Error("createAgentRunTraceReporter requires a non-empty runId");
+    }
+    return new GatewayAgentRunTraceReporter(async (method, path, body) => {
+      if (method === "PUT") {
+        const { res, text, url } = await this.putJSON(path, body);
+        if (!res.ok) {
+          throw new HarborHttpError(`Gateway agent run upsert HTTP ${res.status}: ${text}`, {
+            statusCode: res.status,
+            url,
+            bodyText: text,
+          });
+        }
+        return JSON.parse(text);
+      }
+      const { res, text, url } = await this.postJSON(path, body);
+      if (!res.ok) {
+        throw new HarborHttpError(`Gateway agent run trace HTTP ${res.status}: ${text}`, {
+          statusCode: res.status,
+          url,
+          bodyText: text,
+        });
+      }
+      return JSON.parse(text);
+    }, trimmed);
   }
 
   private mutationHeaders(
@@ -1813,6 +1983,51 @@ export class GatewayHarborClient {
         bodyText: text,
       });
     }
+  }
+
+  /**
+   * Validate a paybond.policy.yaml document against the tenant Harbor registry
+   * (`POST /v1/policy/validate`).
+   */
+  async validatePolicy(
+    document: Record<string, unknown>,
+    options?: PolicyRemoteValidateOptions,
+  ): Promise<PolicyRemoteValidateResult> {
+    const qs = policyValidateQueryString(options ?? {});
+    const { res, text, url } = await this.postJSON(`/v1/policy/validate${qs}`, document);
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway policy validate HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return parsePolicyRemoteValidateResponse(JSON.parse(text));
+  }
+
+  /**
+   * Resolve merged effective policy for a tenant overlay via
+   * `POST /v1/org-policies/{policy_id}/effective`.
+   */
+  async resolvePolicyEffective(
+    orgPolicyId: string,
+    overlay: Record<string, unknown>,
+    options?: { currentDigest?: string },
+  ): Promise<PolicyEffectiveResolveResult> {
+    let path = `/v1/org-policies/${encodeURIComponent(orgPolicyId)}/effective`;
+    const currentDigest = options?.currentDigest?.trim();
+    if (currentDigest) {
+      path += `?digest=${encodeURIComponent(currentDigest)}`;
+    }
+    const { res, text, url } = await this.postJSON(path, overlay);
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway policy effective HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return parsePolicyEffectiveResolveResponse(JSON.parse(text));
   }
 
   async createIntent(
@@ -1972,6 +2187,15 @@ export class PaybondGuardrails {
     if (input.metadata !== undefined) {
       payload.metadata = input.metadata;
     }
+    if (input.completionPreset !== undefined) {
+      payload.completion_preset = input.completionPreset;
+    }
+    if (input.templateId !== undefined) {
+      payload.template_id = input.templateId;
+    }
+    if (input.parameters !== undefined) {
+      payload.parameters = input.parameters;
+    }
     const { res, text, url } = await this.postJSON(
       "/v1/sandbox/guardrails/bootstrap",
       payload,
@@ -1996,6 +2220,9 @@ export class PaybondGuardrails {
     const payload: Record<string, unknown> = {};
     if (input.payload !== undefined) {
       payload.payload = input.payload;
+    }
+    if (input.vendorPayload !== undefined) {
+      payload.vendor_payload = input.vendorPayload;
     }
     if (input.artifacts !== undefined) {
       payload.artifacts = input.artifacts;
@@ -2190,7 +2417,33 @@ function parseSandboxGuardrailEvidenceResponse(
         : undefined,
     payload_digest: sandboxGuardrailOptionalString(body.payload_digest),
     artifacts_digest: sandboxGuardrailOptionalString(body.artifacts_digest),
+    schema_validation: readSchemaValidationReport(body.schema_validation),
     simulator_event: body.simulator_event,
+  };
+}
+
+function readSchemaValidationReport(
+  value: unknown,
+): SandboxGuardrailEvidenceResult["schema_validation"] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const report = value as Record<string, unknown>;
+  if (typeof report.vendor_schema_ok !== "boolean" || typeof report.canonical_schema_ok !== "boolean") {
+    return undefined;
+  }
+  const qualityFields = report.quality_fields_missing;
+  const driftKinds = report.drift_kinds;
+  return {
+    vendor_schema_ok: report.vendor_schema_ok,
+    canonical_schema_ok: report.canonical_schema_ok,
+    quality_fields_missing: Array.isArray(qualityFields)
+      ? qualityFields.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    pack_stale: Boolean(report.pack_stale),
+    drift_kinds: Array.isArray(driftKinds)
+      ? driftKinds.filter((entry): entry is string => typeof entry === "string")
+      : [],
   };
 }
 
@@ -3278,6 +3531,15 @@ function nowRfc3339Seconds(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+/** Parameters for production intent create with a published managed-policy head (signing v5). */
+export type PaybondCreateIntentWithPolicyBindingParams = Omit<
+  BuildSignedCreateIntentWithPolicyBindingParams,
+  "tenantId" | "intentId"
+> & {
+  intentId?: string;
+  recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+};
+
 /**
  * Ergonomic intent helpers: principal-signed intent create, x402 funding, and payee-signed evidence.
  */
@@ -3287,6 +3549,22 @@ export class PaybondIntents {
   /**
    * Build a principal-signed `POST /intents` body and submit it. `principalSigningSeed` must be
    * 32 bytes. `settlementRail` is signed as the requested rail; destinations stay server-owned.
+   */
+  async createWithPolicyBinding(
+    params: PaybondCreateIntentWithPolicyBindingParams & { idempotencyKey?: string },
+  ): Promise<Record<string, unknown>> {
+    const { idempotencyKey, intentId: maybeIntentId, recognitionProof, ...fields } = params;
+    const intentId = maybeIntentId ?? globalThis.crypto.randomUUID();
+    const body = buildSignedCreateIntentBodyWithPolicyBinding({
+      tenantId: this.harbor.tenantId,
+      intentId,
+      ...fields,
+    });
+    return this.harbor.createIntent(body, { idempotencyKey, recognitionProof } as never);
+  }
+
+  /**
+   * Build a principal-signed `POST /intents` body and submit it (raw predicate_dsl, signing v6).
    */
   async create(
     params: PaybondCreateIntentParams & { idempotencyKey?: string },
@@ -3359,6 +3637,7 @@ export class Paybond {
   readonly a2a: GatewayA2AClient;
   readonly protocol: GatewayProtocolClient;
   readonly intents: PaybondIntents;
+  readonly agentRun: PaybondAgentRunFacade;
 
   private constructor(
     harbor: GatewayHarborClient,
@@ -3375,6 +3654,7 @@ export class Paybond {
     this.a2a = a2a;
     this.protocol = protocol;
     this.intents = new PaybondIntents(harbor);
+    this.agentRun = new PaybondAgentRunFacade(this);
   }
 
   /** Open a tenant-bound hosted Paybond session from a service-account API key. */
@@ -3424,6 +3704,11 @@ export class Paybond {
     return new PaybondSpendGuard({ harbor: this.harbor, intentId, capabilityToken });
   }
 
+  /** Build a validated side-effecting tool registry for agent middleware. */
+  toolRegistry(config: PaybondToolRegistryConfig): PaybondToolRegistry {
+    return createPaybondToolRegistry(config);
+  }
+
   async authorizeSpend(input: {
     intentId: string;
     token: string;
@@ -3432,13 +3717,264 @@ export class Paybond {
   }): Promise<VerifyCapabilityResult> {
     return this.harbor.authorizeSpend(input);
   }
+
+  /** Policy-driven agent factory: load policy, bind a run, and wire framework tools. */
+  createGuardedAgent<TTools>(
+    input: CreateGuardedAgentInput<TTools>,
+  ): Promise<CreateGuardedAgentResult<TTools>> {
+    return createGuardedAgent(this, input);
+  }
+
+  /** Alias for {@link Paybond.createGuardedAgent} matching runner helper naming. */
+  createGuardedAgentRunner<TTools>(
+    input: CreateGuardedAgentInput<TTools>,
+  ): Promise<CreateGuardedAgentResult<TTools>> {
+    return createGuardedAgentRunner(this, input);
+  }
+
+  /**
+   * One-liner instrumentation: load policy and return deferred tools or a bound runtime.
+   * Await for tools, or read `.binding`, `.bind()`, and `.status` on the result.
+   */
+  instrument<TTools>(
+    input: PaybondInstrumentInput<TTools>,
+    options?: PaybondWrapToolsOptions,
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>>;
+  instrument<TAgent extends object>(
+    agent: TAgent,
+    options?: PaybondWrapToolsOptions & PaybondInstrumentAgentOptions,
+  ): Promise<TAgent>;
+  instrument<TTools, TAgent extends object>(
+    input: PaybondInstrumentInput<TTools> | TAgent,
+    options?: PaybondWrapToolsOptions & PaybondInstrumentAgentOptions,
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools> | TAgent> {
+    return instrumentPaybondAgent(this, input as never, options);
+  }
+
+  /** Fluent builder: `paybond.policy("./paybond.policy.yaml").instrument(tools)`. */
+  policy(source: import("./policy/load.js").PaybondPolicyLoadSource | PaybondInlinePolicy): PaybondInstrumentBuilder {
+    const resolved =
+      typeof source === "string" ? resolveAgentPolicySource(source) : source;
+    return new PaybondInstrumentBuilder(this, resolved);
+  }
+
+  /** Fluent builder for bundled vertical presets (`travel`, `shopping`, `saas`, `aws`). */
+  usePolicy(presetId: string): PaybondInstrumentBuilder {
+    return this.policy(presetId);
+  }
+
+  instrumentLangGraph<TTools>(
+    input: Omit<PaybondInstrumentInput<TTools>, "framework"> & { tools: TTools },
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+    return instrumentPaybondLangGraph(this, input);
+  }
+
+  instrumentOpenAI<TTools>(
+    input: Omit<PaybondInstrumentInput<TTools>, "framework"> & { tools: TTools },
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+    return instrumentPaybondOpenAI(this, input);
+  }
+
+  instrumentVercel<TTools>(
+    input: Omit<PaybondInstrumentInput<TTools>, "framework"> & { tools: TTools },
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+    return instrumentPaybondVercel(this, input);
+  }
+
+  instrumentClaudeAgents<TTools>(
+    input: Omit<PaybondInstrumentInput<TTools>, "framework"> & { tools: TTools },
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+    return instrumentPaybondClaudeAgents(this, input);
+  }
+
+  /** Agent-agnostic instrumentation for MCP-style `{ name, execute }` tool hosts. */
+  instrumentMCP<TTools>(
+    input: Omit<PaybondInstrumentInput<TTools>, "framework"> & { tools: TTools },
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+    return instrumentPaybondMCP(this, input);
+  }
+
+  /**
+   * Opinionated quickstart: resolve named policy presets (for example `travel`) or file paths,
+   * then instrument tools for the selected framework.
+   */
+  agent<TTools>(input: PaybondAgentInput<TTools>): Promise<PaybondAgentResult<TTools>> {
+    return createPaybondAgent(this, input);
+  }
+
+  /** Wrap tools for an existing bound run without reloading policy. */
+  wrapTools(
+    run: import("./agent/run.js").PaybondAgentRun,
+    tools: unknown,
+    options?: PaybondWrapToolsOptions,
+  ): unknown {
+    return wrapPaybondTools(run, tools, options);
+  }
+
+  /**
+   * Compose bundled policy presets (`travel`, `shopping`, …) and guardrail layers.
+   * Example: `paybond.policyPresets.travel({ maxSpendUsd: 500 })`.
+   */
+  get policyPresets(): import("./policy/policy-api.js").PaybondPolicyPresets {
+    return paybondPolicyPresets;
+  }
+
+  /**
+   * Bundled solution references (`travel`, `shopping`, …) with policy, smoke defaults,
+   * completion preset, and vendor pack metadata.
+   * Example: `paybond.solution.travel()`.
+   */
+  get solution(): import("./solutions/api.js").PaybondSolutionPresets {
+    return paybondSolutionPresets;
+  }
 }
 
 export { normalizeJson, jsonValueDigest } from "./json-digest.js";
 export {
   buildSignedCreateIntentBody,
+  buildSignedCreateIntentBodyWithPolicyBinding,
   intentCreationSignBytesRaw,
+  intentCreationSignBytesWithPolicyBinding,
   type BuildSignedCreateIntentParams,
+  type BuildSignedCreateIntentWithPolicyBindingParams,
+  type PolicyBindingRef,
+  type PublishedPolicyHead,
   type SettlementRail,
 } from "./principal-intent.js";
 export { artifactsDigest, signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
+export {
+  AGENT_RECOGNITION_GATEWAY_VERIFIER_ID,
+  AGENT_RECOGNITION_PROOF_KIND_V1,
+  AGENT_RECOGNITION_PURPOSE_EVIDENCE_SUBMIT,
+  newAgentRecognitionRequestEnvelope,
+  signAgentRecognitionProofV1,
+  signHarborEvidenceSubmitRecognitionProof,
+  type SignAgentRecognitionProofV1Params,
+  type SignedAgentRecognitionProofV1,
+} from "./agent-recognition.js";
+export {
+  validateCompletionEvidence,
+  type CompletionEvidenceValidationReport,
+} from "./completion-validate-evidence.js";
+export {
+  completionSchemaDigestHex,
+  computeVendorContractDigests,
+  verifyVendorContract,
+  verifyCatalogVendorContracts,
+  type VendorContract,
+  type VendorContractDigests,
+} from "./completion-contract-digest.js";
+export {
+  contractSnapshotForPreset,
+  mapVendorEvidenceToCanonical,
+  resolveCompletionPreset,
+} from "./completion-resolve.js";
+export {
+  PaybondAgentRun,
+  PaybondAgentRunBindError,
+  PaybondAgentRunFacade,
+  PaybondEvidenceSubmitError,
+  PaybondFrameworkAdapter,
+  PaybondToolInterceptor,
+  PaybondToolRegistry,
+  PaybondToolRegistryValidationError,
+  PaybondUnregisteredSideEffectingToolError,
+  buildAutoEvidencePayload,
+  createGenericToolExecutor,
+  createGuardedAgent,
+  createGuardedAgentRunner,
+  createPaybondAgent,
+  createPaybondGenericAgentConfig,
+  createPaybondGenericInputGuard,
+  createPaybondToolRegistry,
+  createToolInputGuardAdapter,
+  instrumentPaybondAgent,
+  instrumentPaybondClaudeAgents,
+  instrumentPaybondLangGraph,
+  instrumentPaybondMCP,
+  instrumentPaybondOpenAI,
+  instrumentPaybondVercel,
+  paybondGenericToolExecutorAdapter,
+  paybondToolInputGuardAdapter,
+  resolveAgentPolicySource,
+  toPaybondAgentResult,
+  wrapPaybondTools,
+  PaybondInstrumentBuilder,
+  PaybondInstrumented,
+  PaybondInstrumentRuntime,
+  PaybondLazyContextError,
+  PaybondUnboundContextError,
+  discoverPolicyFromAgent,
+  discoverToolNames,
+  discoverToolsFromAgent,
+  inlinePolicyToDocument,
+  isInlinePolicy,
+  isInstrumentableAgentObject,
+  readPaybondAgentInstrumentation,
+  type CreateGuardedAgentInput,
+  type CreateGuardedAgentResult,
+  type GuardedAgentFramework,
+  type PaybondAgentHooks,
+  type PaybondAgentInput,
+  type PaybondAgentResult,
+  type PaybondAgentRunBindInput,
+  type PaybondAuthorizeToolCallInput,
+  type PaybondEvidenceMapper,
+  type PaybondGenericAgentConfig,
+  type PaybondGenericToolCall,
+  type PaybondGenericToolDefinition,
+  type PaybondGenericWrappedToolDefinition,
+  type PaybondInlinePolicy,
+  type PaybondAgentInstrumentation,
+  type PaybondInstrumentAgentOptions,
+  type PaybondInstrumentBinding,
+  type PaybondInstrumentContext,
+  type PaybondInstrumentContextInput,
+  type PaybondInstrumentContextProvider,
+  type PaybondInstrumentInput,
+  type PaybondInterceptEvidenceResult,
+  type PaybondInterceptWrapExecuteInput,
+  type PaybondInterceptWrapExecuteResult,
+  type PaybondRunBinding,
+  type PaybondRunBindingAttachInput,
+  type PaybondRunBindingSandboxBootstrapInput,
+  type PaybondRunGuard,
+  type PaybondSideEffectingToolEntry,
+  type PaybondSideEffectingToolPolicy,
+  type PaybondSpendResolver,
+  type PaybondToolCallContext,
+  type PaybondToolInputGuardAllowDecision,
+  type PaybondToolInputGuardApprovalRequiredDecision,
+  type PaybondToolInputGuardDecision,
+  type PaybondToolInputGuardDenyDecision,
+  type PaybondToolInputGuardAdapter,
+  type PaybondToolRegistryConfig,
+  type PaybondToolResolution,
+  type PaybondWrapToolsOptions,
+} from "./agent/index.js";
+export {
+  PaybondPolicy,
+  composePolicyLayers,
+  composeBundledPresetDefault,
+  domain,
+  guardrails,
+  paybondPolicyPresets,
+  resolveComposedPresetDocument,
+  type LayeredPolicyPresetId,
+  type PaybondPolicyPresets,
+  type PolicyGuardrailLayer,
+  type PolicyPresetId,
+  type VerticalPolicyOptions,
+} from "./policy/index.js";
+export {
+  getSolutionSmokeDefaults,
+  isKnownSolutionId,
+  listSolutionIds,
+  loadSolutionManifest,
+  paybondSolutionPresets,
+  type PaybondSolutionBundle,
+  type PaybondSolutionPresets,
+  type SolutionId,
+  type SolutionManifest,
+  type SolutionSmokeDefaults,
+} from "./solutions/index.js";

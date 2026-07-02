@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "templates": [
+    {
+      "id": "travel-agent",
+      "repo": "paybond-travel-agent",
+      "title": "Travel booking agent (LangGraph)",
+      "language": "typescript",
+      "framework": "langgraph",
+      "preset": "travel",
+      "primary_operation": "travel.book_hotel",
+      "requested_spend_cents": 18700,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 18700 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0",
+        "@langchain/core": "^1.2.1",
+        "@langchain/langgraph": "^1.4.7",
+        "zod": "^4.2.0"
+      },
+      "demo_import": "@paybond/kit/langgraph",
+      "demo_export": "runLangGraphSandboxDemo"
+    },
+    {
+      "id": "vercel-shopping-agent",
+      "repo": "paybond-vercel-shopping-agent",
+      "title": "Shopping checkout agent (Vercel AI)",
+      "language": "typescript",
+      "framework": "vercel-ai",
+      "preset": "shopping",
+      "primary_operation": "commerce.checkout",
+      "requested_spend_cents": 4500,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 4500 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0",
+        "ai": "^5.0.0",
+        "zod": "^4.2.0"
+      },
+      "demo_import": "@paybond/kit/vercel-ai",
+      "demo_export": "runVercelAiSandboxDemo"
+    },
+    {
+      "id": "openai-agents-demo",
+      "repo": "paybond-openai-agents-demo",
+      "title": "SaaS provisioning agent (OpenAI Agents)",
+      "language": "typescript",
+      "framework": "openai-agents",
+      "preset": "saas",
+      "primary_operation": "saas.provision_seat",
+      "requested_spend_cents": 2900,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 2900 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0",
+        "@openai/agents": "^0.4.0",
+        "zod": "^4.2.0"
+      },
+      "demo_import": "@paybond/kit/openai-agents",
+      "demo_export": "runOpenAIAgentsSandboxDemo"
+    },
+    {
+      "id": "openai-shopping-agent",
+      "repo": "openai-shopping-agent",
+      "title": "Shopping checkout agent (OpenAI Agents)",
+      "language": "typescript",
+      "framework": "openai-agents",
+      "preset": "shopping",
+      "primary_operation": "commerce.checkout",
+      "requested_spend_cents": 4500,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 4500 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0",
+        "@openai/agents": "^0.4.0",
+        "zod": "^4.2.0"
+      },
+      "demo_import": "@paybond/kit/openai-agents",
+      "demo_export": "runOpenAIAgentsSandboxDemo"
+    },
+    {
+      "id": "claude-agents-demo",
+      "repo": "paybond-claude-agents-demo",
+      "title": "Travel booking agent (Claude Agent SDK)",
+      "language": "typescript",
+      "framework": "claude-agents",
+      "preset": "travel",
+      "primary_operation": "travel.book_hotel",
+      "requested_spend_cents": 18700,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 18700 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0",
+        "@anthropic-ai/claude-agent-sdk": "^0.2.100",
+        "zod": "^4.2.0"
+      },
+      "demo_import": "@paybond/kit/claude-agents",
+      "demo_export": "runClaudeAgentsSandboxDemo"
+    },
+    {
+      "id": "mcp-coding-agent",
+      "repo": "paybond-mcp-coding-agent",
+      "title": "MCP coding agent (read-only + one paid tool)",
+      "language": "typescript",
+      "framework": "mcp",
+      "preset": null,
+      "policy_file": "paybond.policy.yaml",
+      "primary_operation": "deploy.preview",
+      "requested_spend_cents": 500,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 500 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0"
+      },
+      "mcp_tool_policy": "spend-write"
+    },
+    {
+      "id": "procurement-agent",
+      "repo": "paybond-procurement-agent",
+      "title": "Procurement agent (generic TypeScript)",
+      "language": "typescript",
+      "framework": "generic",
+      "preset": null,
+      "policy_file": "paybond.policy.yaml",
+      "primary_operation": "procurement.submit_po",
+      "requested_spend_cents": 12000,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 12000 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0"
+      },
+      "demo_mode": "generic"
+    },
+    {
+      "id": "aws-operator",
+      "repo": "paybond-aws-operator",
+      "title": "AWS operator agent (generic TypeScript)",
+      "language": "typescript",
+      "framework": "generic",
+      "preset": "aws",
+      "primary_operation": "aws.ec2.start_instance",
+      "requested_spend_cents": 12500,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 12500 },
+      "dependencies": {
+        "@paybond/kit": "^0.11.0"
+      },
+      "demo_mode": "generic"
+    },
+    {
+      "id": "invoice-agent",
+      "repo": "paybond-invoice-agent",
+      "title": "Invoice processing agent (Python LangGraph)",
+      "language": "python",
+      "framework": "langgraph",
+      "preset": "saas",
+      "primary_operation": "saas.provision_seat",
+      "requested_spend_cents": 2900,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": { "status": "completed", "cost_cents": 2900 },
+      "python_dependencies": {
+        "paybond-kit": ">=0.11.0",
+        "langgraph": ">=1.2.0"
+      },
+      "demo_import": "paybond_kit.langgraph_sandbox_demo",
+      "demo_export": "run_langgraph_sandbox_demo"
+    }
+  ]
+}

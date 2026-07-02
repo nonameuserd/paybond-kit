@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { type McpToolPolicyConfig, mcpToolPolicyEnv } from "./mcp-policy.js";
+import { type McpToolPolicyConfig, mcpToolPolicyEnv, resolveMcpToolPolicy } from "./mcp-policy.js";
 
 export type McpInstallFormat = "json" | "toml";
 export type McpInstallScope = "local" | "project" | "user";
@@ -43,7 +43,7 @@ export function buildMcpServerEntry(
   return {
     command: serverCommand[0]!,
     args: serverCommand.slice(1),
-    env: { PAYBOND_ENV_FILE: envFile, ...mcpToolPolicyEnv(toolPolicy ?? { policy: null, allowlist: [] }) },
+    env: { PAYBOND_ENV_FILE: envFile, ...mcpToolPolicyEnv(resolveMcpToolPolicy(toolPolicy ?? { policy: null, allowlist: [] })) },
   };
 }
 

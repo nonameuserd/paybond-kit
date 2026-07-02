@@ -39,11 +39,14 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_authorize_agent_spend")).toBe(true);
     expect(names.has("paybond_bootstrap_sandbox_guardrail")).toBe(true);
     expect(names.has("paybond_submit_sandbox_guardrail_evidence")).toBe(true);
+    expect(names.has("paybond_validate_completion_evidence")).toBe(true);
     expect(names.has("paybond_create_intent")).toBe(true);
     expect(names.has("paybond_create_spend_intent")).toBe(true);
     expect(names.has("paybond_submit_evidence")).toBe(true);
     expect(names.has("paybond_submit_spend_evidence")).toBe(true);
     expect(names.has("paybond_create_intent_legacy")).toBe(false);
+    expect(names.has("paybond_fund_intent")).toBe(false);
+    expect(names.has("paybond_confirm_settlement")).toBe(false);
     const assertSpendControlTool = (
       name: string,
       expected: {
@@ -113,14 +116,6 @@ describe("PaybondMCPServer", () => {
         },
       },
     });
-    expect(toolByName.get("paybond_fund_intent")).toMatchObject({
-      title: "Fund Intent",
-      annotations: {
-        readOnlyHint: false,
-        destructiveHint: true,
-        idempotentHint: false,
-      },
-    });
     expect(toolByName.get("paybond_get_principal")).toMatchObject({
       annotations: {
         readOnlyHint: true,
@@ -174,13 +169,6 @@ describe("PaybondMCPServer", () => {
         outputProperties: ["intent_id", "state", "capability_token"],
       },
       {
-        name: "paybond_fund_intent",
-        title: "Fund Intent",
-        destructiveHint: true,
-        descriptionFragments: ["Use this when", "Do not use this"],
-        outputProperties: ["intent_id", "state", "capability_token"],
-      },
-      {
         name: "paybond_submit_spend_evidence",
         title: "Submit Spend Evidence",
         descriptionFragments: ["Use this when", "Do not use this"],
@@ -189,6 +177,26 @@ describe("PaybondMCPServer", () => {
     ]) {
       assertSpendControlTool(expected.name, expected);
     }
+  });
+
+  it("allowlist policy exposes live-money tool metadata", () => {
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+      toolPolicy: {
+        policy: "allowlist",
+        allowlist: ["paybond_fund_intent", "paybond_confirm_settlement"],
+      },
+    });
+    const toolByName = new Map(server.listTools().map((tool) => [String(tool.name), tool]));
+    expect(toolByName.get("paybond_fund_intent")).toMatchObject({
+      title: "Fund Intent",
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    });
   });
 
   it("returns enriched initialize serverInfo while keeping the negotiated protocol", async () => {
@@ -236,6 +244,45 @@ describe("PaybondMCPServer", () => {
     ).toMatchObject({
       gatewayBaseUrl: "https://gateway.registry.test",
     });
+  });
+
+  it("preloads principal on initialize before tool calls", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(
+          JSON.stringify({
+            tenant_id: "tenant-a",
+            roles: ["operator"],
+            subject: "service-account-1",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+    const initResponse = await server.handleMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+    expect(initResponse?.result).toBeDefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const result = await server.callTool("paybond_get_principal");
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({
+      tenant_id: "tenant-a",
+      roles: ["operator"],
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("returns gateway principal through the MCP tool", async () => {
@@ -504,6 +551,59 @@ describe("PaybondMCPServer", () => {
     expect(result.content[0]?.text).toMatch(/tenant mismatch/);
   });
 
+  it("does not cache capability tokens from authorize tool responses", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    let verifyCallCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(JSON.stringify({ tenant_id: "tenant-a" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/verify")) {
+        verifyCallCount += 1;
+        const body = JSON.parse(String(init?.body ?? "{}")) as { token?: string };
+        if (verifyCallCount === 1) {
+          expect(body.token).toBe("cap-explicit");
+        } else {
+          throw new Error("unexpected second verify without explicit token");
+        }
+        return new Response(
+          JSON.stringify({
+            allow: true,
+            tenant: "tenant-a",
+            intent_id: intentId,
+            audit_id: "audit-1",
+            capability_token: "cap-poison",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+
+    const first = await server.callTool("paybond_authorize_agent_spend", {
+      intent_id: intentId,
+      token: "cap-explicit",
+      operation: "vendor.lookup",
+    });
+    expect(first.isError).toBeUndefined();
+
+    const second = await server.callTool("paybond_authorize_agent_spend", {
+      intent_id: intentId,
+      operation: "vendor.lookup",
+    });
+    expect(second.isError).toBe(true);
+    expect(second.content[0]?.text).toMatch(/unavailable or expired/);
+  });
+
   it("bootstraps and submits sandbox guardrail evidence without caller tenant headers", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -539,6 +639,25 @@ describe("PaybondMCPServer", () => {
             sandbox_lifecycle_status: "funded",
             settlement_rail: "simulator",
             settlement_mode: "sandbox",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.endsWith("/verify")) {
+        expect(init?.body).toBe(
+          JSON.stringify({
+            intent_id: intentId,
+            token: "cap-sandbox",
+            operation: "vendor.lookup",
+            requested_spend_cents: 125,
+          }),
+        );
+        return new Response(
+          JSON.stringify({
+            allow: true,
+            tenant: "tenant-a",
+            intent_id: intentId,
+            audit_id: "audit-1",
           }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
@@ -594,8 +713,19 @@ describe("PaybondMCPServer", () => {
     expect(bootstrap.structuredContent).toMatchObject({
       tenant_id: "tenant-a",
       intent_id: intentId,
-      capability_token: "cap-sandbox",
+      capability_token: "[redacted]",
       sandbox_lifecycle_status: "funded",
+    });
+
+    const authorize = await server.callTool("paybond_authorize_agent_spend", {
+      intent_id: intentId,
+      operation: "vendor.lookup",
+      requested_spend_cents: 125,
+    });
+    expect(authorize.isError).toBeUndefined();
+    expect(authorize.structuredContent).toMatchObject({
+      allow: true,
+      intent_id: intentId,
     });
 
     const evidence = await server.callTool("paybond_submit_sandbox_guardrail_evidence", {
@@ -663,6 +793,63 @@ describe("PaybondMCPServer", () => {
         method: "POST",
         path: "/harbor/policy/v1/rollback",
         body_digest_sha256_hex: "ab".repeat(32),
+      },
+    });
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toMatchObject({ valid: true });
+  });
+
+  it("ignores caller-supplied expected_verifier for recognition verification", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(JSON.stringify({ tenant_id: "tenant-a" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/protocol/v2/recognition/verify")) {
+        expect(init?.body).toBe(
+          JSON.stringify({
+            proof: { nonce: "nonce-123" },
+            expected_purpose: "harbor.policy.rollback",
+            expected_verifier: {
+              tenant_id: "tenant-a",
+              verifier_id: "paybond-gateway",
+            },
+            expected_request: {
+              method: "POST",
+              path: "/harbor/policy/v1/rollback",
+              body_digest_sha256_hex: "ab".repeat(32),
+            },
+          }),
+        );
+        return new Response(
+          JSON.stringify({
+            valid: true,
+            proof: { nonce: "nonce-123" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+    const result = await server.callTool("paybond_verify_agent_recognition_proof_v1", {
+      proof: { nonce: "nonce-123" },
+      expected_purpose: "harbor.policy.rollback",
+      expected_request: {
+        method: "POST",
+        path: "/harbor/policy/v1/rollback",
+        body_digest_sha256_hex: "ab".repeat(32),
+      },
+      expected_verifier: {
+        tenant_id: "tenant-evil",
+        verifier_id: "attacker-controlled",
       },
     });
     expect(result.isError).toBeUndefined();
@@ -851,6 +1038,17 @@ describe("PaybondMCPServer", () => {
     const names = new Set(server.listTools().map((tool) => String(tool.name)));
     expect(names.has("paybond_get_principal")).toBe(true);
     expect(names.has("paybond_create_spend_intent")).toBe(false);
+  });
+
+  it("default spend-write policy blocks live-money tools", () => {
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+    const names = new Set(server.listTools().map((tool) => String(tool.name)));
+    expect(names.has("paybond_create_spend_intent")).toBe(true);
+    expect(names.has("paybond_fund_intent")).toBe(false);
+    expect(names.has("paybond_confirm_settlement")).toBe(false);
   });
 
   it("stdio responses use MCP Content-Length framing", async () => {

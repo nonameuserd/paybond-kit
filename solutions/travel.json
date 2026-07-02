@@ -1,0 +1,18 @@
+{
+  "id": "travel",
+  "title": "Travel booking agent",
+  "policy_default": {
+    "domain": "travel",
+    "guardrails": ["default_deny", "max_spend_usd_200"]
+  },
+  "primary_operation": "travel.book_hotel",
+  "completion_preset": "ach_travel_booking",
+  "vendor_pack": "travel_booking_v1",
+  "smoke": {
+    "result_body": {
+      "status": "completed",
+      "cost_cents": 18700
+    },
+    "evidence_preset": "cost_and_completion"
+  }
+}

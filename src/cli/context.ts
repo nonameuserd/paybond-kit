@@ -1,4 +1,5 @@
 import { resolveApiKeyWithMeta } from "./credentials.js";
+import { requireSecureGatewayUrl } from "../gateway-url.js";
 import {
   CliError,
   exitCodeForHttpStatus,
@@ -17,7 +18,7 @@ export type GatewayClient = {
 };
 
 export function gatewayUrl(base: string, path: string): string {
-  return `${base.trim().replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
+  return `${requireSecureGatewayUrl(base)}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 function parseGatewayErrorBody(body: GatewayJson, status: number): CliError {

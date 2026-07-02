@@ -1,0 +1,19 @@
+version: 1
+name: aws-operator-v1
+default_deny: true
+
+tools:
+  aws.ec2.start_instance:
+    side_effecting: true
+    max_spend_cents: 50000
+    evidence_preset: cost_and_completion
+
+  aws.ec2.describe_instances:
+    side_effecting: false
+
+intent:
+  allowed_tools:
+    - aws.ec2.start_instance
+  budget:
+    currency: usd
+    max_spend_usd: 500

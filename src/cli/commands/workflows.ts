@@ -153,6 +153,7 @@ export async function handleGuardrails(ctx: CliContext, subcommand: string, argv
     if (subcommand === "bootstrap") {
       const operationFlag = consumeFlag(argv, "--operation");
       const spendFlag = consumeFlag(argv, "--requested-spend-cents");
+      const presetFlag = consumeFlag(argv, "--completion-preset");
       if (!operationFlag.value || !spendFlag.value) {
         throw new CliError(
           "guardrails bootstrap requires --operation and --requested-spend-cents",
@@ -160,19 +161,23 @@ export async function handleGuardrails(ctx: CliContext, subcommand: string, argv
         );
       }
       const spendCents = parseRequiredNonNegativeInt(spendFlag.value, "--requested-spend-cents");
-      const body = await gateway.postJson("/v1/sandbox/guardrails/bootstrap", {
+      const bodyPayload: Record<string, unknown> = {
         operation: operationFlag.value,
         requested_spend_cents: spendCents,
-      });
+      };
+      if (presetFlag.value) {
+        bodyPayload.completion_preset = presetFlag.value;
+      }
+      const body = await gateway.postJson("/v1/sandbox/guardrails/bootstrap", bodyPayload);
       return {
-        data: {
+        data: redactSensitiveFields({
           tenant_id: String(body.tenant_id ?? ""),
           intent_id: String(body.intent_id ?? ""),
           capability_token: String(body.capability_token ?? ""),
           operation: String(body.operation ?? operationFlag.value),
           requested_spend_cents: Number(body.requested_spend_cents ?? spendCents),
           sandbox_lifecycle_status: String(body.sandbox_lifecycle_status ?? ""),
-        },
+        }) as Record<string, unknown>,
       };
     }
     if (subcommand === "evidence") {

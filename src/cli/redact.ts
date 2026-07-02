@@ -1,3 +1,23 @@
+const SENSITIVE_SEED_EXACT_FIELDS = new Set(["payee_signing_seed", "agent_recognition_signing_seed"]);
+
+function isSensitiveSeedKey(key: string): boolean {
+  const lowered = key.toLowerCase();
+  if (SENSITIVE_SEED_EXACT_FIELDS.has(lowered)) {
+    return true;
+  }
+  return lowered.endsWith("_seed") || lowered.endsWith("_seed_hex");
+}
+
+function hasRedactableScalarContent(value: unknown): boolean {
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (value instanceof Uint8Array) {
+    return value.length > 0;
+  }
+  return false;
+}
+
 export function maskApiKey(rawKey: string): string {
   const trimmed = rawKey.trim();
   const parts = trimmed.split("_");
@@ -17,10 +37,6 @@ export function redactSensitiveFields(value: unknown): unknown {
   if (value && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      if (child && typeof child === "object") {
-        out[key] = redactSensitiveFields(child);
-        continue;
-      }
       const lowered = key.toLowerCase();
       if (
         lowered === "capability_token" ||
@@ -28,12 +44,22 @@ export function redactSensitiveFields(value: unknown): unknown {
         lowered === "refresh_token" ||
         (lowered.endsWith("_token") && lowered !== "token_type")
       ) {
-        out[key] = typeof child === "string" && child.trim() ? "[redacted]" : child;
-      } else if (lowered === "api_key" || lowered.endsWith("_api_key")) {
-        out[key] = typeof child === "string" ? maskApiKey(child) : child;
-      } else {
-        out[key] = child;
+        out[key] = hasRedactableScalarContent(child) ? "[redacted]" : child;
+        continue;
       }
+      if (lowered === "api_key" || lowered.endsWith("_api_key")) {
+        out[key] = typeof child === "string" ? maskApiKey(child) : child;
+        continue;
+      }
+      if (isSensitiveSeedKey(key)) {
+        out[key] = hasRedactableScalarContent(child) ? "[redacted]" : child;
+        continue;
+      }
+      if (child && typeof child === "object") {
+        out[key] = redactSensitiveFields(child);
+        continue;
+      }
+      out[key] = child;
     }
     return out;
   }

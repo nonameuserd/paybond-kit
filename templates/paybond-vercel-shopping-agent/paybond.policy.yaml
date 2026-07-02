@@ -1,0 +1,22 @@
+# Reference implementation — edit freely. Regenerate with:
+# paybond policy init --preset shopping --out paybond.policy.yaml
+
+version: 1
+name: shopping-agent-v1
+default_deny: true
+
+tools:
+  commerce.checkout:
+    side_effecting: true
+    max_spend_cents: 10000
+    evidence_preset: cost_and_completion
+
+  search.products:
+    side_effecting: false
+
+intent:
+  allowed_tools:
+    - commerce.checkout
+  budget:
+    currency: usd
+    max_spend_usd: 100

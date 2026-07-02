@@ -171,12 +171,12 @@ export async function handleAuditExports(ctx: CliContext, subcommand: string, ar
         }
         const bundleUrl = gatewayUrl(
           ctx.globals.gateway,
-          `/v1/compliance/audit-exports/${encodeURIComponent(jobId)}/bundle?token=${encodeURIComponent(token)}`,
+          `/v1/compliance/audit-exports/${encodeURIComponent(jobId)}/bundle`,
         );
-        const apiKey = await import("../credentials.js").then((mod) => mod.resolveApiKey(ctx.globals, ctx.cwd));
         const response = await ctx.fetch(bundleUrl, {
+          method: "POST",
           headers: {
-            authorization: `Bearer ${apiKey}`,
+            authorization: `Bearer ${token}`,
             "x-request-id": ctx.globals.requestId,
           },
         });

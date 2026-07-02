@@ -17,6 +17,7 @@ import {
   mergeMcpToolPolicy,
   parseMcpToolAllowlist,
   parseMcpToolPolicy,
+  resolveMcpToolPolicy,
 } from "./mcp-policy.js";
 
 export type McpConfigSource = "generated" | "file";
@@ -141,15 +142,15 @@ function validateEntry(
   let toolPolicy: McpToolPolicyConfig | undefined;
   const rawPolicy = entry.env[MCP_TOOL_POLICY_ENV]?.trim() ?? "";
   const rawAllowlist = entry.env[MCP_TOOL_ALLOWLIST_ENV]?.trim() ?? "";
-  if (rawPolicy || rawAllowlist) {
-    try {
-      toolPolicy = mergeMcpToolPolicy(parseMcpToolPolicy(rawPolicy || undefined), parseMcpToolAllowlist(rawAllowlist || undefined));
-    } catch (err) {
-      issues.push({
-        field: "tool_policy",
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
+  try {
+    toolPolicy = resolveMcpToolPolicy(
+      mergeMcpToolPolicy(parseMcpToolPolicy(rawPolicy || undefined), parseMcpToolAllowlist(rawAllowlist || undefined)),
+    );
+  } catch (err) {
+    issues.push({
+      field: "tool_policy",
+      message: err instanceof Error ? err.message : String(err),
+    });
   }
   return { issues, toolPolicy };
 }

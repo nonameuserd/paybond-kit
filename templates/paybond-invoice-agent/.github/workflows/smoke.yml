@@ -1,0 +1,19 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/checkout@v4
+      - run: pip install -r requirements.txt
+      - run: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation saas.provision_seat --requested-spend-cents 2900 --evidence-preset cost_and_completion --result-body '{"status":"completed","cost_cents":2900}' --format json
+        env:
+          PAYBOND_API_KEY: ${{ secrets.PAYBOND_SANDBOX_API_KEY }}

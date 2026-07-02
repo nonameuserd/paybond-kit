@@ -1,9 +1,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
 import { redactConfigValue } from "./redact.js";
+import { validateCliGateway } from "./globals.js";
 import { CliError } from "./types.js";
 
 export type CliConfigFile = {
+  install_id?: string;
+  telemetry?: boolean;
   profiles?: Record<string, { env_file?: string; gateway?: string }>;
   values?: Record<string, string>;
 };
@@ -50,14 +53,15 @@ export async function resolveConfigValue(key: string, profile?: string): Promise
 }
 
 export async function setConfigValue(key: string, value: string, profile?: string): Promise<void> {
+  const storedValue = key.toLowerCase() === "gateway" ? validateCliGateway(value) : value;
   const config = await loadConfigFile();
   if (profile) {
     config.profiles ??= {};
     config.profiles[profile] ??= {};
-    (config.profiles[profile] as Record<string, string>)[key] = value;
+    (config.profiles[profile] as Record<string, string>)[key] = storedValue;
   } else {
     config.values ??= {};
-    config.values[key] = value;
+    config.values[key] = storedValue;
   }
   await saveConfigFile(config);
 }

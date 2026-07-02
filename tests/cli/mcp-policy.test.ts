@@ -4,6 +4,7 @@ import {
   mergeMcpToolPolicy,
   parseMcpToolAllowlist,
   parseMcpToolPolicy,
+  resolveMcpToolPolicy,
   toolAllowedByPolicy,
   validateMcpToolSchema,
 } from "../../src/cli/mcp-policy.js";
@@ -38,5 +39,16 @@ describe("mcp policy", () => {
   it("validates tool schemas", () => {
     const errors = validateMcpToolSchema({ name: "paybond_get_principal" });
     expect(errors.some((error) => error.includes("description"))).toBe(true);
+  });
+
+  it("defaults unset policy to spend-write", () => {
+    expect(parseMcpToolPolicy(undefined)).toEqual({ policy: null, allowlist: [] });
+    expect(resolveMcpToolPolicy({ policy: null, allowlist: [] }).policy).toBe("spend-write");
+    expect(
+      toolAllowedByPolicy("paybond_fund_intent", { readOnlyHint: false, destructiveHint: true }, {
+        policy: null,
+        allowlist: [],
+      }),
+    ).toBe(false);
   });
 });

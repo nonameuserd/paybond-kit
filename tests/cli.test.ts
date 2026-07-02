@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { ROOT_HELP } from "../src/cli/help.js";
 import { runCli } from "../src/cli/router.js";
+import { createAgentGatewayFetch } from "./cli/agent-gateway-mock.js";
 
 const RAW_KEY =
   "paybond_sk_sandbox_0123456789abcdef0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -142,18 +143,11 @@ describe("paybond cli", () => {
   it("doctor --agent runs MCP validation checks", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-cli-doctor-"));
     await writeFile(join(cwd, ".env.local"), `PAYBOND_API_KEY=${RAW_KEY}\n`, "utf8");
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse({
-        tenant_id: "tenant-sandbox",
-        tenant_uuid: "550e8400-e29b-41d4-a716-446655440000",
-        environment: "sandbox",
-        service_account_role: "operator",
-      }),
-    );
+    const fetchMock = createAgentGatewayFetch();
     const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
     const code = await runCli(["--format", "json", "doctor", "--agent", "--env-file", ".env.local"], {
       cwd,
-      fetch: fetchMock,
+      fetch: fetchMock as typeof fetch,
       stdout,
     });
     expect(code === 0 || code === 1).toBe(true);
@@ -171,6 +165,9 @@ describe("paybond cli", () => {
     expect(names.has("mcp_tools_list")).toBe(true);
     expect(names.has("mcp_tool_schemas")).toBe(true);
     expect(names.has("mcp_stdout_purity")).toBe(true);
+    expect(names.has("agent_middleware_smoke")).toBe(true);
+    const smoke = payload.data.checks.find((check: { name: string }) => check.name === "agent_middleware_smoke");
+    expect(smoke?.ok).toBe(true);
   });
 
   it("prints package version", async () => {

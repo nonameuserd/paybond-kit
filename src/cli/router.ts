@@ -10,7 +10,10 @@ import {
   handleConfig,
   handleDoctor,
   handleDiagnose,
+  handleInitCompletion,
+  handleInitAgentMiddleware,
   handleInitGuardrail,
+  handleInitWizard,
   handleLogin,
   handleMcpInstall,
   handleMcpServe,
@@ -19,6 +22,21 @@ import {
   handleVersion,
   handleWhoami,
 } from "./commands/setup.js";
+import {
+  handlePolicyExtend,
+  handlePolicyImportMcpReceipt,
+  handlePolicyImportX402Receipt,
+  handlePolicyInit,
+  handlePolicyInitOrg,
+  handlePolicyPresetsList,
+  handlePolicyPresetsShow,
+  handlePolicyPreview,
+  handlePolicyTemplates,
+  handlePolicyValidateEvidence,
+  handlePolicyValidateTools,
+} from "./commands/policy.js";
+import { handleAgent } from "./commands/agent.js";
+import { handleDev } from "./commands/dev.js";
 import {
   handleGuardrails,
   handleIntents,
@@ -183,6 +201,15 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "init" && second === "guardrail") {
       canonical = "init guardrail";
       result = await handleInitGuardrail(ctx, command.slice(2));
+    } else if (head === "init" && second === "agent-middleware") {
+      canonical = "init agent-middleware";
+      result = await handleInitAgentMiddleware(ctx, command.slice(2));
+    } else if (head === "init" && second === "completion") {
+      canonical = "init completion";
+      result = await handleInitCompletion(ctx, command.slice(2));
+    } else if (head === "init") {
+      canonical = "init";
+      result = await handleInitWizard(ctx, command.slice(1));
     } else if (head === "mcp" && second === "serve") {
       canonical = "mcp serve";
       result = await handleMcpServe(ctx, command.slice(2));
@@ -198,6 +225,9 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "doctor") {
       canonical = "doctor";
       result = await handleDoctor(ctx, command.slice(1));
+    } else if (head === "dev" && second) {
+      canonical = commandPath(["dev", second]);
+      result = await handleDev(ctx, second, tail);
     } else if (head === "version") {
       canonical = "version";
       result = await handleVersion(ctx, command.slice(1));
@@ -237,6 +267,42 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "audit" && second === "exports" && third) {
       canonical = commandPath(["audit", "exports", third]);
       result = await handleAuditExports(ctx, third, command.slice(3));
+    } else if (head === "policy" && second === "presets" && third === "list") {
+      canonical = "policy presets list";
+      result = await handlePolicyPresetsList(ctx, command.slice(3));
+    } else if (head === "policy" && second === "presets" && third === "show") {
+      canonical = "policy presets show";
+      result = await handlePolicyPresetsShow(ctx, command.slice(3));
+    } else if (head === "policy" && second === "templates") {
+      canonical = "policy templates";
+      result = await handlePolicyTemplates(ctx, command.slice(2));
+    } else if (head === "policy" && second === "preview") {
+      canonical = "policy preview";
+      result = await handlePolicyPreview(ctx, command.slice(2));
+    } else if (head === "policy" && second === "import-mcp-receipt") {
+      canonical = "policy import-mcp-receipt";
+      result = await handlePolicyImportMcpReceipt(ctx, command.slice(2));
+    } else if (head === "policy" && second === "import-x402-receipt") {
+      canonical = "policy import-x402-receipt";
+      result = await handlePolicyImportX402Receipt(ctx, command.slice(2));
+    } else if (head === "policy" && second === "validate-evidence") {
+      canonical = "policy validate-evidence";
+      result = await handlePolicyValidateEvidence(ctx, command.slice(2));
+    } else if (head === "policy" && second === "init-org") {
+      canonical = "policy init-org";
+      result = await handlePolicyInitOrg(ctx, command.slice(2));
+    } else if (head === "policy" && second === "extend") {
+      canonical = "policy extend";
+      result = await handlePolicyExtend(ctx, command.slice(2));
+    } else if (head === "policy" && second === "init") {
+      canonical = "policy init";
+      result = await handlePolicyInit(ctx, command.slice(2));
+    } else if (head === "policy" && second === "validate-tools") {
+      canonical = "policy validate-tools";
+      result = await handlePolicyValidateTools(ctx, command.slice(2));
+    } else if (head === "agent" && second && third) {
+      canonical = commandPath(["agent", second, third]);
+      result = await handleAgent(ctx, second, third, command.slice(3));
     } else {
       throw new CliError(formatUnknownCommandMessage(command.join(" ")), {
         category: "usage",
@@ -268,7 +334,41 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
       for (const line of lines) {
         ctx.stdout.write(`${line}\n`);
       }
-    } else if (canonical !== "login" && canonical !== "mcp serve") {
+    } else if (canonical === "agent sandbox smoke" && Array.isArray(result.data.checklist_lines)) {
+      writeTableLines(ctx.stdout, result.data.checklist_lines as string[]);
+      if (output.warnings.length) {
+        for (const warning of output.warnings) {
+          ctx.stderr.write(`${warning}\n`);
+        }
+      }
+    } else if (
+      (canonical === "dev smoke" || canonical === "dev loop") &&
+      Array.isArray(result.data.checklist_lines)
+    ) {
+      if (canonical === "dev loop" && Array.isArray(result.data.banner_lines)) {
+        writeTableLines(ctx.stdout, result.data.banner_lines as string[]);
+      }
+      writeTableLines(ctx.stdout, result.data.checklist_lines as string[]);
+      if (output.warnings.length) {
+        for (const warning of output.warnings) {
+          ctx.stderr.write(`${warning}\n`);
+        }
+      }
+    } else if (canonical === "agent run trace" && Array.isArray(result.data.trace_lines)) {
+      writeTableLines(ctx.stdout, result.data.trace_lines as string[]);
+      if (output.warnings.length) {
+        for (const warning of output.warnings) {
+          ctx.stderr.write(`${warning}\n`);
+        }
+      }
+    } else if (canonical === "policy presets show" && Array.isArray(result.data.yaml_lines)) {
+      writeTableLines(ctx.stdout, result.data.yaml_lines as string[]);
+      if (output.warnings.length) {
+        for (const warning of output.warnings) {
+          ctx.stderr.write(`${warning}\n`);
+        }
+      }
+    } else if (canonical !== "login" && canonical !== "mcp serve" && canonical !== "dev trace") {
       writeTableLines(ctx.stdout, renderTable(canonical, result, globals));
     }
     return EXIT_SUCCESS;

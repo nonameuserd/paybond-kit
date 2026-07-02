@@ -1,0 +1,1187 @@
+{
+  "$schema": "./catalog.schema.json",
+  "version": 1,
+  "presets": [
+    {
+      "preset_id": "api_response_ok",
+      "title": "API response OK",
+      "description": "Paid API returned HTTP success with a vendor reference and response digest in evidence.",
+      "harbor_template_id": "api_response_v1",
+      "parameters": {
+        "http_status_path": [
+          "http_status"
+        ],
+        "expected_http_status": 200
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "http_status": {
+            "type": "integer"
+          },
+          "vendor_ref_id": {
+            "type": "string"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "http_status",
+          "vendor_ref_id",
+          "response_digest"
+        ]
+      },
+      "sample_evidence": {
+        "http_status": 200,
+        "vendor_ref_id": "ch_3NxExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_failing_evidence": {
+        "http_status": 500,
+        "vendor_ref_id": "ch_3NxExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "human_summary": "Release when HTTP status is 200 and vendor_ref_id plus response_digest are present with schema types.",
+      "recommended_amount_cents": 500,
+      "scope": "tool_completion",
+      "spend_hints": {
+        "approval_threshold_cents": 2500,
+        "per_tool_max_cents": 10000
+      }
+    },
+    {
+      "preset_id": "webhook_confirmed",
+      "title": "Webhook confirmed",
+      "description": "Async vendor confirmation captured in evidence with event type and webhook identifiers.",
+      "harbor_template_id": "webhook_confirmation_v1",
+      "parameters": {
+        "event_type_path": [
+          "event_type"
+        ],
+        "expected_event_type": "payment.succeeded"
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "webhook_event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "webhook_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "sample_evidence": {
+        "webhook_event_id": "evt_1NxExample",
+        "event_type": "payment.succeeded",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_failing_evidence": {
+        "webhook_event_id": "evt_1NxExample",
+        "event_type": "payment.failed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "human_summary": "Release when event_type is payment.succeeded and webhook_event_id plus payload_digest are present.",
+      "recommended_amount_cents": 1000,
+      "scope": "tool_completion",
+      "spend_hints": {
+        "approval_threshold_cents": 5000,
+        "per_tool_max_cents": 25000
+      }
+    },
+    {
+      "preset_id": "artifact_attested",
+      "title": "Artifact attested",
+      "description": "Work proven by out-of-band artifact hashes with operation and vendor reference fields.",
+      "harbor_template_id": "artifact_hash_v1",
+      "parameters": {
+        "operation_path": [
+          "operation"
+        ],
+        "expected_operation": "attested"
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "artifact_blake3_hex": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "operation": {
+            "type": "string"
+          },
+          "vendor_ref_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_blake3_hex",
+          "operation",
+          "vendor_ref_id"
+        ]
+      },
+      "sample_evidence": {
+        "artifact_blake3_hex": [
+          "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+        ],
+        "operation": "attested",
+        "vendor_ref_id": "job_9kExample"
+      },
+      "sample_failing_evidence": {
+        "artifact_blake3_hex": [
+          "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+        ],
+        "operation": "pending",
+        "vendor_ref_id": "job_9kExample"
+      },
+      "human_summary": "Release when operation is attested, artifact_blake3_hex is a non-empty array, and vendor_ref_id matches the evidence schema.",
+      "recommended_amount_cents": 2500,
+      "scope": "tool_completion",
+      "spend_hints": {
+        "approval_threshold_cents": 10000,
+        "per_tool_max_cents": 50000
+      }
+    },
+    {
+      "preset_id": "cost_and_completion",
+      "title": "Cost and completion",
+      "description": "Completion-style status check plus evidence cost capped by intent amount_cents.",
+      "harbor_template_id": "completion_budget_v1",
+      "parameters": {
+        "status_path": [
+          "status"
+        ],
+        "expected_status": "completed",
+        "cost_path": [
+          "cost_cents"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "cost_cents": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "cost_cents"
+        ]
+      },
+      "sample_evidence": {
+        "status": "completed",
+        "cost_cents": 10
+      },
+      "sample_failing_evidence": {
+        "status": "failed",
+        "cost_cents": 10
+      },
+      "human_summary": "Release when status is completed and cost_cents is within the intent budget.",
+      "recommended_amount_cents": 100,
+      "scope": "tool_completion",
+      "spend_hints": {
+        "approval_threshold_cents": 1000,
+        "per_tool_max_cents": 5000
+      }
+    },
+    {
+      "preset_id": "sandbox_permissive",
+      "title": "Sandbox permissive",
+      "description": "Always release; use only for fast sandbox integration before strong completion rules.",
+      "harbor_template_id": "true_v1",
+      "parameters": {},
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "confirmation_id": {
+            "type": "string"
+          },
+          "charged_cents": {
+            "type": "integer"
+          }
+        }
+      },
+      "sample_evidence": {
+        "confirmation_id": "sandbox-smoke-001",
+        "charged_cents": 1
+      },
+      "sample_failing_evidence": {},
+      "human_summary": "Always pass (no evidence conditions). Opt in explicitly for sandbox smoke tests.",
+      "recommended_amount_cents": 100,
+      "scope": "sandbox_smoke"
+    },
+    {
+      "preset_id": "stripe_charge",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "api_response_ok",
+      "title": "Stripe charge succeeded",
+      "description": "Thin wrapper over api_response_ok with Stripe charge id field conventions.",
+      "harbor_template_id": "api_response_v1",
+      "parameters": {
+        "http_status_path": [
+          "http_status"
+        ],
+        "expected_http_status": 200
+      },
+      "evidence_field_map": {
+        "charge_id": "vendor_ref_id",
+        "http_status": "http_status",
+        "response_digest": "response_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "charge_id": {
+            "type": "string",
+            "description": "Stripe charge id (ch_...)"
+          },
+          "http_status": {
+            "type": "integer"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "charge_id",
+          "http_status",
+          "response_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "http_status": {
+            "type": "integer"
+          },
+          "vendor_ref_id": {
+            "type": "string"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "http_status",
+          "vendor_ref_id",
+          "response_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "charge_id": "ch_3NxExample",
+        "http_status": 200,
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_evidence": {
+        "http_status": 200,
+        "vendor_ref_id": "ch_3NxExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_failing_evidence": {
+        "http_status": 402,
+        "vendor_ref_id": "ch_3NxExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "human_summary": "Release when Stripe charge HTTP status is 200 with charge_id mapped to vendor_ref_id plus response_digest.",
+      "recommended_amount_cents": 500,
+      "spend_hints": {
+        "approval_threshold_cents": 2500,
+        "per_tool_max_cents": 10000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "stripe_connect"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_intent_id",
+        "payment_session_id",
+        "authorization_id",
+        "mandate_id"
+      ],
+      "anti_patterns": [
+        "Do not submit Stripe PaymentIntent or funding webhook payloads as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "stripe",
+        "api_version": "2024-10-28.acacia",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "charge_id",
+          "response_digest"
+        ],
+        "schema_digest_hex": "ed987475f2756ad37dd04e6a9fe6ab6e0ca77fa974d9e142306dcb665c481dd0",
+        "canonical_schema_digest_hex": "95a6b806adf78cab5fbb4f7bb871d1114268620c0d12cf61cfa8405558ea2577"
+      }
+    },
+    {
+      "preset_id": "vendor_webhook_confirmed",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "webhook_confirmed",
+      "title": "Vendor webhook confirmed",
+      "description": "Async vendor SaaS webhook as tool-completion evidence. Use vendor job/order events — not payment-rail funding webhooks.",
+      "harbor_template_id": "webhook_confirmation_v1",
+      "parameters": {
+        "event_type_path": [
+          "event_type"
+        ],
+        "expected_event_type": "job.completed"
+      },
+      "evidence_field_map": {
+        "webhook_event_id": "webhook_event_id",
+        "event_type": "event_type",
+        "payload_digest": "payload_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "webhook_event_id": {
+            "type": "string",
+            "description": "Vendor webhook delivery id"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "webhook_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "webhook_event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "webhook_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "webhook_event_id": "wh_9kExample",
+        "event_type": "job.completed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_evidence": {
+        "webhook_event_id": "wh_9kExample",
+        "event_type": "job.completed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_failing_evidence": {
+        "webhook_event_id": "wh_9kExample",
+        "event_type": "job.failed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "human_summary": "Release when vendor webhook event_type is job.completed with webhook_event_id and payload_digest present.",
+      "recommended_amount_cents": 1000,
+      "spend_hints": {
+        "approval_threshold_cents": 5000,
+        "per_tool_max_cents": 25000
+      },
+      "scope": "tool_completion",
+      "forbidden_evidence_fields": [
+        "payment_intent_id",
+        "mandate_id",
+        "latest_charge_id",
+        "transfer_id",
+        "refund_id",
+        "stripe_event_id",
+        "payment_session_id",
+        "authorization_id"
+      ],
+      "anti_patterns": [
+        "Do not use Stripe funding events (payment_intent.succeeded) as tool-completion evidence.",
+        "Do not use Coinbase authorization or x402 payment-session webhooks as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "generic",
+        "api_version": "vendor_webhook_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "webhook_event_id",
+          "payload_digest"
+        ],
+        "schema_digest_hex": "734fb59c4ebd0316367ee58936e5d74884c0c6995ffd04d018e38e54101d5026",
+        "canonical_schema_digest_hex": "b81b781604c053abcb6fbdf2a03d7e4f8fd27ad3e1a84b967c5d80d7071c9364"
+      }
+    },
+    {
+      "preset_id": "stripe_webhook_payment",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "webhook_confirmed",
+      "deprecated": true,
+      "superseded_by": "vendor_webhook_confirmed",
+      "title": "Stripe payment webhook (deprecated)",
+      "description": "Deprecated alias — use vendor_webhook_confirmed. Accepts legacy stripe_event_id field name for one release cycle.",
+      "harbor_template_id": "webhook_confirmation_v1",
+      "parameters": {
+        "event_type_path": [
+          "event_type"
+        ],
+        "expected_event_type": "job.completed"
+      },
+      "evidence_field_map": {
+        "stripe_event_id": "webhook_event_id",
+        "webhook_event_id": "webhook_event_id",
+        "event_type": "event_type",
+        "payload_digest": "payload_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "stripe_event_id": {
+            "type": "string",
+            "description": "Legacy Stripe event id (evt_...) — prefer webhook_event_id"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stripe_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "webhook_event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "webhook_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "stripe_event_id": "evt_1NxExample",
+        "event_type": "job.completed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_evidence": {
+        "webhook_event_id": "evt_1NxExample",
+        "event_type": "job.completed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_failing_evidence": {
+        "webhook_event_id": "evt_1NxExample",
+        "event_type": "job.failed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "human_summary": "Deprecated — use vendor_webhook_confirmed. Release when event_type is job.completed with webhook id and payload digest.",
+      "recommended_amount_cents": 1000,
+      "spend_hints": {
+        "approval_threshold_cents": 5000,
+        "per_tool_max_cents": 25000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "stripe_connect"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_intent_id",
+        "mandate_id",
+        "latest_charge_id",
+        "transfer_id",
+        "refund_id",
+        "stripe_event_id"
+      ],
+      "anti_patterns": [
+        "Do not use Stripe funding events (payment_intent.succeeded) as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "stripe",
+        "api_version": "stripe_webhook_legacy_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "stripe_event_id",
+          "payload_digest"
+        ],
+        "supersedes": "vendor_webhook_v1",
+        "migration_notes": "Deprecated — use vendor_webhook_confirmed with webhook_event_id instead of stripe_event_id.",
+        "schema_digest_hex": "3beb0917385fda70dedcf838dee9dbf6e81b316f30aaf9f615ec46a77277d189",
+        "canonical_schema_digest_hex": "b81b781604c053abcb6fbdf2a03d7e4f8fd27ad3e1a84b967c5d80d7071c9364"
+      }
+    },
+    {
+      "preset_id": "ach_paid_api_ok",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "api_response_ok",
+      "title": "ACH paid API OK",
+      "description": "Synchronous vendor HTTP confirmation after ACH-funded capability gate. Maps confirmation_number to vendor_ref_id.",
+      "harbor_template_id": "api_response_v1",
+      "parameters": {
+        "http_status_path": [
+          "http_status"
+        ],
+        "expected_http_status": 200
+      },
+      "evidence_field_map": {
+        "confirmation_number": "vendor_ref_id",
+        "http_status": "http_status",
+        "response_digest": "response_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "confirmation_number": {
+            "type": "string",
+            "description": "Vendor booking or order confirmation id"
+          },
+          "http_status": {
+            "type": "integer"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_number",
+          "http_status",
+          "response_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "http_status": {
+            "type": "integer"
+          },
+          "vendor_ref_id": {
+            "type": "string"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "http_status",
+          "vendor_ref_id",
+          "response_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "confirmation_number": "AA-8JZ3QK",
+        "http_status": 200,
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_evidence": {
+        "http_status": 200,
+        "vendor_ref_id": "AA-8JZ3QK",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_failing_evidence": {
+        "http_status": 500,
+        "vendor_ref_id": "AA-8JZ3QK",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "human_summary": "Release when vendor HTTP status is 200 with confirmation_number mapped to vendor_ref_id plus response_digest.",
+      "recommended_amount_cents": 20000,
+      "spend_hints": {
+        "approval_threshold_cents": 5000,
+        "per_tool_max_cents": 50000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "stripe_ach_debit"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_intent_id",
+        "mandate_id",
+        "latest_charge_id",
+        "transfer_id",
+        "refund_id",
+        "stripe_event_id"
+      ],
+      "anti_patterns": [
+        "Do not submit Stripe PaymentIntent, mandate, or ACH funding webhook payloads as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "generic",
+        "api_version": "ach_paid_api_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "confirmation_number",
+          "response_digest"
+        ],
+        "schema_digest_hex": "3da94a416d36a31864058ace9392c12ca3f43aefba78f1b1829fb90568c9cc39",
+        "canonical_schema_digest_hex": "95a6b806adf78cab5fbb4f7bb871d1114268620c0d12cf61cfa8405558ea2577"
+      }
+    },
+    {
+      "preset_id": "ach_travel_booking",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "cost_and_completion",
+      "title": "ACH travel booking",
+      "description": "Travel booking completion with confirmation_number, total_cents budget cap, and fare_class metadata. Mirrors the admin ACH walkthrough demo.",
+      "harbor_template_id": "completion_budget_v1",
+      "parameters": {
+        "status_path": [
+          "status"
+        ],
+        "expected_status": "completed",
+        "cost_path": [
+          "total_cents"
+        ]
+      },
+      "evidence_field_map": {
+        "confirmation_number": "confirmation_number",
+        "total_cents": "total_cents",
+        "fare_class": "fare_class",
+        "status": "status"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "confirmation_number": {
+            "type": "string"
+          },
+          "total_cents": {
+            "type": "integer"
+          },
+          "fare_class": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_number",
+          "total_cents",
+          "fare_class",
+          "status"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "confirmation_number": {
+            "type": "string"
+          },
+          "total_cents": {
+            "type": "integer"
+          },
+          "fare_class": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_number",
+          "total_cents",
+          "fare_class",
+          "status"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "confirmation_number": "AA-8JZ3QK",
+        "total_cents": 19750,
+        "fare_class": "economy",
+        "status": "completed"
+      },
+      "sample_evidence": {
+        "confirmation_number": "AA-8JZ3QK",
+        "total_cents": 19750,
+        "fare_class": "economy",
+        "status": "completed"
+      },
+      "sample_failing_evidence": {
+        "confirmation_number": "AA-8JZ3QK",
+        "total_cents": 19750,
+        "fare_class": "business",
+        "status": "failed"
+      },
+      "human_summary": "Release when status is completed and total_cents is within the intent budget. confirmation_number and fare_class are schema-validated metadata.",
+      "recommended_amount_cents": 20000,
+      "spend_hints": {
+        "approval_threshold_cents": 10000,
+        "per_tool_max_cents": 50000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "stripe_ach_debit"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_intent_id",
+        "mandate_id",
+        "latest_charge_id",
+        "transfer_id",
+        "refund_id",
+        "stripe_event_id"
+      ],
+      "anti_patterns": [
+        "Do not submit Stripe PaymentIntent or ACH funding webhook payloads as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "generic",
+        "api_version": "ach_travel_booking_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "fare_class",
+          "total_cents"
+        ],
+        "schema_digest_hex": "2fb55ee27008a7d59d2df78f80dc144121e54056c71f53c62c90c5f00200dd91",
+        "canonical_schema_digest_hex": "2fb55ee27008a7d59d2df78f80dc144121e54056c71f53c62c90c5f00200dd91"
+      }
+    },
+    {
+      "preset_id": "ach_vendor_webhook",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "webhook_confirmed",
+      "title": "ACH vendor webhook",
+      "description": "Async vendor webhook after ACH-funded tool execution. Explicitly not payment_intent.* funding events.",
+      "harbor_template_id": "webhook_confirmation_v1",
+      "parameters": {
+        "event_type_path": [
+          "event_type"
+        ],
+        "expected_event_type": "booking.confirmed"
+      },
+      "evidence_field_map": {
+        "vendor_event_id": "webhook_event_id",
+        "vendor_event_type": "event_type",
+        "payload_digest": "payload_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "vendor_event_id": {
+            "type": "string"
+          },
+          "vendor_event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor_event_id",
+          "vendor_event_type",
+          "payload_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "webhook_event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "webhook_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "vendor_event_id": "wh_travel_8JZ3QK",
+        "vendor_event_type": "booking.confirmed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_evidence": {
+        "webhook_event_id": "wh_travel_8JZ3QK",
+        "event_type": "booking.confirmed",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_failing_evidence": {
+        "webhook_event_id": "wh_travel_8JZ3QK",
+        "event_type": "booking.cancelled",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "human_summary": "Release when vendor_event_type is booking.confirmed with vendor_event_id mapped to webhook_event_id and payload digest present.",
+      "recommended_amount_cents": 20000,
+      "spend_hints": {
+        "approval_threshold_cents": 10000,
+        "per_tool_max_cents": 50000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "stripe_ach_debit"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_intent_id",
+        "mandate_id",
+        "latest_charge_id",
+        "transfer_id",
+        "refund_id",
+        "stripe_event_id"
+      ],
+      "anti_patterns": [
+        "Do not use payment_intent.* Stripe funding events as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "generic",
+        "api_version": "ach_vendor_webhook_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "vendor_event_id",
+          "payload_digest"
+        ],
+        "schema_digest_hex": "0dfacbc0ed9b8436c1a36e4d095d3813ae0ee9b7fbc1b3d46b5a441dd493984f",
+        "canonical_schema_digest_hex": "b81b781604c053abcb6fbdf2a03d7e4f8fd27ad3e1a84b967c5d80d7071c9364"
+      }
+    },
+    {
+      "preset_id": "x402_paid_api_ok",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "api_response_ok",
+      "title": "x402 paid API OK",
+      "description": "HTTP tool completion behind an x402-funded intent. Same pattern as stripe_charge without Stripe field names.",
+      "harbor_template_id": "api_response_v1",
+      "parameters": {
+        "http_status_path": [
+          "http_status"
+        ],
+        "expected_http_status": 200
+      },
+      "evidence_field_map": {
+        "vendor_ref_id": "vendor_ref_id",
+        "http_status": "http_status",
+        "response_digest": "response_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "vendor_ref_id": {
+            "type": "string",
+            "description": "Vendor job or resource reference"
+          },
+          "http_status": {
+            "type": "integer"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "vendor_ref_id",
+          "http_status",
+          "response_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "http_status": {
+            "type": "integer"
+          },
+          "vendor_ref_id": {
+            "type": "string"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "http_status",
+          "vendor_ref_id",
+          "response_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "vendor_ref_id": "job_9kExample",
+        "http_status": 200,
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_evidence": {
+        "http_status": 200,
+        "vendor_ref_id": "job_9kExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_failing_evidence": {
+        "http_status": 402,
+        "vendor_ref_id": "job_9kExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "human_summary": "Release when HTTP status is 200 with vendor_ref_id and response_digest present.",
+      "recommended_amount_cents": 500,
+      "spend_hints": {
+        "approval_threshold_cents": 2500,
+        "per_tool_max_cents": 10000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "x402_usdc_base"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_session_id",
+        "authorization_id",
+        "capture_id",
+        "void_id",
+        "x402_payment_session_id",
+        "onchain_transaction_hashes"
+      ],
+      "anti_patterns": [
+        "Do not submit Coinbase payment-session or authorization payloads as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "x402",
+        "api_version": "x402_api_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "vendor_ref_id",
+          "response_digest"
+        ],
+        "schema_digest_hex": "873dfa3000388d1bc0b730872ca2509560ce0346e7c3b1023ba97d5c7f25e1bf",
+        "canonical_schema_digest_hex": "95a6b806adf78cab5fbb4f7bb871d1114268620c0d12cf61cfa8405558ea2577"
+      }
+    },
+    {
+      "preset_id": "x402_delivery_receipt",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "artifact_attested",
+      "title": "x402 delivery receipt",
+      "description": "x402 Signed Offer & Receipt extension mapped to artifact_attested. Maps resourceUrl to vendor_ref_id — not Coinbase session ids.",
+      "harbor_template_id": "artifact_hash_v1",
+      "parameters": {
+        "operation_path": [
+          "operation"
+        ],
+        "expected_operation": "attested"
+      },
+      "evidence_field_map": {
+        "receipt_digest": "artifact_blake3_hex",
+        "resource_url": "vendor_ref_id",
+        "operation": "operation"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "receipt_digest": {
+            "type": "string",
+            "description": "BLAKE3 hex digest of signed x402 receipt bytes"
+          },
+          "resource_url": {
+            "type": "string",
+            "description": "x402 resourceUrl from signed receipt"
+          },
+          "operation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "receipt_digest",
+          "resource_url",
+          "operation"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "artifact_blake3_hex": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "operation": {
+            "type": "string"
+          },
+          "vendor_ref_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_blake3_hex",
+          "operation",
+          "vendor_ref_id"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "receipt_digest": "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+        "resource_url": "https://api.vendor.example/job/123",
+        "operation": "attested"
+      },
+      "sample_evidence": {
+        "artifact_blake3_hex": [
+          "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+        ],
+        "operation": "attested",
+        "vendor_ref_id": "https://api.vendor.example/job/123"
+      },
+      "sample_failing_evidence": {
+        "artifact_blake3_hex": [
+          "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+        ],
+        "operation": "pending",
+        "vendor_ref_id": "https://api.vendor.example/job/123"
+      },
+      "human_summary": "Release when operation is attested, receipt_digest maps to artifact_blake3_hex, and resource_url maps to vendor_ref_id.",
+      "recommended_amount_cents": 2500,
+      "spend_hints": {
+        "approval_threshold_cents": 10000,
+        "per_tool_max_cents": 50000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "x402_usdc_base"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_session_id",
+        "authorization_id",
+        "capture_id",
+        "void_id",
+        "x402_payment_session_id",
+        "onchain_transaction_hashes"
+      ],
+      "anti_patterns": [
+        "Do not submit Coinbase payment-session ids or on-chain auth transaction hashes as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "x402",
+        "api_version": "x402_receipt_v1",
+        "contract_kind": "mapper_version",
+        "quality_fields": [
+          "receipt_digest",
+          "resource_url"
+        ],
+        "schema_digest_hex": "04d3de014778e39be771bcc267b742f8fb701ce5c0aa75c27c24a564714e1ae0",
+        "canonical_schema_digest_hex": "20e4dced0ae235b09c2613cd9fc551f2d85c0ff6781d34c763b57d7222c0d3e0"
+      }
+    },
+    {
+      "preset_id": "x402_cost_and_completion",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "cost_and_completion",
+      "title": "x402 cost and completion",
+      "description": "Metered agent tool completion on the x402_usdc_base rail with standard status and cost_cents fields.",
+      "harbor_template_id": "completion_budget_v1",
+      "parameters": {
+        "status_path": [
+          "status"
+        ],
+        "expected_status": "completed",
+        "cost_path": [
+          "cost_cents"
+        ]
+      },
+      "evidence_field_map": {
+        "status": "status",
+        "cost_cents": "cost_cents"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "cost_cents": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "cost_cents"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "cost_cents": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "status",
+          "cost_cents"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "status": "completed",
+        "cost_cents": 10
+      },
+      "sample_evidence": {
+        "status": "completed",
+        "cost_cents": 10
+      },
+      "sample_failing_evidence": {
+        "status": "failed",
+        "cost_cents": 10
+      },
+      "human_summary": "Release when status is completed and cost_cents is within the intent budget.",
+      "recommended_amount_cents": 100,
+      "spend_hints": {
+        "approval_threshold_cents": 1000,
+        "per_tool_max_cents": 5000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "x402_usdc_base"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_session_id",
+        "authorization_id",
+        "capture_id",
+        "void_id",
+        "x402_payment_session_id",
+        "onchain_transaction_hashes"
+      ],
+      "anti_patterns": [
+        "Do not submit Coinbase authorization or payment-session payloads as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "x402",
+        "api_version": "x402_metered_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "status",
+          "cost_cents"
+        ],
+        "schema_digest_hex": "30a152fec1fa2965578938f26b82c805263f15e324db1be345453dc65598cc9c",
+        "canonical_schema_digest_hex": "30a152fec1fa2965578938f26b82c805263f15e324db1be345453dc65598cc9c"
+      }
+    }
+  ]
+}

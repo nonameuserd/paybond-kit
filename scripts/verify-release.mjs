@@ -127,7 +127,14 @@ for (const banned of [
   }
 }
 
-for (const required of ["package/README.md", "package/LICENSE", "package/dist/login.js", "package/dist/login.d.ts"]) {
+for (const required of [
+  "package/README.md",
+  "package/LICENSE",
+  "package/dist/login.js",
+  "package/dist/login.d.ts",
+  "package/completion-presets/catalog.json",
+  "package/completion-presets/catalog.sha256",
+]) {
   if (!packedFiles.includes(required)) {
     throw new Error(`packed tarball must include ${required}`);
   }

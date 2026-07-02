@@ -1,0 +1,25 @@
+# Reference implementation — edit freely. Regenerate with:
+# edit paybond.policy.yaml directly
+
+version: 1
+name: procurement-agent-v1
+default_deny: true
+
+tools:
+  procurement.submit_po:
+    side_effecting: true
+    max_spend_cents: 25000
+    evidence_preset: cost_and_completion
+
+  procurement.list_vendors:
+    side_effecting: false
+
+  procurement.get_quote:
+    side_effecting: false
+
+intent:
+  allowed_tools:
+    - procurement.submit_po
+  budget:
+    currency: usd
+    max_spend_usd: 250

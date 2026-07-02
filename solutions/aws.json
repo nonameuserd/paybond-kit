@@ -1,0 +1,17 @@
+{
+  "id": "aws",
+  "title": "AWS operator agent",
+  "policy_default": {
+    "domain": "aws",
+    "guardrails": ["default_deny", "max_spend_usd_500"]
+  },
+  "primary_operation": "aws.ec2.start_instance",
+  "completion_preset": "cost_and_completion",
+  "smoke": {
+    "result_body": {
+      "status": "completed",
+      "cost_cents": 12500
+    },
+    "evidence_preset": "cost_and_completion"
+  }
+}

@@ -5,13 +5,16 @@ import { readJsonBody } from "../automation.js";
 import { listConfigEntries, resolveConfigValue, setConfigValue, unsetConfigValue } from "../config.js";
 import { commandPath, type CliContext, withGateway } from "../context.js";
 import { assertApiKeyShape, resolveApiKey, resolvedDefaultsForDoctor } from "../credentials.js";
+import { runAgentMiddlewareDoctorCheck } from "../doctor-agent-middleware.js";
 import { packageVersion, runAgentMcpChecks } from "../doctor-agent.js";
+import { runCompletionCatalogDoctorChecks } from "../../doctor-completion.js";
 import { consumeBooleanFlag, consumeFlag } from "../globals.js";
-import { maskApiKey, redactConfigValue } from "../redact.js";
+import { maskApiKey, redactConfigValue, redactSensitiveFields } from "../redact.js";
 import {
   mergeMcpToolPolicy,
   parseMcpToolAllowlist,
   parseMcpToolPolicy,
+  resolveMcpToolPolicy,
 } from "../mcp-policy.js";
 import {
   parseMcpInstallFormat,
@@ -23,6 +26,13 @@ import { verifyMcpInstallPlan } from "../mcp-verify-config.js";
 import { buildSupportDiagnostics, formatSupportDiagnosticsTable } from "../support-diagnostics.js";
 import { CliError, type CommandResult } from "../types.js";
 import { main as runInitMain } from "../../init.js";
+import { parseCompletionInitArgs, scaffoldCompletionInit } from "../../completion-init.js";
+import { parseProjectInitArgv, runProjectInit } from "../../project-init.js";
+import {
+  copyTemplateToDirectory,
+  normalizeTemplateId,
+  templateInitUsage,
+} from "../../template-init.js";
 import { parseArgs as parseLoginArgs, runLogin, type LoginOptions, type LoginResult } from "../../login.js";
 import { main as runMcpServerMain } from "../../mcp-server.js";
 import { PaybondMCPServer } from "../../mcp-server.js";
@@ -108,19 +118,110 @@ export async function handleLogin(ctx: CliContext, argv: string[]): Promise<Comm
   return { data: loginResultData(result) };
 }
 
+export async function handleInitWizard(ctx: CliContext, argv: string[]): Promise<CommandResult> {
+  let parsed: ReturnType<typeof parseProjectInitArgv>;
+  try {
+    parsed = parseProjectInitArgv(argv);
+  } catch (err) {
+    throw new CliError(err instanceof Error ? err.message : String(err), {
+      category: "usage",
+      code: "cli.usage.invalid_init",
+    });
+  }
+  if (parsed === "help") {
+    throw new CliError(templateInitUsage(), { category: "usage", code: "cli.help" });
+  }
+  try {
+    if (parsed.template) {
+      const result = await copyTemplateToDirectory({
+        cwd: ctx.cwd,
+        templateId: normalizeTemplateId(parsed.template),
+        framework: parsed.framework,
+        force: parsed.force,
+        writeStdout(line) {
+          if (ctx.globals.format !== "json") {
+            ctx.stdout.write(`${line}\n`);
+          }
+        },
+      });
+      return { data: result };
+    }
+    const { template: _template, ...wizardOptions } = parsed;
+    const result = await runProjectInit({
+      cwd: ctx.cwd,
+      ...wizardOptions,
+      writeStdout(line) {
+        if (ctx.globals.format !== "json") {
+          ctx.stdout.write(`${line}\n`);
+        }
+      },
+    });
+    return { data: result };
+  } catch (err) {
+    throw new CliError(err instanceof Error ? err.message : String(err), {
+      category: "validation",
+      code: "cli.init.failed",
+    });
+  }
+}
+
 export async function handleInitGuardrail(ctx: CliContext, argv: string[]): Promise<CommandResult> {
-  const code = await runInitMain(argv);
+  return handleInitScaffold(ctx, argv, "paid-tool-guard", "paybond-paid-tool-guard.ts");
+}
+
+export async function handleInitAgentMiddleware(ctx: CliContext, argv: string[]): Promise<CommandResult> {
+  return handleInitScaffold(ctx, argv, "agent-middleware", "paybond-agent-middleware.ts");
+}
+
+async function handleInitScaffold(
+  ctx: CliContext,
+  argv: string[],
+  defaultPreset: "paid-tool-guard" | "agent-middleware",
+  defaultOut: string,
+): Promise<CommandResult> {
+  const code = await runInitMain(["--preset", defaultPreset, ...argv]);
   if (code !== 0) {
-    throw new CliError("init guardrail failed", { category: "validation", code: "cli.init.failed", exitCode: code });
+    throw new CliError(`init ${defaultPreset} failed`, { category: "validation", code: "cli.init.failed", exitCode: code });
   }
   const outFlag = consumeFlag(argv, "--out");
   const frameworkFlag = consumeFlag(argv, "--framework");
-  const presetFlag = consumeFlag(argv, "--preset");
   return {
     data: {
-      out: outFlag.value ?? "paybond-paid-tool-guard.ts",
-      preset: presetFlag.value ?? "paid-tool-guard",
-      framework: frameworkFlag.value ?? "provider-agnostic",
+      out: outFlag.value ?? defaultOut,
+      preset: defaultPreset,
+      framework: frameworkFlag.value ?? (defaultPreset === "agent-middleware" ? "generic" : "provider-agnostic"),
+      bytes_written: true,
+      completion_preset: "cost_and_completion",
+    },
+  };
+}
+
+export async function handleInitCompletion(ctx: CliContext, argv: string[]): Promise<CommandResult> {
+  let parsed;
+  try {
+    const result = parseCompletionInitArgs(argv);
+    if (result === "help") {
+      throw new CliError("help", { category: "usage", code: "cli.help" });
+    }
+    parsed = result;
+  } catch (err) {
+    throw new CliError(err instanceof Error ? err.message : String(err), {
+      category: "usage",
+      code: "cli.usage.invalid_init_completion",
+    });
+  }
+  try {
+    await scaffoldCompletionInit(parsed);
+  } catch (err) {
+    throw new CliError(err instanceof Error ? err.message : String(err), {
+      category: "validation",
+      code: "cli.init.failed",
+    });
+  }
+  return {
+    data: {
+      out: parsed.out,
+      preset: parsed.preset,
       bytes_written: true,
     },
   };
@@ -182,7 +283,7 @@ export async function handleMcpInstall(ctx: CliContext, argv: string[]): Promise
     out: outFlag.value,
     cwd: ctx.cwd,
     home: process.env.HOME ?? process.env.USERPROFILE ?? ctx.cwd,
-    toolPolicy: toolPolicy.policy ? toolPolicy : null,
+    toolPolicy: resolveMcpToolPolicy(toolPolicy),
   });
   if (plan.printed) {
     if (ctx.globals.format !== "json") {
@@ -325,7 +426,32 @@ export async function handleDoctor(ctx: CliContext, argv: string[]): Promise<Com
       });
       checks.push(...agentChecks);
     }
+    if (apiKey) {
+      checks.push(await runAgentMiddlewareDoctorCheck(ctx, apiKey));
+    } else {
+      checks.push({
+        name: "agent_middleware_smoke",
+        ok: false,
+        message: "skipped (missing API key)",
+      });
+    }
   }
+
+  const completionChecks = await runCompletionCatalogDoctorChecks({
+    cwd: ctx.cwd,
+    gateway: apiKey
+      ? {
+          async getJson(path: string) {
+            const result = await withGateway(ctx, async (gateway) => {
+              const body = await gateway.getJson(path);
+              return { data: body };
+            });
+            return result.data as Record<string, unknown>;
+          },
+        }
+      : undefined,
+  });
+  checks.push(...completionChecks);
 
   const summary = checks.every((check) => check.ok) ? "pass" : "fail";
   return { data: { checks, summary } };

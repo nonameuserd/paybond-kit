@@ -4,31 +4,16 @@
 
 import { sign, getPublicKey } from "@noble/ed25519";
 import { createHash } from "blake3";
-import { parse as parseUuid } from "uuid";
 import { ensureEd25519Sha512Sync } from "./ed25519-sync.js";
 import { jsonValueDigest } from "./json-digest.js";
-
-function concatBytes(...parts: Uint8Array[]): Uint8Array {
-  const n = parts.reduce((a, p) => a + p.length, 0);
-  const out = new Uint8Array(n);
-  let o = 0;
-  for (const p of parts) {
-    out.set(p, o);
-    o += p.length;
-  }
-  return out;
-}
-
-function encodeU64(n: number): Uint8Array {
-  const b = new Uint8Array(8);
-  new DataView(b.buffer).setBigUint64(0, BigInt(n), true);
-  return b;
-}
-
-function encodeBincodeString(s: string): Uint8Array {
-  const utf8 = new TextEncoder().encode(s);
-  return concatBytes(encodeU64(utf8.length), utf8);
-}
+import {
+  concatBytes,
+  encodeBincodeString,
+  encodeBincodeUuid,
+  encodeFixed32,
+  encodeU8,
+  EVIDENCE_SIGN_VERSION,
+} from "./bincode-wire.js";
 
 /** BLAKE3 digest of concatenated artifact hashes (empty list matches Harbor / `paybond-evidence`). */
 export function artifactsDigest(artifactHashes32: Uint8Array[]): Uint8Array {
@@ -48,22 +33,13 @@ function encodeEvidenceSignV1(input: {
   artifactsDigest: Uint8Array;
   submittedAtRfc3339: string;
 }): Uint8Array {
-  const version = new Uint8Array([1]);
-  const intentBytes = parseUuid(input.intentId);
-  if (intentBytes.length !== 16) {
-    throw new Error("intentId must be a UUID string");
-  }
-  if (input.payloadDigest.length !== 32 || input.artifactsDigest.length !== 32) {
-    throw new Error("digest must be 32 bytes");
-  }
   return concatBytes(
-    version,
+    encodeU8(EVIDENCE_SIGN_VERSION),
     encodeBincodeString(input.tenantId),
-    encodeU64(16),
-    intentBytes,
+    encodeBincodeUuid(input.intentId),
     encodeBincodeString(input.payeeDid),
-    input.payloadDigest,
-    input.artifactsDigest,
+    encodeFixed32(input.payloadDigest),
+    encodeFixed32(input.artifactsDigest),
     encodeBincodeString(input.submittedAtRfc3339),
   );
 }

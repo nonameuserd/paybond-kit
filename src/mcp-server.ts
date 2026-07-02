@@ -6,7 +6,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { requireSecureGatewayUrl } from "./gateway-url.js";
 import { runCli } from "./cli/router.js";
+import { redactSensitiveFields } from "./cli/redact.js";
 import {
   MCP_TOOL_ALLOWLIST_ENV,
   MCP_TOOL_POLICY_ENV,
@@ -14,14 +16,34 @@ import {
   mergeMcpToolPolicy,
   parseMcpToolAllowlist,
   parseMcpToolPolicy,
+  resolveMcpToolPolicy,
   toolAllowedByPolicy,
 } from "./cli/mcp-policy.js";
 import {
-  GatewayAuthError,
+  MCP_EVIDENCE_POLICY_ENV,
+  McpEvidenceValidationGate,
+  completionEvidenceValidationOk,
+  extractHarborEvidenceValidationInput,
+  extractSandboxGuardrailValidationInput,
+  parseMcpEvidencePolicy,
+  type McpEvidencePolicy,
+} from "./mcp-evidence-policy.js";
+import {
+  McpCapabilityTokenCache,
+  mcpToolStoresCapabilityToken,
+  parseMcpCapabilityTokenCacheConfig,
+  type McpCapabilityTokenCacheConfig,
+} from "./mcp-capability-token-cache.js";
+import {
+  createMcpPolicyGatewayAdapter,
+  McpPolicyReloadGate,
+  parseMcpPolicyReloadConfig,
+  type McpPolicyReloadConfig,
+} from "./mcp-policy-reload.js";
+import {
+  DEFAULT_PAYBOND_GATEWAY_BASE_URL,
   GatewayFraudClient,
   GatewaySignalClient,
-  SignalHttpError,
-  DEFAULT_PAYBOND_GATEWAY_BASE_URL,
 } from "./index.js";
 
 declare const process: {
@@ -40,7 +62,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.10.0";
+const SERVER_VERSION = "0.11.0";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -187,6 +209,26 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
         "requested_spend_cents",
         "sandbox_lifecycle_status",
       ],
+    ),
+  },
+  paybond_validate_completion_evidence: {
+    title: "Validate Completion Evidence",
+    description:
+      "Pre-validates vendor and canonical completion evidence against catalog JSON Schemas and preset forbidden_evidence_fields. " +
+      "Required before evidence submit tools when PAYBOND_MCP_EVIDENCE_POLICY=strict. Harbor remains authoritative at submit time.",
+    annotations: readOnlyToolAnnotations("Validate Completion Evidence"),
+    outputSchema: outputObjectSchema(
+      {
+        preset_id: { type: "string" },
+        ok: { type: "boolean" },
+        vendor_schema_ok: { type: "boolean" },
+        canonical_schema_ok: { type: "boolean" },
+        quality_fields_missing: { type: "array", items: { type: "string" } },
+        forbidden_fields_present: { type: "array", items: { type: "string" } },
+        pack_stale: { type: "boolean" },
+        drift_kinds: { type: "array", items: { type: "string" } },
+      },
+      ["preset_id", "ok"],
     ),
   },
   paybond_submit_sandbox_guardrail_evidence: {
@@ -449,7 +491,18 @@ export type PaybondMCPSettings = {
   principalPath?: string;
   maxRetries?: number;
   toolPolicy?: McpToolPolicyConfig;
+  evidencePolicy?: McpEvidencePolicy;
+  policyReload?: McpPolicyReloadConfig | null;
+  capabilityTokenCache?: McpCapabilityTokenCacheConfig;
 };
+
+function readIntentAllowedTools(intent: Record<string, unknown>): string[] {
+  const raw = intent.allowed_tools;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
 
 function readEnvFileValue(envFile: string, key: string): string | undefined {
   let body: string;
@@ -652,8 +705,19 @@ class PaybondMCPRuntime {
   private principalValue: Promise<Record<string, unknown>> | null = null;
   private signalValue: Promise<GatewaySignalClient> | null = null;
   private fraudValue: Promise<GatewayFraudClient> | null = null;
+  private readonly capabilityTokenCache: McpCapabilityTokenCache;
+  private readonly evidenceGate: McpEvidenceValidationGate;
+  private readonly policyReloadConfig: McpPolicyReloadConfig | null;
+  private policyGatePromise: Promise<McpPolicyReloadGate | null> | null = null;
 
   constructor(settings: PaybondMCPSettings) {
+    this.evidenceGate = new McpEvidenceValidationGate(
+      settings.evidencePolicy ?? parseMcpEvidencePolicy(undefined),
+    );
+    this.capabilityTokenCache = new McpCapabilityTokenCache(
+      settings.capabilityTokenCache,
+    );
+    this.policyReloadConfig = settings.policyReload ?? null;
     this.settings = {
       gatewayBaseUrl:
         settings.gatewayBaseUrl ?? DEFAULT_PAYBOND_GATEWAY_BASE_URL,
@@ -666,6 +730,140 @@ class PaybondMCPRuntime {
       apiKey: this.settings.apiKey,
       maxRetries: this.settings.maxRetries,
     });
+  }
+
+  private async policyGate(): Promise<McpPolicyReloadGate | null> {
+    if (!this.policyReloadConfig) {
+      return null;
+    }
+    this.policyGatePromise ??= McpPolicyReloadGate.open(this.policyReloadConfig, {
+      gateway: createMcpPolicyGatewayAdapter(this.gateway),
+    });
+    return this.policyGatePromise;
+  }
+
+  async getPolicyReloadStatus(): Promise<Record<string, unknown> | null> {
+    const gate = await this.policyGate();
+    return gate?.status() ?? null;
+  }
+
+  async beginPolicyToolCall(): Promise<void> {
+    const gate = await this.policyGate();
+    gate?.beginToolCall();
+  }
+
+  async endPolicyToolCall(): Promise<void> {
+    const gate = await this.policyGate();
+    gate?.endToolCall();
+  }
+
+  stopPolicyReload(): void {
+    void this.policyGatePromise?.then((gate) => gate?.stop());
+    this.policyGatePromise = null;
+  }
+
+  async authorizeAgentSpend(init: {
+    intentId: string;
+    token: string;
+    operation: string;
+    requestedSpendCents?: number;
+    toolName?: string;
+  }): Promise<Record<string, unknown>> {
+    const gate = await this.policyGate();
+    let operation = init.operation;
+    let requestedSpendCents = init.requestedSpendCents ?? 0;
+    let policyDigest: string | undefined;
+
+    if (gate) {
+      const intent = await this.getIntent(init.intentId);
+      const allowedTools = readIntentAllowedTools(intent);
+      const gated = gate.assertSpendGate({
+        toolName: init.toolName,
+        operation,
+        allowedTools,
+        requestedSpendCents: init.requestedSpendCents,
+      });
+      operation = gated.operation;
+      requestedSpendCents = gated.requestedSpendCents;
+      policyDigest = gated.policyDigest;
+    }
+
+    const body = await this.verifyCapability({
+      intentId: init.intentId,
+      token: init.token,
+      operation,
+      requestedSpendCents,
+    });
+    if (policyDigest) {
+      body.policy_digest = policyDigest;
+    }
+    return body;
+  }
+
+  private storeCapabilityToken(intentId: string, token: string): void {
+    this.capabilityTokenCache.store(intentId, token);
+  }
+
+  async resolveCapabilityToken(intentId: string, token?: string): Promise<string> {
+    const explicit = token?.trim();
+    if (explicit) {
+      return explicit;
+    }
+    const stored = this.capabilityTokenCache.resolve(intentId.trim());
+    if (stored) {
+      return stored;
+    }
+    throw new Error(
+      `capability token unavailable or expired for intent ${intentId}; create or bootstrap a funded intent first`,
+    );
+  }
+
+  prepareToolResponse(
+    value: Record<string, unknown> | null,
+    toolName: string,
+  ): Record<string, unknown> | null {
+    if (value === null) {
+      return null;
+    }
+    const intentId = String(value.intent_id ?? "").trim();
+    const token = value.capability_token;
+    if (
+      mcpToolStoresCapabilityToken(toolName) &&
+      intentId &&
+      typeof token === "string" &&
+      token.trim()
+    ) {
+      this.storeCapabilityToken(intentId, token);
+    }
+    return redactSensitiveFields(value) as Record<string, unknown>;
+  }
+
+  validateCompletionEvidence(input: {
+    presetId: string;
+    vendorPayload?: Record<string, unknown>;
+    canonicalPayload?: Record<string, unknown>;
+    frozenVendorApiVersion?: string;
+    frozenVendorSchemaDigestHex?: string;
+    frozenCanonicalSchemaDigestHex?: string;
+  }): Record<string, unknown> {
+    const report = this.evidenceGate.validateAndRecord(input);
+    return {
+      ...report,
+      ok: completionEvidenceValidationOk(report),
+    };
+  }
+
+  private requireEvidenceValidation(input: {
+    presetId: string;
+    vendorPayload?: Record<string, unknown>;
+    canonicalPayload?: Record<string, unknown>;
+  }): void {
+    this.evidenceGate.requirePass(input);
+  }
+
+  /** Resolve and cache the gateway principal during MCP server startup. */
+  async preloadPrincipal(): Promise<void> {
+    await this.principal();
   }
 
   async principal(): Promise<Record<string, unknown>> {
@@ -838,8 +1036,14 @@ class PaybondMCPRuntime {
     operation?: string;
     requestedSpendCents?: number;
     metadata?: Record<string, unknown>;
+    completionPresetId?: string;
     idempotencyKey?: string;
   }): Promise<Record<string, unknown>> {
+    const extracted = extractSandboxGuardrailValidationInput({
+      payload: init.payload,
+      completionPresetId: init.completionPresetId,
+    });
+    this.requireEvidenceValidation(extracted);
     const expectedTenant = await this.tenantId();
     const payload: Record<string, unknown> = {};
     if (init.payload !== undefined) {
@@ -891,12 +1095,10 @@ class PaybondMCPRuntime {
     proof: Record<string, unknown>;
     expectedPurpose: string;
     expectedRequest: Record<string, unknown>;
-    expectedVerifier?: Record<string, unknown>;
   }): Promise<Record<string, unknown>> {
     const verifier = {
       tenant_id: await this.tenantId(),
       verifier_id: DEFAULT_RECOGNITION_VERIFIER_ID,
-      ...(init.expectedVerifier ?? {}),
     };
     return this.gateway.postJSON(
       "/protocol/v2/recognition/verify",
@@ -1022,8 +1224,14 @@ class PaybondMCPRuntime {
     intentId: string;
     body: Record<string, unknown>;
     recognitionProof: Record<string, unknown>;
+    completionPresetId?: string;
     idempotencyKey?: string;
   }): Promise<Record<string, unknown>> {
+    const extracted = extractHarborEvidenceValidationInput(
+      init.body,
+      init.completionPresetId,
+    );
+    this.requireEvidenceValidation(extracted);
     return this.gateway.postJSON(
       `/harbor/intents/${encodeURIComponent(init.intentId)}/evidence`,
       init.body,
@@ -1090,7 +1298,9 @@ export class PaybondMCPServer {
     if (!settings.apiKey.trim()) {
       throw new Error("PAYBOND_API_KEY is required");
     }
-    this.toolPolicy = settings.toolPolicy ?? { policy: null, allowlist: [] };
+    this.toolPolicy = resolveMcpToolPolicy(
+      settings.toolPolicy ?? { policy: null, allowlist: [] },
+    );
     this.runtime = new PaybondMCPRuntime(settings);
     this.tools = this.buildTools(settings).filter((tool) =>
       toolAllowedByPolicy(tool.name, tool.annotations, this.toolPolicy),
@@ -1128,15 +1338,25 @@ export class PaybondMCPServer {
         content: [
           {
             type: "text",
-            text: `Tool blocked by ${MCP_TOOL_POLICY_ENV}=${this.toolPolicy.policy ?? "unset"}: ${name}`,
+            text: `Tool blocked by ${MCP_TOOL_POLICY_ENV}=${this.toolPolicy.policy ?? "spend-write"}: ${name}`,
           },
         ],
         isError: true,
       };
     }
     try {
-      const value = await tool.call(args);
-      return toToolResult(value);
+      await this.runtime.beginPolicyToolCall();
+      try {
+        const value = await tool.call(args);
+        return toToolResult(
+          this.runtime.prepareToolResponse(
+            value === null ? null : (value as Record<string, unknown>),
+            name,
+          ),
+        );
+      } finally {
+        await this.runtime.endPolicyToolCall();
+      }
     } catch (err) {
       return {
         content: [{ type: "text", text: formatError(err) }],
@@ -1167,6 +1387,7 @@ export class PaybondMCPServer {
 
     switch (method) {
       case "initialize":
+        await this.runtime.preloadPrincipal();
         return {
           jsonrpc: "2.0",
           id: message.id,
@@ -1187,9 +1408,10 @@ export class PaybondMCPServer {
             },
             instructions:
               "This MCP server is tenant-bound to the configured Paybond service-account API key. " +
-              "Use paybond_create_spend_intent or paybond_fund_intent to obtain the intent_id and " +
-              "capability_token, then call paybond_authorize_agent_spend before side-effecting tools. " +
-              "It works with any MCP-compatible host and does not assume a specific model provider.",
+              "Use paybond_create_spend_intent or paybond_bootstrap_sandbox_guardrail to obtain a funded intent_id, " +
+              "then call paybond_authorize_agent_spend before side-effecting tools. Capability tokens are stored " +
+              "inside this MCP server and are not returned to agent logs. It works with any MCP-compatible host " +
+              "and does not assume a specific model provider.",
           },
         };
       case "ping":
@@ -1304,7 +1526,7 @@ export class PaybondMCPServer {
             token: {
               type: "string",
               description:
-                "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
+                "Optional capability token override. When omitted, the MCP server uses the token stored for intent_id.",
             },
             operation: {
               type: "string",
@@ -1316,18 +1538,24 @@ export class PaybondMCPServer {
                 "Optional requested spend in cents for this tool call.",
             },
           },
-          ["intent_id", "token", "operation"],
+          ["intent_id", "operation"],
         ),
-        call: async (args) =>
-          this.runtime.verifyCapability({
-            intentId: uuidArg(args.intent_id, "intent_id"),
-            token: stringArg(args.token, "token"),
+        call: async (args) => {
+          const intentId = uuidArg(args.intent_id, "intent_id");
+          return this.runtime.authorizeAgentSpend({
+            intentId,
+            token: await this.runtime.resolveCapabilityToken(
+              intentId,
+              optionalString(args.token),
+            ),
             operation: stringArg(args.operation, "operation"),
             requestedSpendCents:
               args.requested_spend_cents === undefined
-                ? 0
+                ? undefined
                 : intArg(args.requested_spend_cents, "requested_spend_cents"),
-          }),
+            toolName: stringArg(args.operation, "operation"),
+          });
+        },
       },
       {
         name: "paybond_authorize_agent_spend",
@@ -1342,7 +1570,7 @@ export class PaybondMCPServer {
             token: {
               type: "string",
               description:
-                "Capability token returned by paybond_create_spend_intent or paybond_fund_intent.",
+                "Optional capability token override. When omitted, the MCP server uses the token stored for intent_id.",
             },
             operation: {
               type: "string",
@@ -1354,18 +1582,24 @@ export class PaybondMCPServer {
                 "Optional requested spend in cents for this tool call.",
             },
           },
-          ["intent_id", "token", "operation"],
+          ["intent_id", "operation"],
         ),
-        call: async (args) =>
-          this.runtime.verifyCapability({
-            intentId: uuidArg(args.intent_id, "intent_id"),
-            token: stringArg(args.token, "token"),
+        call: async (args) => {
+          const intentId = uuidArg(args.intent_id, "intent_id");
+          return this.runtime.authorizeAgentSpend({
+            intentId,
+            token: await this.runtime.resolveCapabilityToken(
+              intentId,
+              optionalString(args.token),
+            ),
             operation: stringArg(args.operation, "operation"),
             requestedSpendCents:
               args.requested_spend_cents === undefined
-                ? 0
+                ? undefined
                 : intArg(args.requested_spend_cents, "requested_spend_cents"),
-          }),
+            toolName: stringArg(args.operation, "operation"),
+          });
+        },
       },
       {
         name: "paybond_bootstrap_sandbox_guardrail",
@@ -1413,6 +1647,37 @@ export class PaybondMCPServer {
           }),
       },
       {
+        name: "paybond_validate_completion_evidence",
+        description:
+          "Pre-validates completion evidence against the shared preset catalog. Call this before paybond_submit_*_evidence when PAYBOND_MCP_EVIDENCE_POLICY=strict.",
+        inputSchema: objectSchema(
+          {
+            preset_id: { type: "string" },
+            vendor_payload: { type: "object", additionalProperties: true },
+            canonical_payload: { type: "object", additionalProperties: true },
+            frozen_vendor_api_version: { type: "string" },
+            frozen_vendor_schema_digest_hex: { type: "string" },
+            frozen_canonical_schema_digest_hex: { type: "string" },
+          },
+          ["preset_id"],
+        ),
+        call: async (args) =>
+          this.runtime.validateCompletionEvidence({
+            presetId: stringArg(args.preset_id, "preset_id"),
+            vendorPayload:
+              args.vendor_payload === undefined
+                ? undefined
+                : ensureObject(args.vendor_payload, "vendor_payload"),
+            canonicalPayload:
+              args.canonical_payload === undefined
+                ? undefined
+                : ensureObject(args.canonical_payload, "canonical_payload"),
+            frozenVendorApiVersion: optionalString(args.frozen_vendor_api_version),
+            frozenVendorSchemaDigestHex: optionalString(args.frozen_vendor_schema_digest_hex),
+            frozenCanonicalSchemaDigestHex: optionalString(args.frozen_canonical_schema_digest_hex),
+          }),
+      },
+      {
         name: "paybond_submit_sandbox_guardrail_evidence",
         description:
           "Submit evidence for a sandbox-only Paybond guardrail intent. Tenant scope is derived from the configured service-account API key and simulator settlement remains sandbox-only.",
@@ -1435,6 +1700,7 @@ export class PaybondMCPServer {
                 "Optional sandbox spend amount override for the evidence record.",
             },
             metadata: { type: "object", additionalProperties: true },
+            completion_preset_id: { type: "string" },
             idempotency_key: { type: "string" },
           },
           ["intent_id"],
@@ -1459,6 +1725,7 @@ export class PaybondMCPServer {
               args.metadata === undefined
                 ? undefined
                 : ensureObject(args.metadata, "metadata"),
+            completionPresetId: optionalString(args.completion_preset_id),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1613,13 +1880,13 @@ export class PaybondMCPServer {
       {
         name: "paybond_verify_agent_recognition_proof_v1",
         description:
-          "Verify a replay-safe AgentRecognitionProofV1 against an expected purpose, verifier context, and request envelope.",
+          "Verify a replay-safe AgentRecognitionProofV1 against an expected purpose and request envelope. " +
+          "Verifier context (tenant_id, verifier_id) is derived from the authenticated MCP session only.",
         inputSchema: objectSchema(
           {
             proof: { type: "object", additionalProperties: true },
             expected_purpose: { type: "string" },
             expected_request: { type: "object", additionalProperties: true },
-            expected_verifier: { type: "object", additionalProperties: true },
           },
           ["proof", "expected_purpose", "expected_request"],
         ),
@@ -1634,10 +1901,6 @@ export class PaybondMCPServer {
               args.expected_request,
               "expected_request",
             ),
-            expectedVerifier:
-              args.expected_verifier === undefined
-                ? undefined
-                : ensureObject(args.expected_verifier, "expected_verifier"),
           }),
       },
       {
@@ -1774,6 +2037,7 @@ export class PaybondMCPServer {
             intent_id: { type: "string" },
             body: { type: "object", additionalProperties: true },
             recognition_proof: { type: "object", additionalProperties: true },
+            completion_preset_id: { type: "string" },
             idempotency_key: { type: "string" },
           },
           ["intent_id", "body", "recognition_proof"],
@@ -1786,6 +2050,7 @@ export class PaybondMCPServer {
               args.recognition_proof,
               "recognition_proof",
             ),
+            completionPresetId: optionalString(args.completion_preset_id),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1798,6 +2063,7 @@ export class PaybondMCPServer {
             intent_id: { type: "string" },
             body: { type: "object", additionalProperties: true },
             recognition_proof: { type: "object", additionalProperties: true },
+            completion_preset_id: { type: "string" },
             idempotency_key: { type: "string" },
           },
           ["intent_id", "body", "recognition_proof"],
@@ -1810,6 +2076,7 @@ export class PaybondMCPServer {
               args.recognition_proof,
               "recognition_proof",
             ),
+            completionPresetId: optionalString(args.completion_preset_id),
             idempotencyKey: optionalString(args.idempotency_key),
           }),
       },
@@ -1856,10 +2123,11 @@ export function settingsFromEnv(
     );
   }
   return {
-    gatewayBaseUrl:
+    gatewayBaseUrl: requireSecureGatewayUrl(
       optionalEnv(env.PAYBOND_GATEWAY_URL) ??
-      optionalEnv(env.PAYBOND_GATEWAY_BASE_URL) ??
-      DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+        optionalEnv(env.PAYBOND_GATEWAY_BASE_URL) ??
+        DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+    ),
     apiKey,
     principalPath:
       optionalEnv(env.PAYBOND_PRINCIPAL_PATH) ?? DEFAULT_PRINCIPAL_PATH,
@@ -1869,10 +2137,15 @@ export function settingsFromEnv(
           "PAYBOND_MCP_MAX_RETRIES",
         )
       : 3,
-    toolPolicy: mergeMcpToolPolicy(
-      parseMcpToolPolicy(optionalEnv(env[MCP_TOOL_POLICY_ENV])),
-      parseMcpToolAllowlist(optionalEnv(env[MCP_TOOL_ALLOWLIST_ENV])),
+    toolPolicy: resolveMcpToolPolicy(
+      mergeMcpToolPolicy(
+        parseMcpToolPolicy(optionalEnv(env[MCP_TOOL_POLICY_ENV])),
+        parseMcpToolAllowlist(optionalEnv(env[MCP_TOOL_ALLOWLIST_ENV])),
+      ),
     ),
+    evidencePolicy: parseMcpEvidencePolicy(optionalEnv(env[MCP_EVIDENCE_POLICY_ENV])),
+    policyReload: parseMcpPolicyReloadConfig(env),
+    capabilityTokenCache: parseMcpCapabilityTokenCacheConfig(env),
   };
 }
 
@@ -1900,7 +2173,7 @@ export function main(argv: string[] = process.argv.slice(2)): number {
 }
 
 function normalizeBase(url: string): string {
-  return url.trim().replace(/\/+$/, "");
+  return requireSecureGatewayUrl(url);
 }
 
 function parseJSONObject(
@@ -2107,12 +2380,7 @@ function optionalEnv(value: string | undefined): string | undefined {
 }
 
 function formatError(err: unknown): string {
-  if (
-    err instanceof Error ||
-    err instanceof GatewayAuthError ||
-    err instanceof GatewayHTTPError ||
-    err instanceof SignalHttpError
-  ) {
+  if (err instanceof Error) {
     return err.message;
   }
   return String(err);

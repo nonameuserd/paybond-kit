@@ -5,12 +5,30 @@ export const COMMAND_PATHS: string[] = [
   "examples",
   "completion",
   "login",
+  "init",
   "init guardrail",
+  "init completion",
+  "policy templates",
+  "policy preview",
+  "policy import-mcp-receipt",
+  "policy import-x402-receipt",
+  "policy validate-evidence",
+  "policy presets list",
+  "policy presets show",
+  "policy init",
+  "policy init-org",
+  "policy extend",
+  "policy validate-tools",
   "mcp serve",
   "mcp install",
   "mcp verify-config",
   "mcp tools",
   "doctor",
+  "dev",
+  "dev smoke",
+  "dev trace",
+  "dev loop",
+  "dev up",
   "version",
   "diagnose",
   "config get",
@@ -40,6 +58,20 @@ export const COMMAND_PATHS: string[] = [
   "mandates import",
   "a2a card",
   "a2a contracts",
+  "init agent-middleware",
+  "agent run bind",
+  "agent run status",
+  "agent run trace",
+  "agent run reload-policy",
+  "agent tool execute",
+  "agent tool validate",
+  "agent registry validate",
+  "agent sandbox smoke",
+  "agent demo vercel-ai smoke",
+  "agent demo langgraph smoke",
+  "agent demo generic smoke",
+  "agent demo claude-agents smoke",
+  "agent demo openai-agents smoke",
   "audit exports list",
   "audit exports get",
   "audit exports verify",
@@ -83,9 +115,66 @@ export const COMMAND_EXAMPLES: Record<string, string[]> = {
     "paybond login",
     "paybond login --no-open --format json"
   ],
+  "init": [
+    "paybond init",
+    "paybond init --solution travel --max-spend-usd 500 --framework langgraph --non-interactive"
+  ],
   "init guardrail": [
     "paybond init guardrail",
     "paybond init guardrail --framework openai --out guard.ts"
+  ],
+  "init completion": [
+    "paybond init completion --preset api_response_ok",
+    "paybond init completion --preset cost_and_completion --out paybond-completion.ts"
+  ],
+  "policy templates": [
+    "paybond policy templates",
+    "paybond policy templates --format json"
+  ],
+  "policy preview": [
+    "paybond policy preview --preset api_response_ok --evidence-file evidence.json",
+    "paybond policy preview --template api_response_v1 --parameters-file parameters.json --evidence-file evidence.json"
+  ],
+  "policy import-mcp-receipt": [
+    "paybond policy import-mcp-receipt --decision-file decision.json --outcome-file outcome.json",
+    "paybond policy import-mcp-receipt --decision-file decision.json --outcome-file outcome.json --write-evidence-file evidence.json"
+  ],
+  "policy import-x402-receipt": [
+    "paybond policy import-x402-receipt --receipt-file receipt.json",
+    "paybond policy import-x402-receipt --receipt-file receipt.json --write-evidence-file evidence.json"
+  ],
+  "policy validate-evidence": [
+    "paybond policy validate-evidence --preset stripe_charge --vendor-file vendor.json",
+    "paybond policy validate-evidence --preset ach_travel_booking --vendor-file booking.json --frozen-api-version 2024-10-28.acacia"
+  ],
+  "policy presets list": [
+    "paybond policy presets list",
+    "paybond policy presets list --format json"
+  ],
+  "policy presets show": [
+    "paybond policy presets show travel",
+    "paybond policy presets show --preset travel --max-spend 500",
+    "paybond policy presets show --domain travel --guardrails read-only,max-spend:500"
+  ],
+  "policy init": [
+    "paybond policy init --preset travel --out paybond.policy.yaml",
+    "paybond policy init --preset travel --max-spend 500 --out paybond.policy.yaml",
+    "paybond policy init --domain travel --guardrails read-only,max-spend:500 --out paybond.policy.yaml",
+    "paybond policy init --out paybond.policy.yaml",
+    "paybond policy init --operation travel.book_hotel --evidence-preset cost_and_completion"
+  ],
+  "policy init-org": [
+    "paybond policy init-org --policy-id acme-agent-spend-v1 --out org-agent-spend-v1.yaml",
+    "paybond policy init-org --policy-id acme-agent-spend-v1 --operation travel.book_hotel --max-spend-cents 20000"
+  ],
+  "policy extend": [
+    "paybond policy extend --extends org_acme_corp/acme-agent-spend-v1 --out paybond.policy.yaml",
+    "paybond policy extend --extends org_acme_corp/acme-agent-spend-v1 --operation acme.internal.approve_po --evidence-preset cost_and_completion"
+  ],
+  "policy validate-tools": [
+    "paybond policy validate-tools --file paybond.policy.yaml --local-only",
+    "paybond policy validate-tools --file paybond.policy.yaml --remote --format json",
+    "paybond policy validate-tools --file paybond.policy.yaml --remote --resolve-inheritance --format json"
   ],
   "mcp serve": [
     "paybond mcp serve"
@@ -104,6 +193,31 @@ export const COMMAND_EXAMPLES: Record<string, string[]> = {
   "doctor": [
     "paybond doctor",
     "paybond doctor --agent --format json"
+  ],
+  "dev": [
+    "paybond dev smoke --offline",
+    "paybond dev trace",
+    "paybond dev loop",
+    "paybond dev up"
+  ],
+  "dev smoke": [
+    "paybond dev smoke",
+    "paybond dev smoke --offline",
+    "paybond dev smoke --format json"
+  ],
+  "dev trace": [
+    "paybond dev trace",
+    "paybond dev trace --port 9477"
+  ],
+  "dev loop": [
+    "paybond dev loop",
+    "paybond dev loop --offline",
+    "paybond dev loop --format json"
+  ],
+  "dev up": [
+    "paybond dev up",
+    "paybond dev up --port 18089",
+    "paybond dev up --down"
   ],
   "version": [
     "paybond version",
@@ -195,6 +309,55 @@ export const COMMAND_EXAMPLES: Record<string, string[]> = {
   "a2a contracts": [
     "paybond a2a contracts"
   ],
+  "init agent-middleware": [
+    "paybond init agent-middleware",
+    "paybond init agent-middleware --framework claude-agents --out paybond-claude-agents.ts",
+    "paybond init agent-middleware --framework openai --out paybond-agent-middleware.ts"
+  ],
+  "agent run bind": [
+    "paybond agent run bind --policy-file paybond.policy.yaml --format json",
+    "paybond agent run bind --sandbox --operation travel.book_hotel --requested-spend-cents 20000 --completion-preset cost_and_completion --registry-file ./paybond.agent.registry.yaml --format json"
+  ],
+  "agent run status": [
+    "paybond agent run status --run-id run-123 --format json"
+  ],
+  "agent run trace": [
+    "paybond agent run trace --run-id run-123 --format json",
+    "paybond agent run trace --run-id run-123 --format table"
+  ],
+  "agent run reload-policy": [
+    "paybond agent run reload-policy --run-id run-123 --format json",
+    "paybond agent run reload-policy --run-id run-123 --policy-file ./paybond.policy.yaml --remote --format json"
+  ],
+  "agent tool execute": [
+    "paybond agent tool execute --run-id run-123 --operation travel.book_hotel --tool-call-id call-1 --arguments '{\"city\":\"Lisbon\",\"estimated_price_cents\":18700}' --result-body '{\"reservation\":{\"status\":\"confirmed\",\"price_cents\":18700}}' --format json"
+  ],
+  "agent tool validate": [
+    "paybond agent tool validate --run-id run-123 --operation travel.book_hotel --requested-spend-cents 18700 --format json"
+  ],
+  "agent registry validate": [
+    "paybond agent registry validate --file ./paybond.agent.registry.yaml --format json"
+  ],
+  "agent sandbox smoke": [
+    "paybond agent sandbox smoke --preset travel --result-body '{\"status\":\"completed\",\"cost_cents\":18700}' --format json",
+    "paybond agent sandbox smoke --policy-file paybond.policy.yaml --result-body '{\"status\":\"completed\",\"cost_cents\":18700}' --format json",
+    "paybond agent sandbox smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --result-body '{\"status\":\"ok\",\"cost_cents\":100}' --format json"
+  ],
+  "agent demo vercel-ai smoke": [
+    "paybond agent demo vercel-ai smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+  ],
+  "agent demo langgraph smoke": [
+    "paybond agent demo langgraph smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+  ],
+  "agent demo generic smoke": [
+    "paybond agent demo generic smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+  ],
+  "agent demo claude-agents smoke": [
+    "paybond agent demo claude-agents smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+  ],
+  "agent demo openai-agents smoke": [
+    "paybond agent demo openai-agents smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json"
+  ],
   "audit exports list": [
     "paybond audit exports list --format json"
   ],
@@ -219,6 +382,7 @@ export const COMPLETIONS: Record<string, string[]> = {
     "init",
     "mcp",
     "doctor",
+    "dev",
     "version",
     "diagnose",
     "config",
@@ -231,16 +395,26 @@ export const COMPLETIONS: Record<string, string[]> = {
     "receipts",
     "mandates",
     "a2a",
-    "audit"
+    "policy",
+    "audit",
+    "agent"
   ],
   "init": [
-    "guardrail"
+    "guardrail",
+    "completion",
+    "agent-middleware"
   ],
   "mcp": [
     "serve",
     "install",
     "verify-config",
     "tools"
+  ],
+  "dev": [
+    "smoke",
+    "trace",
+    "loop",
+    "up"
   ],
   "config": [
     "get",
@@ -286,6 +460,21 @@ export const COMPLETIONS: Record<string, string[]> = {
     "card",
     "contracts"
   ],
+  "policy": [
+    "init",
+    "validate-tools",
+    "templates",
+    "preview",
+    "import-mcp-receipt",
+    "import-x402-receipt",
+    "validate-evidence"
+  ],
+  "agent": [
+    "run",
+    "tool",
+    "registry",
+    "sandbox"
+  ],
   "audit": [
     "exports"
   ],
@@ -293,8 +482,73 @@ export const COMPLETIONS: Record<string, string[]> = {
     "bash",
     "zsh",
     "fish"
+  ],
+  "init completion preset": [
+    "api_response_ok",
+    "webhook_confirmed",
+    "artifact_attested",
+    "cost_and_completion",
+    "sandbox_permissive",
+    "stripe_charge",
+    "vendor_webhook_confirmed",
+    "stripe_webhook_payment",
+    "ach_paid_api_ok",
+    "ach_travel_booking",
+    "ach_vendor_webhook",
+    "x402_paid_api_ok",
+    "x402_delivery_receipt",
+    "x402_cost_and_completion"
+  ],
+  "policy preview preset": [
+    "api_response_ok",
+    "webhook_confirmed",
+    "artifact_attested",
+    "cost_and_completion",
+    "sandbox_permissive",
+    "stripe_charge",
+    "vendor_webhook_confirmed",
+    "stripe_webhook_payment",
+    "ach_paid_api_ok",
+    "ach_travel_booking",
+    "ach_vendor_webhook",
+    "x402_paid_api_ok",
+    "x402_delivery_receipt",
+    "x402_cost_and_completion"
+  ],
+  "guardrails bootstrap completion-preset": [
+    "api_response_ok",
+    "webhook_confirmed",
+    "artifact_attested",
+    "cost_and_completion",
+    "sandbox_permissive",
+    "stripe_charge",
+    "vendor_webhook_confirmed",
+    "stripe_webhook_payment",
+    "ach_paid_api_ok",
+    "ach_travel_booking",
+    "ach_vendor_webhook",
+    "x402_paid_api_ok",
+    "x402_delivery_receipt",
+    "x402_cost_and_completion"
   ]
 };
+
+export const COMPLETION_PRESET_IDS: string[] = [
+  "api_response_ok",
+  "webhook_confirmed",
+  "artifact_attested",
+  "cost_and_completion",
+  "sandbox_permissive",
+  "stripe_charge",
+  "vendor_webhook_confirmed",
+  "stripe_webhook_payment",
+  "ach_paid_api_ok",
+  "ach_travel_booking",
+  "ach_vendor_webhook",
+  "x402_paid_api_ok",
+  "x402_delivery_receipt",
+  "x402_cost_and_completion"
+];
 
 export const WORKFLOWS: Array<{
   title: string;
@@ -329,13 +583,41 @@ export const WORKFLOWS: Array<{
       "paybond guardrails bootstrap --operation paid-tool --requested-spend-cents 100"
     ],
     "next": "paybond spend authorize --help"
+  },
+  {
+    "title": "Policy-driven agent sandbox",
+    "description": "Validate and smoke-test agent middleware from a versioned paybond.policy.yaml file.",
+    "examples": [
+      "paybond policy init --out paybond.policy.yaml",
+      "paybond policy validate-tools --file paybond.policy.yaml",
+      "paybond agent sandbox smoke --policy-file paybond.policy.yaml --result-body '{\"status\":\"completed\",\"cost_cents\":18700}' --format json"
+    ],
+    "next": "paybond policy validate-tools --help"
+  },
+  {
+    "title": "Agent middleware sandbox",
+    "description": "Bind a sandbox run and execute a guarded tool with auto-evidence.",
+    "examples": [
+      "paybond agent sandbox smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --result-body '{\"status\":\"ok\",\"cost_cents\":100}' --format json"
+    ],
+    "next": "paybond agent run bind --help"
+  },
+  {
+    "title": "Completion preset",
+    "description": "Scaffold catalog-aligned completion evidence for Harbor release predicates.",
+    "examples": [
+      "paybond init completion --preset api_response_ok",
+      "paybond policy templates",
+      "paybond policy preview --preset api_response_ok --evidence-file evidence.json"
+    ],
+    "next": "paybond policy preview --help"
   }
 ];
 
 export const DOCS_BASE_URL = "https://docs.paybond.ai/kit";
 
 export const COMPLETION_SCRIPTS: Record<"bash" | "zsh" | "fish", string> = {
-  "bash": "# Generated by kit/cli-parity/generate.mjs — do not edit by hand.\n# # top_level: onboarding help examples completion login init mcp doctor version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a audit\n# init: guardrail\n# mcp: serve install verify-config tools\n# config: get set unset list\n# keys: list create rotate revoke\n# intents: list get create fund evidence settlement-confirm\n# guardrails: bootstrap evidence\n# spend: authorize\n# signal: reputation portfolio fraud\n# receipts: get verify\n# mandates: verify import\n# a2a: card contracts\n# audit: exports\n# completion: bash zsh fish\n_paybond_completion() {\n  local cur prev words cword\n  COMPREPLY=()\n  cur=\"${COMP_WORDS[COMP_CWORD]}\"\n  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n\n  if [[ $COMP_CWORD -eq 1 ]]; then\n    COMPREPLY=($(compgen -W \"onboarding help examples completion login init mcp doctor version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a audit\" -- \"$cur\"))\n    return 0\n  fi\n\n  case \"${COMP_WORDS[1]}\" in\n      init) COMPREPLY=($(compgen -W \"guardrail\" -- \"$cur\")) ;;\n      mcp) COMPREPLY=($(compgen -W \"serve install verify-config tools\" -- \"$cur\")) ;;\n      config) COMPREPLY=($(compgen -W \"get set unset list\" -- \"$cur\")) ;;\n      keys) COMPREPLY=($(compgen -W \"list create rotate revoke\" -- \"$cur\")) ;;\n      intents) COMPREPLY=($(compgen -W \"list get create fund evidence settlement-confirm\" -- \"$cur\")) ;;\n      guardrails) COMPREPLY=($(compgen -W \"bootstrap evidence\" -- \"$cur\")) ;;\n      spend) COMPREPLY=($(compgen -W \"authorize\" -- \"$cur\")) ;;\n      signal) COMPREPLY=($(compgen -W \"reputation portfolio fraud\" -- \"$cur\")) ;;\n      receipts) COMPREPLY=($(compgen -W \"get verify\" -- \"$cur\")) ;;\n      mandates) COMPREPLY=($(compgen -W \"verify import\" -- \"$cur\")) ;;\n      a2a) COMPREPLY=($(compgen -W \"card contracts\" -- \"$cur\")) ;;\n      audit) COMPREPLY=($(compgen -W \"exports\" -- \"$cur\")) ;;\n      completion) COMPREPLY=($(compgen -W \"bash zsh fish\" -- \"$cur\")) ;;\n    *) ;;\n  esac\n}\ncomplete -F _paybond_completion paybond\n",
-  "zsh": "#compdef paybond\n# Generated by kit/cli-parity/generate.mjs — do not edit by hand.\n# # top_level: onboarding help examples completion login init mcp doctor version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a audit\n# init: guardrail\n# mcp: serve install verify-config tools\n# config: get set unset list\n# keys: list create rotate revoke\n# intents: list get create fund evidence settlement-confirm\n# guardrails: bootstrap evidence\n# spend: authorize\n# signal: reputation portfolio fraud\n# receipts: get verify\n# mandates: verify import\n# a2a: card contracts\n# audit: exports\n# completion: bash zsh fish\n\n_paybond() {\n  local -a commands\n  commands=(\n    'onboarding' 'help' 'examples' 'completion' 'login' 'init' 'mcp' 'doctor' 'version' 'diagnose' 'config' 'whoami' 'keys' 'intents' 'guardrails' 'spend' 'signal' 'receipts' 'mandates' 'a2a' 'audit'\n  )\n  _arguments -C \\\n    '(--gateway)--gateway[Gateway base URL]:url:' \\\n    '(--env-file)--env-file[Local secrets file]:path:_files' \\\n    '(--format)--format[Output format]:(table json)' \\\n    '(--color)--color[Color mode]:(auto always never)' \\\n    '--no-color[Disable color output]' \\\n    '1: :->command' \\\n    '*::arg:->args'\n\n  case $state in\n    command)\n      _describe -t commands 'paybond commands' commands\n      ;;\n    args)\n      case $words[1] in\n    'init:subcommand:(guardrail)'\n    'mcp:subcommand:(serve install verify-config tools)'\n    'config:subcommand:(get set unset list)'\n    'keys:subcommand:(list create rotate revoke)'\n    'intents:subcommand:(list get create fund evidence settlement-confirm)'\n    'guardrails:subcommand:(bootstrap evidence)'\n    'spend:subcommand:(authorize)'\n    'signal:subcommand:(reputation portfolio fraud)'\n    'receipts:subcommand:(get verify)'\n    'mandates:subcommand:(verify import)'\n    'a2a:subcommand:(card contracts)'\n    'audit:subcommand:(exports)'\n    'completion:subcommand:(bash zsh fish)'\n      esac\n      ;;\n  esac\n}\n\ncompdef _paybond paybond\n",
-  "fish": "# Generated by kit/cli-parity/generate.mjs — do not edit by hand.\n# # top_level: onboarding help examples completion login init mcp doctor version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a audit\n# init: guardrail\n# mcp: serve install verify-config tools\n# config: get set unset list\n# keys: list create rotate revoke\n# intents: list get create fund evidence settlement-confirm\n# guardrails: bootstrap evidence\n# spend: authorize\n# signal: reputation portfolio fraud\n# receipts: get verify\n# mandates: verify import\n# a2a: card contracts\n# audit: exports\n# completion: bash zsh fish\ncomplete -c paybond -f\ncomplete -c paybond -l gateway -d 'Gateway base URL'\ncomplete -c paybond -l env-file -d 'Local secrets file' -r\ncomplete -c paybond -l format -d 'Output format' -xa 'table json'\ncomplete -c paybond -l color -d 'Color mode' -xa 'auto always never'\ncomplete -c paybond -l no-color -d 'Disable color output'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'onboarding'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'help'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'examples'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'completion'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'login'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'init'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'mcp'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'doctor'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'version'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'diagnose'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'config'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'whoami'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'keys'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'intents'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'guardrails'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'spend'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'signal'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'receipts'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'mandates'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'a2a'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'audit'\ncomplete -c paybond -n '__fish_seen_subcommand_from init' -a 'guardrail'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'serve'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'install'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'verify-config'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'tools'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'get'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'set'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'unset'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'list'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'list'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'create'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'rotate'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'revoke'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'list'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'get'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'create'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'fund'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'evidence'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'settlement-confirm'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails' -a 'bootstrap'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails' -a 'evidence'\ncomplete -c paybond -n '__fish_seen_subcommand_from spend' -a 'authorize'\ncomplete -c paybond -n '__fish_seen_subcommand_from signal' -a 'reputation'\ncomplete -c paybond -n '__fish_seen_subcommand_from signal' -a 'portfolio'\ncomplete -c paybond -n '__fish_seen_subcommand_from signal' -a 'fraud'\ncomplete -c paybond -n '__fish_seen_subcommand_from receipts' -a 'get'\ncomplete -c paybond -n '__fish_seen_subcommand_from receipts' -a 'verify'\ncomplete -c paybond -n '__fish_seen_subcommand_from mandates' -a 'verify'\ncomplete -c paybond -n '__fish_seen_subcommand_from mandates' -a 'import'\ncomplete -c paybond -n '__fish_seen_subcommand_from a2a' -a 'card'\ncomplete -c paybond -n '__fish_seen_subcommand_from a2a' -a 'contracts'\ncomplete -c paybond -n '__fish_seen_subcommand_from audit' -a 'exports'\ncomplete -c paybond -n '__fish_seen_subcommand_from completion' -a 'bash'\ncomplete -c paybond -n '__fish_seen_subcommand_from completion' -a 'zsh'\ncomplete -c paybond -n '__fish_seen_subcommand_from completion' -a 'fish'\n"
+  "bash": "# Generated by kit/cli-parity/generate.mjs — do not edit by hand.\n# # top_level: onboarding help examples completion login init mcp doctor dev version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a policy audit agent\n# init: guardrail completion agent-middleware\n# mcp: serve install verify-config tools\n# dev: smoke trace loop up\n# config: get set unset list\n# keys: list create rotate revoke\n# intents: list get create fund evidence settlement-confirm\n# guardrails: bootstrap evidence\n# spend: authorize\n# signal: reputation portfolio fraud\n# receipts: get verify\n# mandates: verify import\n# a2a: card contracts\n# policy: init validate-tools templates preview import-mcp-receipt import-x402-receipt validate-evidence\n# agent: run tool registry sandbox\n# audit: exports\n# completion: bash zsh fish\n# init completion preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n# policy preview preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n# guardrails bootstrap completion-preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n_paybond_completion() {\n  local cur prev words cword\n  COMPREPLY=()\n  cur=\"${COMP_WORDS[COMP_CWORD]}\"\n  prev=\"${COMP_WORDS[COMP_CWORD-1]}\"\n\n  if [[ $COMP_CWORD -eq 1 ]]; then\n    COMPREPLY=($(compgen -W \"onboarding help examples completion login init mcp doctor dev version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a policy audit agent\" -- \"$cur\"))\n    return 0\n  fi\n\n  case \"${COMP_WORDS[1]}\" in\n      init) COMPREPLY=($(compgen -W \"guardrail completion agent-middleware\" -- \"$cur\")) ;;\n      mcp) COMPREPLY=($(compgen -W \"serve install verify-config tools\" -- \"$cur\")) ;;\n      dev) COMPREPLY=($(compgen -W \"smoke trace loop up\" -- \"$cur\")) ;;\n      config) COMPREPLY=($(compgen -W \"get set unset list\" -- \"$cur\")) ;;\n      keys) COMPREPLY=($(compgen -W \"list create rotate revoke\" -- \"$cur\")) ;;\n      intents) COMPREPLY=($(compgen -W \"list get create fund evidence settlement-confirm\" -- \"$cur\")) ;;\n      guardrails) COMPREPLY=($(compgen -W \"bootstrap evidence\" -- \"$cur\")) ;;\n      spend) COMPREPLY=($(compgen -W \"authorize\" -- \"$cur\")) ;;\n      signal) COMPREPLY=($(compgen -W \"reputation portfolio fraud\" -- \"$cur\")) ;;\n      receipts) COMPREPLY=($(compgen -W \"get verify\" -- \"$cur\")) ;;\n      mandates) COMPREPLY=($(compgen -W \"verify import\" -- \"$cur\")) ;;\n      a2a) COMPREPLY=($(compgen -W \"card contracts\" -- \"$cur\")) ;;\n      policy) COMPREPLY=($(compgen -W \"init validate-tools templates preview import-mcp-receipt import-x402-receipt validate-evidence\" -- \"$cur\")) ;;\n      agent) COMPREPLY=($(compgen -W \"run tool registry sandbox\" -- \"$cur\")) ;;\n      audit) COMPREPLY=($(compgen -W \"exports\" -- \"$cur\")) ;;\n      completion) COMPREPLY=($(compgen -W \"bash zsh fish\" -- \"$cur\")) ;;\n      init completion preset) COMPREPLY=($(compgen -W \"api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\" -- \"$cur\")) ;;\n      policy preview preset) COMPREPLY=($(compgen -W \"api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\" -- \"$cur\")) ;;\n      guardrails bootstrap completion-preset) COMPREPLY=($(compgen -W \"api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\" -- \"$cur\")) ;;\n    *) ;;\n  esac\n}\ncomplete -F _paybond_completion paybond\n",
+  "zsh": "#compdef paybond\n# Generated by kit/cli-parity/generate.mjs — do not edit by hand.\n# # top_level: onboarding help examples completion login init mcp doctor dev version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a policy audit agent\n# init: guardrail completion agent-middleware\n# mcp: serve install verify-config tools\n# dev: smoke trace loop up\n# config: get set unset list\n# keys: list create rotate revoke\n# intents: list get create fund evidence settlement-confirm\n# guardrails: bootstrap evidence\n# spend: authorize\n# signal: reputation portfolio fraud\n# receipts: get verify\n# mandates: verify import\n# a2a: card contracts\n# policy: init validate-tools templates preview import-mcp-receipt import-x402-receipt validate-evidence\n# agent: run tool registry sandbox\n# audit: exports\n# completion: bash zsh fish\n# init completion preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n# policy preview preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n# guardrails bootstrap completion-preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n\n_paybond() {\n  local -a commands\n  commands=(\n    'onboarding' 'help' 'examples' 'completion' 'login' 'init' 'mcp' 'doctor' 'dev' 'version' 'diagnose' 'config' 'whoami' 'keys' 'intents' 'guardrails' 'spend' 'signal' 'receipts' 'mandates' 'a2a' 'policy' 'audit' 'agent'\n  )\n  _arguments -C \\\n    '(--gateway)--gateway[Gateway base URL]:url:' \\\n    '(--env-file)--env-file[Local secrets file]:path:_files' \\\n    '(--format)--format[Output format]:(table json)' \\\n    '(--color)--color[Color mode]:(auto always never)' \\\n    '--no-color[Disable color output]' \\\n    '1: :->command' \\\n    '*::arg:->args'\n\n  case $state in\n    command)\n      _describe -t commands 'paybond commands' commands\n      ;;\n    args)\n      case $words[1] in\n    'init:subcommand:(guardrail completion agent-middleware)'\n    'mcp:subcommand:(serve install verify-config tools)'\n    'dev:subcommand:(smoke trace loop up)'\n    'config:subcommand:(get set unset list)'\n    'keys:subcommand:(list create rotate revoke)'\n    'intents:subcommand:(list get create fund evidence settlement-confirm)'\n    'guardrails:subcommand:(bootstrap evidence)'\n    'spend:subcommand:(authorize)'\n    'signal:subcommand:(reputation portfolio fraud)'\n    'receipts:subcommand:(get verify)'\n    'mandates:subcommand:(verify import)'\n    'a2a:subcommand:(card contracts)'\n    'policy:subcommand:(init validate-tools templates preview import-mcp-receipt import-x402-receipt validate-evidence)'\n    'agent:subcommand:(run tool registry sandbox)'\n    'audit:subcommand:(exports)'\n    'completion:subcommand:(bash zsh fish)'\n    'init completion preset:subcommand:(api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion)'\n    'policy preview preset:subcommand:(api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion)'\n    'guardrails bootstrap completion-preset:subcommand:(api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion)'\n      esac\n      ;;\n  esac\n}\n\ncompdef _paybond paybond\n",
+  "fish": "# Generated by kit/cli-parity/generate.mjs — do not edit by hand.\n# # top_level: onboarding help examples completion login init mcp doctor dev version diagnose config whoami keys intents guardrails spend signal receipts mandates a2a policy audit agent\n# init: guardrail completion agent-middleware\n# mcp: serve install verify-config tools\n# dev: smoke trace loop up\n# config: get set unset list\n# keys: list create rotate revoke\n# intents: list get create fund evidence settlement-confirm\n# guardrails: bootstrap evidence\n# spend: authorize\n# signal: reputation portfolio fraud\n# receipts: get verify\n# mandates: verify import\n# a2a: card contracts\n# policy: init validate-tools templates preview import-mcp-receipt import-x402-receipt validate-evidence\n# agent: run tool registry sandbox\n# audit: exports\n# completion: bash zsh fish\n# init completion preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n# policy preview preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\n# guardrails bootstrap completion-preset: api_response_ok webhook_confirmed artifact_attested cost_and_completion sandbox_permissive stripe_charge vendor_webhook_confirmed stripe_webhook_payment ach_paid_api_ok ach_travel_booking ach_vendor_webhook x402_paid_api_ok x402_delivery_receipt x402_cost_and_completion\ncomplete -c paybond -f\ncomplete -c paybond -l gateway -d 'Gateway base URL'\ncomplete -c paybond -l env-file -d 'Local secrets file' -r\ncomplete -c paybond -l format -d 'Output format' -xa 'table json'\ncomplete -c paybond -l color -d 'Color mode' -xa 'auto always never'\ncomplete -c paybond -l no-color -d 'Disable color output'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'onboarding'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'help'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'examples'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'completion'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'login'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'init'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'mcp'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'doctor'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'dev'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'version'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'diagnose'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'config'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'whoami'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'keys'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'intents'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'guardrails'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'spend'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'signal'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'receipts'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'mandates'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'a2a'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'policy'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'audit'\ncomplete -c paybond -n '__fish_use_subcommand' -a 'agent'\ncomplete -c paybond -n '__fish_seen_subcommand_from init' -a 'guardrail'\ncomplete -c paybond -n '__fish_seen_subcommand_from init' -a 'completion'\ncomplete -c paybond -n '__fish_seen_subcommand_from init' -a 'agent-middleware'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'serve'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'install'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'verify-config'\ncomplete -c paybond -n '__fish_seen_subcommand_from mcp' -a 'tools'\ncomplete -c paybond -n '__fish_seen_subcommand_from dev' -a 'smoke'\ncomplete -c paybond -n '__fish_seen_subcommand_from dev' -a 'trace'\ncomplete -c paybond -n '__fish_seen_subcommand_from dev' -a 'loop'\ncomplete -c paybond -n '__fish_seen_subcommand_from dev' -a 'up'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'get'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'set'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'unset'\ncomplete -c paybond -n '__fish_seen_subcommand_from config' -a 'list'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'list'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'create'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'rotate'\ncomplete -c paybond -n '__fish_seen_subcommand_from keys' -a 'revoke'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'list'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'get'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'create'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'fund'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'evidence'\ncomplete -c paybond -n '__fish_seen_subcommand_from intents' -a 'settlement-confirm'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails' -a 'bootstrap'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails' -a 'evidence'\ncomplete -c paybond -n '__fish_seen_subcommand_from spend' -a 'authorize'\ncomplete -c paybond -n '__fish_seen_subcommand_from signal' -a 'reputation'\ncomplete -c paybond -n '__fish_seen_subcommand_from signal' -a 'portfolio'\ncomplete -c paybond -n '__fish_seen_subcommand_from signal' -a 'fraud'\ncomplete -c paybond -n '__fish_seen_subcommand_from receipts' -a 'get'\ncomplete -c paybond -n '__fish_seen_subcommand_from receipts' -a 'verify'\ncomplete -c paybond -n '__fish_seen_subcommand_from mandates' -a 'verify'\ncomplete -c paybond -n '__fish_seen_subcommand_from mandates' -a 'import'\ncomplete -c paybond -n '__fish_seen_subcommand_from a2a' -a 'card'\ncomplete -c paybond -n '__fish_seen_subcommand_from a2a' -a 'contracts'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy' -a 'init'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy' -a 'validate-tools'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy' -a 'templates'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy' -a 'preview'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy' -a 'import-mcp-receipt'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy' -a 'import-x402-receipt'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy' -a 'validate-evidence'\ncomplete -c paybond -n '__fish_seen_subcommand_from agent' -a 'run'\ncomplete -c paybond -n '__fish_seen_subcommand_from agent' -a 'tool'\ncomplete -c paybond -n '__fish_seen_subcommand_from agent' -a 'registry'\ncomplete -c paybond -n '__fish_seen_subcommand_from agent' -a 'sandbox'\ncomplete -c paybond -n '__fish_seen_subcommand_from audit' -a 'exports'\ncomplete -c paybond -n '__fish_seen_subcommand_from completion' -a 'bash'\ncomplete -c paybond -n '__fish_seen_subcommand_from completion' -a 'zsh'\ncomplete -c paybond -n '__fish_seen_subcommand_from completion' -a 'fish'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'api_response_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'webhook_confirmed'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'artifact_attested'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'cost_and_completion'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'sandbox_permissive'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'stripe_charge'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'vendor_webhook_confirmed'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'stripe_webhook_payment'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'ach_paid_api_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'ach_travel_booking'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'ach_vendor_webhook'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'x402_paid_api_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'x402_delivery_receipt'\ncomplete -c paybond -n '__fish_seen_subcommand_from init completion preset' -a 'x402_cost_and_completion'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'api_response_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'webhook_confirmed'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'artifact_attested'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'cost_and_completion'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'sandbox_permissive'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'stripe_charge'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'vendor_webhook_confirmed'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'stripe_webhook_payment'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'ach_paid_api_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'ach_travel_booking'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'ach_vendor_webhook'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'x402_paid_api_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'x402_delivery_receipt'\ncomplete -c paybond -n '__fish_seen_subcommand_from policy preview preset' -a 'x402_cost_and_completion'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'api_response_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'webhook_confirmed'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'artifact_attested'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'cost_and_completion'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'sandbox_permissive'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'stripe_charge'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'vendor_webhook_confirmed'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'stripe_webhook_payment'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'ach_paid_api_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'ach_travel_booking'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'ach_vendor_webhook'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'x402_paid_api_ok'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'x402_delivery_receipt'\ncomplete -c paybond -n '__fish_seen_subcommand_from guardrails bootstrap completion-preset' -a 'x402_cost_and_completion'\n"
 };

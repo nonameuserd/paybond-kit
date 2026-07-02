@@ -2,6 +2,7 @@ export type McpToolPolicy = "readonly" | "spend-write" | "allowlist";
 
 export const MCP_TOOL_POLICY_ENV = "PAYBOND_MCP_TOOL_POLICY";
 export const MCP_TOOL_ALLOWLIST_ENV = "PAYBOND_MCP_TOOL_ALLOWLIST";
+export const DEFAULT_MCP_TOOL_POLICY: McpToolPolicy = "spend-write";
 
 export const LIVE_MONEY_TOOL_NAMES = new Set([
   "paybond_fund_intent",
@@ -12,6 +13,17 @@ export type McpToolPolicyConfig = {
   policy: McpToolPolicy | null;
   allowlist: readonly string[];
 };
+
+export function defaultMcpToolPolicyConfig(): McpToolPolicyConfig {
+  return { policy: DEFAULT_MCP_TOOL_POLICY, allowlist: [] };
+}
+
+export function resolveMcpToolPolicy(config: McpToolPolicyConfig): McpToolPolicyConfig {
+  if (config.policy !== null) {
+    return config;
+  }
+  return defaultMcpToolPolicyConfig();
+}
 
 export type McpToolAnnotations = {
   readOnlyHint?: boolean;
@@ -58,14 +70,12 @@ export function mergeMcpToolPolicy(
 }
 
 export function mcpToolPolicyEnv(config: McpToolPolicyConfig): Record<string, string> {
-  if (config.policy === null) {
-    return {};
-  }
+  const resolved = resolveMcpToolPolicy(config);
   const env: Record<string, string> = {
-    [MCP_TOOL_POLICY_ENV]: config.policy,
+    [MCP_TOOL_POLICY_ENV]: resolved.policy ?? DEFAULT_MCP_TOOL_POLICY,
   };
-  if (config.policy === "allowlist") {
-    env[MCP_TOOL_ALLOWLIST_ENV] = config.allowlist.join(",");
+  if (resolved.policy === "allowlist") {
+    env[MCP_TOOL_ALLOWLIST_ENV] = resolved.allowlist.join(",");
   }
   return env;
 }
@@ -85,18 +95,16 @@ export function toolAllowedByPolicy(
   annotations: McpToolAnnotations | undefined,
   config: McpToolPolicyConfig,
 ): boolean {
-  if (config.policy === null) {
-    return true;
-  }
+  const resolved = resolveMcpToolPolicy(config);
   const { readOnly, destructive } = toolAnnotationsFlags(annotations);
-  if (config.policy === "readonly") {
+  if (resolved.policy === "readonly") {
     return readOnly;
   }
-  if (config.policy === "spend-write") {
+  if (resolved.policy === "spend-write") {
     return !isLiveMoneyTool(name, annotations);
   }
-  if (config.policy === "allowlist") {
-    return new Set(config.allowlist).has(name);
+  if (resolved.policy === "allowlist") {
+    return new Set(resolved.allowlist).has(name);
   }
   return true;
 }

@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.10.0",
+  "version": "0.11.0",
   "mcpName": "io.github.nonameuserd/paybond",
   "description": "Paybond Kit for TypeScript: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement.",
   "license": "Apache-2.0",
@@ -21,10 +21,42 @@
     "./mcp-server": {
       "types": "./dist/mcp-server.d.ts",
       "import": "./dist/mcp-server.js"
+    },
+    "./agent": {
+      "types": "./dist/agent/index.d.ts",
+      "import": "./dist/agent/index.js"
+    },
+    "./openai-agents": {
+      "types": "./dist/openai-agents/index.d.ts",
+      "import": "./dist/openai-agents/index.js"
+    },
+    "./vercel-ai": {
+      "types": "./dist/vercel-ai/index.d.ts",
+      "import": "./dist/vercel-ai/index.js"
+    },
+    "./langgraph": {
+      "types": "./dist/langgraph/index.d.ts",
+      "import": "./dist/langgraph/index.js"
+    },
+    "./claude-agents": {
+      "types": "./dist/claude-agents/index.d.ts",
+      "import": "./dist/claude-agents/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp/index.d.ts",
+      "import": "./dist/mcp/index.js"
+    },
+    "./policy": {
+      "types": "./dist/policy/index.d.ts",
+      "import": "./dist/policy/index.js"
     }
   },
   "files": [
     "dist",
+    "completion-presets",
+    "solutions",
+    "templates",
+    "dev",
     "README.md",
     "LICENSE"
   ],
@@ -77,21 +109,61 @@
   },
   "scripts": {
     "clean": "node ./scripts/clean-dist.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json",
+    "build": "npm run clean && tsc -p tsconfig.json && node ../scripts/sync-completion-catalog.mjs && node ../scripts/sync-dev-trace-ui.mjs && node ./scripts/generate-templates.mjs",
+    "cli": "node dist/cli.js",
+    "cli:dev": "npm run build --silent && node dist/cli.js",
     "generate:cli-contract": "node ../cli-parity/generate.mjs",
     "test": "vitest run",
     "pack:dry-run": "npm pack --dry-run",
     "verify:release": "node ./scripts/verify-release.mjs",
     "prepack": "npm run build"
   },
+  "peerDependencies": {
+    "@anthropic-ai/claude-agent-sdk": ">=0.2.100",
+    "@langchain/core": ">=0.3.0",
+    "@langchain/langgraph": ">=0.2.50",
+    "@openai/agents": ">=0.12.0",
+    "ai": ">=4.0.0",
+    "zod": "^3.25.32 || ^4.2.0"
+  },
+  "peerDependenciesMeta": {
+    "@anthropic-ai/claude-agent-sdk": {
+      "optional": true
+    },
+    "@langchain/core": {
+      "optional": true
+    },
+    "@langchain/langgraph": {
+      "optional": true
+    },
+    "@openai/agents": {
+      "optional": true
+    },
+    "ai": {
+      "optional": true
+    },
+    "zod": {
+      "optional": true
+    }
+  },
   "dependencies": {
     "@noble/ed25519": "^2.2.1",
+    "@noble/hashes": "^1.7.1",
+    "@noble/secp256k1": "^2.2.3",
     "blake3": "^2.1.7",
     "uuid": "^14.0.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.197",
+    "@langchain/core": "^1.2.1",
+    "@langchain/langgraph": "^1.4.7",
+    "@langchain/langgraph-sdk": "^1.9.25",
+    "@openai/agents": "^0.12.0",
     "@types/node": "^22.10.0",
+    "ai": "^7.0.4",
+    "ajv": "^8.17.1",
     "typescript": "^5.7.2",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "zod": "^4.4.3"
   }
 }

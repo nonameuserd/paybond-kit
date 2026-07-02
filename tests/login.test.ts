@@ -1,10 +1,31 @@
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
 import { assertGitIgnored, parseArgs, runLogin, writeEnvFile } from "../src/login.js";
+
+const TEST_TMP_ROOT = join(dirname(fileURLToPath(import.meta.url)), ".test-tmp");
+
+function gitIntegrationAvailable(): boolean {
+  try {
+    mkdirSync(TEST_TMP_ROOT, { recursive: true });
+    const cwd = mkdtempSync(join(TEST_TMP_ROOT, "git-probe-"));
+    execFileSync("git", ["init"], { cwd, stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const gitIt = gitIntegrationAvailable() ? it : it.skip;
+
+async function loginTestCwd(prefix: string): Promise<string> {
+  await mkdir(TEST_TMP_ROOT, { recursive: true });
+  return mkdtemp(join(TEST_TMP_ROOT, prefix));
+}
 
 const RAW_KEY =
   "paybond_sk_sandbox_0123456789abcdef0123456789abcdef_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -31,7 +52,7 @@ function outputCollector(): { writer: { write(chunk: string): boolean }; text: (
 
 describe("paybond login", () => {
   it("runs the device flow, writes a 0600 env file, and masks the key in output", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const cwd = await loginTestCwd("paybond-login-");
     const envPath = join(cwd, ".env.local");
     const stdout = outputCollector();
     const sleeps: number[] = [];
@@ -101,7 +122,7 @@ describe("paybond login", () => {
   });
 
   it("rejects a live key when sandbox was requested", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const cwd = await loginTestCwd("paybond-login-");
     const liveKey = "paybond_sk_live_fixture_not_a_real_secret";
     const fetchMock = vi
       .fn()
@@ -134,7 +155,7 @@ describe("paybond login", () => {
   });
 
   it("refuses to overwrite PAYBOND_API_KEY without force", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const cwd = await loginTestCwd("paybond-login-");
     const envPath = join(cwd, ".env.local");
     await writeFile(envPath, "PAYBOND_API_KEY=existing\nOTHER=value\n", "utf8");
     const fetchMock = vi.fn();
@@ -150,7 +171,7 @@ describe("paybond login", () => {
   });
 
   it("replaces PAYBOND_API_KEY when force is set", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+    const cwd = await loginTestCwd("paybond-login-");
     const envPath = join(cwd, ".env.local");
     await writeFile(envPath, "OTHER=value\nexport PAYBOND_API_KEY=existing\n", "utf8");
 
@@ -160,23 +181,23 @@ describe("paybond login", () => {
     expect((await stat(envPath)).mode & 0o777).toBe(0o600);
   });
 
-  it("refuses env files inside a git repo when they are not ignored", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+  gitIt("refuses env files inside a git repo when they are not ignored", async () => {
+    const cwd = await loginTestCwd("paybond-login-");
     execFileSync("git", ["init"], { cwd, stdio: "ignore" });
 
     await expect(assertGitIgnored(join(cwd, "paybond-login-secrets"), cwd)).rejects.toThrow(/not ignored by git/);
   });
 
-  it("allows env files inside a git repo when they are ignored", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+  gitIt("allows env files inside a git repo when they are ignored", async () => {
+    const cwd = await loginTestCwd("paybond-login-");
     execFileSync("git", ["init"], { cwd, stdio: "ignore" });
     await writeFile(join(cwd, ".gitignore"), "paybond-login-secrets\n", "utf8");
 
     await expect(assertGitIgnored(join(cwd, "paybond-login-secrets"), cwd)).resolves.toBeUndefined();
   });
 
-  it("adds the default env file to .gitignore during login", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-login-"));
+  gitIt("adds the default env file to .gitignore during login", async () => {
+    const cwd = await loginTestCwd("paybond-login-");
     execFileSync("git", ["init"], { cwd, stdio: "ignore" });
     const fetchMock = vi
       .fn()

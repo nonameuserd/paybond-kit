@@ -1,4 +1,7 @@
+.paybond/
 node_modules/
 dist/
 .npm-cache/
 *.tgz
+tests/.test-tmp/
+.tmp-paybond*/

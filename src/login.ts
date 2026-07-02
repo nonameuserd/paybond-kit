@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { runCli } from "./cli/router.js";
+import { requireSecureGatewayUrl } from "./gateway-url.js";
 
 declare const process: {
   argv: string[];
@@ -219,6 +220,11 @@ export function parseArgs(argv: string[]): LoginOptions | "help" {
   }
   if (!gateway.trim()) {
     throw new PaybondLoginError("invalid --gateway");
+  }
+  try {
+    gateway = requireSecureGatewayUrl(gateway);
+  } catch (err) {
+    throw new PaybondLoginError(err instanceof Error ? err.message : String(err));
   }
 
   return { envFile, gateway, environment, noOpen, force };

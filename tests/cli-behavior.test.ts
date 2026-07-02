@@ -83,6 +83,31 @@ describe("cli behavior parity", () => {
     expect(stderr.chunks.join("")).toMatch(/invalid --requested-spend-cents/);
   });
 
+  it("guardrails bootstrap JSON redacts capability_token", async () => {
+    vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
+    const fetchMock = vi.fn().mockResolvedValue(
+      jsonResponse({
+        tenant_id: "tenant-a",
+        intent_id: "intent-1",
+        capability_token: "cap-secret",
+        operation: "paid-tool",
+        requested_spend_cents: 100,
+        sandbox_lifecycle_status: "funded",
+      }),
+    );
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const code = await runCli(
+      ["--format", "json", "guardrails", "bootstrap", "--operation", "paid-tool", "--requested-spend-cents", "100"],
+      { fetch: fetchMock, stdout },
+    );
+    vi.unstubAllEnvs();
+    expect(code).toBe(0);
+    const output = stdout.chunks.join("");
+    const payload = JSON.parse(output);
+    expect(payload.data.capability_token).toBe("[redacted]");
+    expect(output).not.toContain("cap-secret");
+  });
+
   it("intents create JSON redacts capability_token", async () => {
     vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
     const cwd = await mkdtemp(join(tmpdir(), "paybond-intents-create-"));

@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { resolveConfigValue } from "./config.js";
 import { CLI_WARN_ENV_FALLBACK, formatWarning } from "./automation.js";
-import { DEFAULT_ENV_FILE, DEFAULT_GATEWAY } from "./globals.js";
+import { DEFAULT_ENV_FILE, DEFAULT_GATEWAY, validateCliGateway } from "./globals.js";
 import { CliError, type GlobalOptions } from "./types.js";
 
 function resolvePath(cwd: string, envFile: string): string {
@@ -78,7 +78,7 @@ export async function resolveApiKeyWithMeta(globals: GlobalOptions, cwd: string)
       warnings.push(formatWarning(CLI_WARN_ENV_FALLBACK, `using profile ${globals.profile} env_file`));
     }
     if (profileGateway) {
-      gateway = profileGateway;
+      gateway = validateCliGateway(profileGateway);
       warnings.push(formatWarning(CLI_WARN_ENV_FALLBACK, `using profile ${globals.profile} gateway`));
     }
   }
