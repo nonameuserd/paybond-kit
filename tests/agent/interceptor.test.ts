@@ -510,6 +510,7 @@ describe("PaybondToolInterceptor.wrapExecute", () => {
     const [, wire, options] = submitEvidence.mock.calls[0]!;
     expect(wire).toMatchObject({
       payload: { status: "completed", cost_cents: 100 },
+      artifacts: [],
       payee_did: "did:web:vendor.example",
     });
     expect(options.recognitionProof).toMatchObject({

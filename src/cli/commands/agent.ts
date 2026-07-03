@@ -7,6 +7,7 @@ import {
   PaybondToolRegistryValidationError,
   PaybondUnregisteredSideEffectingToolError,
 } from "../../agent/types.js";
+import { resolveCliGatewayErrorMessage } from "../http-error-message.js";
 import { runGenericSandboxDemo } from "../../agent/generic-sandbox-demo.js";
 import {
   loadRunClaudeAgentsSandboxDemo,
@@ -30,10 +31,18 @@ import {
 import {
   PaybondSpendApprovalRequiredError,
   PaybondSpendDeniedError,
+  signHarborEvidenceSubmitRecognitionProof,
+  signPayeeEvidenceBinding,
   type Paybond,
 } from "../../index.js";
 import { readJsonBody } from "../automation.js";
 import { formatAgentSandboxSmokeChecklist } from "../agent-sandbox-smoke-checklist.js";
+import { formatAgentProductionAttachSmokeChecklist } from "../agent-production-attach-smoke-checklist.js";
+import { formatAgentHarborEvidenceSmokeChecklist } from "../agent-harbor-evidence-smoke-checklist.js";
+import {
+  PAYBOND_ATTACH_INTENT_ID_ENV,
+  PAYBOND_CAPABILITY_TOKEN_ENV,
+} from "../../agent/attach-bundle.js";
 import {
   appendSmokeDeepLinkChecklistLines,
   buildAgentSandboxSmokeDeepLinks,
@@ -76,7 +85,7 @@ import {
 } from "../globals.js";
 import { CliError, type CommandResult } from "../types.js";
 
-declare const process: { stdin: NodeJS.ReadableStream };
+declare const process: { stdin: NodeJS.ReadableStream; env: Record<string, string | undefined> };
 
 function agentCliError(
   message: string,
@@ -370,6 +379,7 @@ export async function handleAgentRunBind(ctx: CliContext, argv: string[]): Promi
     let policySnapshot: ResolvedAgentPolicyBind["policySnapshot"] | undefined;
     let resolvedOperation = operationFlag.value?.trim() ?? "";
     let resolvedCompletionPreset = presetFlag.value?.trim();
+    let attachSmokeCompletionPreset: string | undefined;
 
     if (policyFlag.value) {
       try {
@@ -415,6 +425,12 @@ export async function handleAgentRunBind(ctx: CliContext, argv: string[]): Promi
       const preset = presetFlag.value?.trim() || "cost_and_completion";
       registry = buildSmokeRegistry(operationFlag.value, preset);
       defaultDeny = true;
+    } else if (operationFlag.value?.trim() && !registryFlag.value) {
+      const preset = presetFlag.value?.trim() || "cost_and_completion";
+      registry = buildSmokeRegistry(operationFlag.value.trim(), preset);
+      defaultDeny = true;
+      resolvedOperation = operationFlag.value.trim();
+      attachSmokeCompletionPreset = preset;
     } else {
       registry = createPaybondToolRegistry({ defaultDeny: false, sideEffecting: {} });
     }
@@ -519,7 +535,9 @@ export async function handleAgentRunBind(ctx: CliContext, argv: string[]): Promi
       sandbox_lifecycle_status: sandbox?.sandboxLifecycleStatus,
       requested_spend_cents: sandbox?.requestedSpendCents,
       completion_preset:
-        resolvedCompletionPreset || (!registryPath && !policyPath && !hasAttach ? "cost_and_completion" : undefined),
+        resolvedCompletionPreset ||
+        attachSmokeCompletionPreset ||
+        (!registryPath && !policyPath && !hasAttach ? "cost_and_completion" : undefined),
       registry_file: registryPath ?? policyPath,
       default_deny: defaultDeny,
       policy_digest: run.policyDigest,
@@ -533,7 +551,9 @@ export async function handleAgentRunBind(ctx: CliContext, argv: string[]): Promi
 
     registerGatewayAgentRun(session.paybond, run, {
       completionPreset:
-        resolvedCompletionPreset || (!registryPath && !policyPath && !hasAttach ? "cost_and_completion" : undefined),
+        resolvedCompletionPreset ||
+        attachSmokeCompletionPreset ||
+        (!registryPath && !policyPath && !hasAttach ? "cost_and_completion" : undefined),
     });
 
     if (writeEnvFlag.present) {
@@ -1025,6 +1045,230 @@ export async function handleAgentSandboxSmoke(ctx: CliContext, argv: string[]): 
   }
 }
 
+function nowRfc3339Seconds(): string {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+export async function handleAgentHarborEvidenceSmoke(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const intentFlag = consumeFlag(argv, "--intent-id");
+  const payeeDidFlag = consumeFlag(intentFlag.rest, "--payee-did");
+  const payeeSeedFlag = consumeFlag(payeeDidFlag.rest, "--payee-signing-seed-hex");
+  const recognitionKeyFlag = consumeFlag(payeeSeedFlag.rest, "--agent-recognition-key-id");
+  const recognitionSeedFlag = consumeFlag(recognitionKeyFlag.rest, "--agent-recognition-signing-seed-hex");
+  const idempotencyFlag = consumeFlag(recognitionSeedFlag.rest, "--idempotency-key");
+
+  const intentId =
+    intentFlag.value?.trim() ||
+    process.env[PAYBOND_ATTACH_INTENT_ID_ENV]?.trim() ||
+    process.env.PAYBOND_HARBOR_EVIDENCE_INTENT_ID?.trim();
+  if (!intentId) {
+    throw agentCliError(
+      "agent harbor evidence smoke requires --intent-id (or PAYBOND_ATTACH_INTENT_ID / PAYBOND_HARBOR_EVIDENCE_INTENT_ID)",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const resultParsed = await parseInlineJson(
+    idempotencyFlag.rest,
+    "--result-body",
+    "--result-file",
+  );
+  const payload = resultParsed.payload;
+  if (Object.keys(payload).length === 0) {
+    throw agentCliError(
+      "agent harbor evidence smoke requires --result-body or --result-file",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  return withPaybondAgentCli(ctx, true, async (session) => {
+    const productionEvidence = await resolveProductionEvidenceFromCli({
+      cwd: ctx.cwd,
+      envFile: ctx.globals.envFile,
+      payeeDid: payeeDidFlag.value,
+      payeeSigningSeedHex: payeeSeedFlag.value,
+      agentRecognitionKeyId: recognitionKeyFlag.value,
+      agentRecognitionSigningSeedHex: recognitionSeedFlag.value,
+    });
+    const tenantId = session.paybond.harbor.tenantId;
+    const submittedAtRfc3339 = nowRfc3339Seconds();
+    const wire = signPayeeEvidenceBinding({
+      tenantId,
+      intentId,
+      payeeDid: productionEvidence.payeeDid,
+      payload,
+      artifactsBlake3Hex: [],
+      submittedAtRfc3339,
+      payeeSigningSeed: productionEvidence.payeeSigningSeed,
+    });
+    const recognitionProof = signHarborEvidenceSubmitRecognitionProof({
+      tenantId,
+      intentId,
+      evidenceBody: wire,
+      keyId: productionEvidence.agentRecognitionKeyId,
+      signingSeed: productionEvidence.agentRecognitionSigningSeed,
+    });
+    const evidence = await session.paybond.harbor.submitEvidence(intentId, wire, {
+      idempotencyKey: idempotencyFlag.value?.trim(),
+      recognitionProof,
+    });
+    const evidenceRecord = evidence as Record<string, unknown>;
+    const checklistLines = formatAgentHarborEvidenceSmokeChecklist({
+      intentId,
+      evidence: evidenceRecord,
+      globals: ctx.globals,
+    });
+    return {
+      data: {
+        intent_id: intentId,
+        harbor_path: `/harbor/intents/${intentId}/evidence`,
+        evidence: evidenceRecord,
+        checklist_lines: checklistLines,
+      },
+      warnings: session.warnings,
+    };
+  });
+}
+
+export async function handleAgentProductionAttachSmoke(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const attachIntentFlag = consumeFlag(argv, "--attach-intent-id");
+  const capabilityFlag = consumeFlag(attachIntentFlag.rest, "--capability-token");
+  const operationFlag = consumeFlag(capabilityFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const policyFlag = consumeFlag(spendFlag.rest, "--policy-file");
+  const payeeDidFlag = consumeFlag(policyFlag.rest, "--payee-did");
+  const payeeSeedFlag = consumeFlag(payeeDidFlag.rest, "--payee-signing-seed-hex");
+  const recognitionKeyFlag = consumeFlag(payeeSeedFlag.rest, "--agent-recognition-key-id");
+  const recognitionSeedFlag = consumeFlag(recognitionKeyFlag.rest, "--agent-recognition-signing-seed-hex");
+
+  const attachIntentId =
+    attachIntentFlag.value?.trim() ||
+    process.env[PAYBOND_ATTACH_INTENT_ID_ENV]?.trim();
+  const capabilityToken =
+    capabilityFlag.value?.trim() ||
+    process.env[PAYBOND_CAPABILITY_TOKEN_ENV]?.trim();
+  if (!attachIntentId || !capabilityToken) {
+    throw agentCliError(
+      "agent production attach smoke requires --attach-intent-id and --capability-token (or PAYBOND_ATTACH_INTENT_ID and PAYBOND_CAPABILITY_TOKEN)",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const resolvedOperation = operationFlag.value?.trim();
+  if (!resolvedOperation) {
+    throw agentCliError(
+      "agent production attach smoke requires --operation",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const resultParsed = await parseInlineJson(
+    recognitionSeedFlag.rest,
+    "--result-body",
+    "--result-file",
+  );
+  const resultBody = resultParsed.payload;
+  if (Object.keys(resultBody).length === 0) {
+    throw agentCliError(
+      "agent production attach smoke requires --result-body or --result-file",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const bindArgv: string[] = [
+    "--production",
+    "--attach-intent-id",
+    attachIntentId,
+    "--capability-token",
+    capabilityToken,
+    "--operation",
+    resolvedOperation,
+  ];
+  if (spendFlag.value?.trim()) {
+    bindArgv.push("--requested-spend-cents", spendFlag.value.trim());
+  }
+  if (policyFlag.value?.trim()) {
+    bindArgv.push("--policy-file", policyFlag.value.trim());
+  }
+  if (payeeDidFlag.value?.trim()) {
+    bindArgv.push("--payee-did", payeeDidFlag.value.trim());
+  }
+  if (payeeSeedFlag.value?.trim()) {
+    bindArgv.push("--payee-signing-seed-hex", payeeSeedFlag.value.trim());
+  }
+  if (recognitionKeyFlag.value?.trim()) {
+    bindArgv.push("--agent-recognition-key-id", recognitionKeyFlag.value.trim());
+  }
+  if (recognitionSeedFlag.value?.trim()) {
+    bindArgv.push("--agent-recognition-signing-seed-hex", recognitionSeedFlag.value.trim());
+  }
+
+  const bindResult = await handleAgentRunBind(ctx, bindArgv);
+  const runId = String(bindResult.data.run_id ?? "");
+  const storedForExecute = await loadAgentRunContext(ctx.cwd, runId);
+  const executeArgv: string[] = [
+    "--production",
+    "--run-id",
+    runId,
+    "--operation",
+    resolvedOperation,
+    "--tool-call-id",
+    "prod-attach-smoke-1",
+    "--result-body",
+    JSON.stringify(resultBody),
+  ];
+  if (storedForExecute.requested_spend_cents != null) {
+    executeArgv.push(
+      "--requested-spend-cents",
+      String(storedForExecute.requested_spend_cents),
+    );
+  } else if (spendFlag.value?.trim()) {
+    executeArgv.push("--requested-spend-cents", spendFlag.value.trim());
+  }
+  if (payeeSeedFlag.value?.trim()) {
+    executeArgv.push("--payee-signing-seed-hex", payeeSeedFlag.value.trim());
+  }
+  if (recognitionSeedFlag.value?.trim()) {
+    executeArgv.push("--agent-recognition-signing-seed-hex", recognitionSeedFlag.value.trim());
+  }
+
+  try {
+    const executeResult = await handleAgentToolExecute(ctx, executeArgv);
+    const checklistLines = formatAgentProductionAttachSmokeChecklist({
+      bind: bindResult.data,
+      execute: executeResult.data,
+      globals: ctx.globals,
+    });
+    return {
+      data: {
+        bind: bindResult.data,
+        execute: executeResult.data,
+        checklist_lines: checklistLines,
+      },
+      warnings: bindResult.warnings,
+    };
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw new CliError(err.message, {
+        category: err.category,
+        code: err.code,
+        exitCode: err.exitCode,
+        details: {
+          ...(err.details ?? {}),
+          bind: bindResult.data,
+        },
+      });
+    }
+    throw err;
+  }
+}
+
 export async function handleAgentDemoVercelAiSmoke(
   ctx: CliContext,
   argv: string[],
@@ -1346,7 +1590,7 @@ function mapToolExecuteError(
     });
   }
   if (err instanceof PaybondAutoEvidenceSubmitError) {
-    return agentCliError(err.message, {
+    return agentCliError(resolveCliGatewayErrorMessage(err), {
       code: "cli.agent.evidence_failed",
       exitCode: 5,
       category: "gateway",
@@ -1400,6 +1644,24 @@ export async function handleAgent(
   }
   if (group === "sandbox" && subcommand === "smoke") {
     return handleAgentSandboxSmoke(ctx, argv);
+  }
+  if (group === "production" && subcommand === "attach") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent production attach requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentProductionAttachSmoke(ctx, argv.slice(1));
+  }
+  if (group === "harbor" && subcommand === "evidence") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent harbor evidence requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentHarborEvidenceSmoke(ctx, argv.slice(1));
   }
   if (group === "demo" && subcommand === "vercel-ai") {
     if (argv[0] !== "smoke") {

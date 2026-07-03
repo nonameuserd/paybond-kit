@@ -70,7 +70,7 @@ npx -p @paybond/kit paybond agent sandbox smoke \
   --format json
 ```
 
-With `--policy-file`, Kit sends `completion_preset` from the tool's `evidence_preset` and omits `evidence_schema` and `template_id` (Gateway rejects conflicting bootstrap fields). Requires `@paybond/kit` 0.11.6+.
+With `--policy-file`, Kit sends `completion_preset` from the tool's `evidence_preset` and omits `evidence_schema` and `template_id` (Gateway rejects conflicting bootstrap fields). Requires `@paybond/kit` 0.11.7+.
 
 `agent sandbox smoke` only requires `@paybond/kit`. Framework demo commands (`agent demo vercel-ai smoke`, etc.) load their optional peers on demand.
 

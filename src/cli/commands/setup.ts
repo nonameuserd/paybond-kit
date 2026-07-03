@@ -8,7 +8,8 @@ import { assertApiKeyShape, resolveApiKey, resolvedDefaultsForDoctor } from "../
 import { runAgentMiddlewareDoctorCheck } from "../doctor-agent-middleware.js";
 import { packageVersion, runAgentMcpChecks } from "../doctor-agent.js";
 import { runCompletionCatalogDoctorChecks } from "../../doctor-completion.js";
-import { consumeBooleanFlag, consumeFlag } from "../globals.js";
+import { consumeBooleanFlag, consumeFlag, parseCliArgv } from "../globals.js";
+import { helpForCommand } from "../help.js";
 import { maskApiKey, redactConfigValue, redactSensitiveFields } from "../redact.js";
 import {
   mergeMcpToolPolicy,
@@ -227,16 +228,58 @@ export async function handleInitCompletion(ctx: CliContext, argv: string[]): Pro
   };
 }
 
-export async function handleMcpServe(ctx: CliContext, argv: string[]): Promise<CommandResult> {
-  if (argv.length > 0 && argv[0] !== "--help" && argv[0] !== "-h") {
-    throw new CliError(`unexpected arguments: ${argv.join(" ")}`, { category: "usage", code: "cli.usage.unexpected_args" });
+export function mcpServeArgvMatches(argv: string[]): boolean {
+  try {
+    const { command } = parseCliArgv(argv);
+    return command.length >= 2 && command[0] === "mcp" && command[1] === "serve";
+  } catch {
+    return false;
   }
-  ctx.stderr.write("Starting Paybond MCP stdio server (stdout is reserved for MCP JSON-RPC).\n");
+}
+
+function isMcpServeHelpCommand(command: string[]): boolean {
+  return command.length === 0 || command.includes("--help") || command.includes("-h");
+}
+
+/** Run the blocking MCP stdio server. Must not run through the async CLI dispatcher. */
+export function runMcpServeCommandSync(
+  argv: string[],
+  writers: {
+    stdout: { write(chunk: string): boolean };
+    stderr: { write(chunk: string): boolean };
+  },
+): number {
+  let command: string[];
+  try {
+    ({ command } = parseCliArgv(argv));
+  } catch (err) {
+    const message = err instanceof CliError ? err.message : String(err);
+    writers.stderr.write(`${message}\n`);
+    return err instanceof CliError ? err.exitCode : 1;
+  }
+
+  if (isMcpServeHelpCommand(command)) {
+    const helpPath = command.filter((part) => part !== "--help" && part !== "-h").join(" ") || "mcp serve";
+    writers.stdout.write(`${helpForCommand(helpPath)}\n`);
+    return 0;
+  }
+
+  const rest = command.slice(2);
+  if (rest.length > 0 && rest[0] !== "--help" && rest[0] !== "-h") {
+    writers.stderr.write(`unexpected arguments: ${rest.join(" ")}\n`);
+    return 2;
+  }
+
+  writers.stderr.write("Starting Paybond MCP stdio server (stdout is reserved for MCP JSON-RPC).\n");
   const code = runMcpServerMain([]);
-  if (code !== 0) {
-    throw new CliError("mcp serve failed", { category: "internal", code: "cli.mcp.serve_failed", exitCode: code });
-  }
-  return { data: { started: true } };
+  return code;
+}
+
+export async function handleMcpServe(_ctx: CliContext, _argv: string[]): Promise<CommandResult> {
+  throw new CliError("mcp serve must run via the sync CLI entrypoint (not the async dispatcher)", {
+    category: "internal",
+    code: "cli.mcp.serve_async_forbidden",
+  });
 }
 
 export async function handleMcpTools(ctx: CliContext): Promise<CommandResult> {

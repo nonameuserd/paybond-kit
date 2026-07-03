@@ -4,11 +4,14 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { deprecatedAliasWarning } from "./cli/automation.js";
+import { mcpServeArgvMatches, runMcpServeCommandSync } from "./cli/commands/setup.js";
 import { runCli } from "./cli/router.js";
 
 declare const process: {
   argv: string[];
   exitCode?: number;
+  stdout: { write(chunk: string): boolean };
   stderr: { write(chunk: string): boolean };
 };
 
@@ -36,7 +39,19 @@ invokedFromCLI().then((invoked) => {
   if (!invoked) {
     return;
   }
-  runCli(process.argv.slice(2)).then((code) => {
+  const argv = process.argv.slice(2);
+  const aliasWarning = deprecatedAliasWarning(process.argv[1]);
+  if (aliasWarning) {
+    process.stderr.write(`${aliasWarning}\n`);
+  }
+  if (mcpServeArgvMatches(argv)) {
+    process.exitCode = runMcpServeCommandSync(argv, {
+      stdout: process.stdout,
+      stderr: process.stderr,
+    });
+    return;
+  }
+  runCli(argv).then((code) => {
     process.exitCode = code;
   }, (err) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);

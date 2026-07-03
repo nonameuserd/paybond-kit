@@ -3787,7 +3787,12 @@ export {
   type PublishedPolicyHead,
   type SettlementRail,
 } from "./principal-intent.js";
-export { artifactsDigest, signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
+export {
+  artifactsDigest,
+  evidenceSignBytesV1,
+  signPayeeEvidenceBinding,
+  type SignPayeeEvidenceParams,
+} from "./payee-evidence.js";
 export {
   AGENT_RECOGNITION_GATEWAY_VERIFIER_ID,
   AGENT_RECOGNITION_PROOF_KIND_V1,

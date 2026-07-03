@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { requireSecureGatewayUrl } from "./gateway-url.js";
-import { runCli } from "./cli/router.js";
+import { deprecatedAliasWarning } from "./cli/automation.js";
 import { redactSensitiveFields } from "./cli/redact.js";
 import {
   MCP_TOOL_ALLOWLIST_ENV,
@@ -62,7 +62,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.11.6";
+const SERVER_VERSION = "0.11.7";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -2420,15 +2420,11 @@ invokedFromCLI().then(
     if (!invoked) {
       return;
     }
-    runCli(["mcp", "serve", ...process.argv.slice(2)]).then(
-      (code) => {
-        process.exitCode = code;
-      },
-      (err) => {
-        process.stderr.write(`${formatError(err)}\n`);
-        process.exitCode = 1;
-      },
-    );
+    const aliasWarning = deprecatedAliasWarning(process.argv[1]);
+    if (aliasWarning) {
+      process.stderr.write(`${aliasWarning}\n`);
+    }
+    process.exitCode = main(process.argv.slice(2));
   },
   (err) => {
     process.stderr.write(`${formatError(err)}\n`);

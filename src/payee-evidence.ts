@@ -44,6 +44,26 @@ function encodeEvidenceSignV1(input: {
   );
 }
 
+/** Canonical EvidenceSignV1 signing bytes (matches `paybond-evidence` / gateway binwire). */
+export function evidenceSignBytesV1(input: {
+  tenantId: string;
+  intentId: string;
+  payeeDid: string;
+  payload: Record<string, unknown>;
+  artifactsBlake3Hex: string[];
+  submittedAtRfc3339: string;
+}): Uint8Array {
+  const artifactBin: Uint8Array[] = input.artifactsBlake3Hex.map((h) => hexToBytes(h));
+  return encodeEvidenceSignV1({
+    tenantId: input.tenantId,
+    intentId: input.intentId,
+    payeeDid: input.payeeDid,
+    payloadDigest: jsonValueDigest(input.payload),
+    artifactsDigest: artifactsDigest(artifactBin),
+    submittedAtRfc3339: input.submittedAtRfc3339,
+  });
+}
+
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);

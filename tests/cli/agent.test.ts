@@ -621,6 +621,120 @@ tools:
     expect(stored.sandbox).toBe(false);
   });
 
+  it("agent production attach smoke runs bind and execute via /harbor/*", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-prod-attach-smoke-"));
+    const fetch = createAgentGatewayFetch({ environment: "live" });
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "production",
+        "attach",
+        "smoke",
+        "--attach-intent-id",
+        ATTACH_INTENT_ID,
+        "--capability-token",
+        "cap-prod-1",
+        "--operation",
+        "paid-tool",
+        "--requested-spend-cents",
+        "100",
+        "--payee-did",
+        PRODUCTION_ATTACH_SEEDS.payeeDid,
+        "--payee-signing-seed-hex",
+        PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
+        "--agent-recognition-key-id",
+        PRODUCTION_ATTACH_SEEDS.agentRecognitionKeyId,
+        "--agent-recognition-signing-seed-hex",
+        PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
+        "--result-body",
+        '{"status":"ok","cost_cents":100}',
+      ],
+      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+    );
+    expect(code).toBe(0);
+    expect(payload.ok).toBe(true);
+    expect(payload.data.bind.intent_id).toBe(ATTACH_INTENT_ID);
+    expect(payload.data.execute.evidence.submitted).toBe(true);
+    expect(payload.data.execute.authorization.allow).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/harbor/intents/${ATTACH_INTENT_ID}/evidence`),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("rejects production attach smoke without attach credentials", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-prod-attach-missing-"));
+    const fetch = createAgentGatewayFetch({ environment: "live" });
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "production",
+        "attach",
+        "smoke",
+        "--operation",
+        "paid-tool",
+        "--result-body",
+        '{"status":"ok","cost_cents":100}',
+      ],
+      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+    );
+    expect(code).toBe(1);
+    expect(payload.error.code).toBe("cli.usage.missing_args");
+  });
+
+  it("agent harbor evidence smoke submits single /harbor/* evidence with recognition", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-harbor-evidence-smoke-"));
+    const fetch = createAgentGatewayFetch({ environment: "live" });
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "harbor",
+        "evidence",
+        "smoke",
+        "--intent-id",
+        ATTACH_INTENT_ID,
+        "--payee-did",
+        PRODUCTION_ATTACH_SEEDS.payeeDid,
+        "--payee-signing-seed-hex",
+        PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
+        "--agent-recognition-key-id",
+        PRODUCTION_ATTACH_SEEDS.agentRecognitionKeyId,
+        "--agent-recognition-signing-seed-hex",
+        PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
+        "--result-body",
+        '{"status":"ok","cost_cents":100}',
+      ],
+      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+    );
+    expect(code).toBe(0);
+    expect(payload.ok).toBe(true);
+    expect(payload.data.intent_id).toBe(ATTACH_INTENT_ID);
+    expect(payload.data.harbor_path).toBe(`/harbor/intents/${ATTACH_INTENT_ID}/evidence`);
+    expect(payload.data.evidence.predicatePassed).toBe(true);
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/harbor/intents/${ATTACH_INTENT_ID}/evidence`),
+      expect.objectContaining({ method: "POST" }),
+    );
+  });
+
+  it("rejects harbor evidence smoke without intent id", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-harbor-evidence-missing-"));
+    const fetch = createAgentGatewayFetch({ environment: "live" });
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "harbor",
+        "evidence",
+        "smoke",
+        "--result-body",
+        '{"status":"ok","cost_cents":100}',
+      ],
+      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+    );
+    expect(code).toBe(1);
+    expect(payload.error.code).toBe("cli.usage.missing_args");
+  });
+
   it("rejects live credentials without --production", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-live-"));
     const { code, payload } = await runAgentCli(

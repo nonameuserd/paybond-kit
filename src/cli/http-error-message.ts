@@ -114,3 +114,80 @@ export function formatSdkHttpErrorMessage(
   }
   return `${operation} HTTP ${statusCode}: ${summary.message}`;
 }
+
+type SdkHttpErrorLike = {
+  message: string;
+  statusCode: number;
+  bodyText: string;
+};
+
+function isSdkHttpErrorLike(err: unknown): err is SdkHttpErrorLike {
+  if (!err || typeof err !== "object") {
+    return false;
+  }
+  const candidate = err as SdkHttpErrorLike;
+  return (
+    typeof candidate.message === "string" &&
+    typeof candidate.statusCode === "number" &&
+    typeof candidate.bodyText === "string"
+  );
+}
+
+function parseEmbeddedHttpErrorBody(
+  message: string,
+): { statusCode: number; bodyText: string } | undefined {
+  const match = / HTTP (\d{3}):\s*(\{[\s\S]*\})\s*$/u.exec(message);
+  if (!match) {
+    return undefined;
+  }
+  return {
+    statusCode: Number(match[1]),
+    bodyText: match[2] ?? "",
+  };
+}
+
+function extractSdkHttpError(err: unknown): SdkHttpErrorLike | undefined {
+  const chain: unknown[] = [];
+  let current: unknown = err;
+  while (current) {
+    chain.push(current);
+    current =
+      current instanceof Error && "cause" in current
+        ? (current as Error & { cause?: unknown }).cause
+        : undefined;
+  }
+  for (const item of chain) {
+    if (isSdkHttpErrorLike(item)) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Resolve a CLI-safe gateway error message from SDK or agent middleware failures.
+ * Never echoes Cloudflare edge JSON, HTML, or raw upstream bodies.
+ */
+export function resolveCliGatewayErrorMessage(err: unknown): string {
+  const sdkError = extractSdkHttpError(err);
+  if (sdkError) {
+    return formatSdkHttpErrorMessage(
+      sdkError.message,
+      sdkError.statusCode,
+      sdkError.bodyText,
+    );
+  }
+  if (err instanceof Error) {
+    const embedded = parseEmbeddedHttpErrorBody(err.message);
+    if (embedded) {
+      const operation = err.message.replace(/ HTTP \d{3}:[\s\S]*$/u, "").trim() || "Gateway request";
+      return formatSdkHttpErrorMessage(
+        operation,
+        embedded.statusCode,
+        embedded.bodyText,
+      );
+    }
+    return err.message;
+  }
+  return String(err);
+}

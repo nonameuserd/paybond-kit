@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   formatSdkHttpErrorMessage,
+  resolveCliGatewayErrorMessage,
   summarizeGatewayHttpError,
 } from "../../src/cli/http-error-message.js";
+import { PaybondAutoEvidenceSubmitError } from "../../src/agent/types.js";
+import { HarborHttpError } from "../../src/index.js";
 
 const CLOUDFLARE_502 = JSON.stringify({
   type: "https://developers.cloudflare.com/support/troubleshooting/http-status-codes/cloudflare-5xx-errors/error-502/",
@@ -57,5 +60,29 @@ describe("formatSdkHttpErrorMessage", () => {
       "Gateway sandbox guardrail bootstrap: Gateway unavailable (HTTP 502): Bad gateway. Retry after 60 seconds.",
     );
     expect(message).not.toContain("cloudflare.com");
+  });
+});
+
+describe("resolveCliGatewayErrorMessage", () => {
+  it("redacts HarborHttpError causes on auto-evidence failures", () => {
+    const harbor = new HarborHttpError(`Gateway sandbox guardrail evidence HTTP 502: ${CLOUDFLARE_502}`, {
+      statusCode: 502,
+      url: "https://api.paybond.ai/v1/sandbox/guardrails/x/evidence",
+      bodyText: CLOUDFLARE_502,
+    });
+    const err = new PaybondAutoEvidenceSubmitError({ status: "completed" }, harbor);
+    const message = resolveCliGatewayErrorMessage(err);
+    expect(message).toBe(
+      "Gateway sandbox guardrail evidence: Gateway unavailable (HTTP 502): Bad gateway. Retry after 60 seconds.",
+    );
+    expect(message).not.toContain("cloudflare.com");
+  });
+
+  it("redacts legacy messages that embedded raw JSON bodies", () => {
+    const legacy = new Error(`Gateway sandbox guardrail evidence HTTP 502: ${CLOUDFLARE_502}`);
+    const message = resolveCliGatewayErrorMessage(legacy);
+    expect(message).toBe(
+      "Gateway sandbox guardrail evidence: Gateway unavailable (HTTP 502): Bad gateway. Retry after 60 seconds.",
+    );
   });
 });

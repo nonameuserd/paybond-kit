@@ -46,6 +46,20 @@ export function createAgentGatewayFetch(options: AgentGatewayMockOptions = {}) {
         allowed_tools: ["paid-tool"],
       });
     }
+    if (url.endsWith(`/harbor/intents/${ATTACH_INTENT_ID}/evidence`)) {
+      const recognitionHeader = init?.headers
+        ? new Headers(init.headers as HeadersInit).get("x-paybond-agent-recognition-proof")
+        : null;
+      if (!recognitionHeader) {
+        return jsonResponse({ error: "recognition_proof_required" }, 401);
+      }
+      return jsonResponse({
+        tenant_id: tenantId,
+        intent_id: ATTACH_INTENT_ID,
+        state: "completed",
+        predicate_passed: true,
+      });
+    }
     if (url.endsWith("/v1/sandbox/guardrails/bootstrap")) {
       return jsonResponse({
         tenant_id: "tenant-sandbox",
@@ -60,8 +74,8 @@ export function createAgentGatewayFetch(options: AgentGatewayMockOptions = {}) {
       if (!allowVerify) {
         return jsonResponse({
           allow: false,
-          tenant: "tenant-sandbox",
-          intent_id: AGENT_SMOKE_INTENT,
+          tenant: tenantId,
+          intent_id: environment === "live" ? ATTACH_INTENT_ID : AGENT_SMOKE_INTENT,
           audit_id: "audit-deny",
           decision_id: "decision-deny",
           message: options.denyMessage ?? "spend denied",
@@ -69,8 +83,8 @@ export function createAgentGatewayFetch(options: AgentGatewayMockOptions = {}) {
       }
       return jsonResponse({
         allow: true,
-        tenant: "tenant-sandbox",
-        intent_id: AGENT_SMOKE_INTENT,
+        tenant: tenantId,
+        intent_id: environment === "live" ? ATTACH_INTENT_ID : AGENT_SMOKE_INTENT,
         audit_id: "audit-1",
         decision_id: "decision-1",
       });

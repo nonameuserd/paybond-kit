@@ -371,7 +371,12 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
       for (const line of lines) {
         ctx.stdout.write(`${line}\n`);
       }
-    } else if (canonical === "agent sandbox smoke" && Array.isArray(result.data.checklist_lines)) {
+    } else if (
+      (canonical === "agent sandbox smoke" ||
+        canonical === "agent production attach smoke" ||
+        canonical === "agent harbor evidence smoke") &&
+      Array.isArray(result.data.checklist_lines)
+    ) {
       writeTableLines(ctx.stdout, result.data.checklist_lines as string[]);
       if (output.warnings.length) {
         for (const warning of output.warnings) {
