@@ -1,0 +1,8 @@
+tools:
+  saas.provision_seat:
+    max_spend_cents: 5000
+
+intent:
+  budget:
+    currency: usd
+    max_spend_usd: 50

@@ -14,6 +14,23 @@ npm install @paybond/kit
 
 `@paybond/kit` is an ESM-only package for modern Node.js runtimes. Use `import` from a Node ESM / `NodeNext` project or a compatible bundler.
 
+### Optional framework integrations
+
+The core package is enough for Harbor sessions, spend guards, policy files, and `paybond agent sandbox smoke`. Install optional peers only when you import a framework subpath:
+
+| Subpath | Peer dependency |
+| --- | --- |
+| `@paybond/kit/vercel-ai` | `ai` |
+| `@paybond/kit/openai-agents` | `@openai/agents` |
+| `@paybond/kit/langgraph` | `@langchain/core`, `@langchain/langgraph` |
+| `@paybond/kit/claude-agents` | `@anthropic-ai/claude-agent-sdk` |
+
+```bash
+npm install ai @openai/agents @langchain/core @langchain/langgraph @anthropic-ai/claude-agent-sdk
+```
+
+Thin npm wrappers (`@paybond/vercel-ai`, `@paybond/langgraph`, `@paybond/openai-agents`, `@paybond/claude-agents`, `@paybond/agent`, `@paybond/mcp`) re-export the same subpaths for discoverability.
+
 ## Open source
 
 `@paybond/kit` is distributed as open-source software under the Apache 2.0 license. The published npm package includes the full license text in `LICENSE`.
@@ -32,9 +49,42 @@ npx -p @paybond/kit paybond login
 
 `paybond login` writes a sandbox `PAYBOND_API_KEY` to `.env.local` with file mode `0600`, adds the default `.env.local` target to `.gitignore` when needed, and refuses to overwrite an existing key unless `--force` is passed. Custom env-file paths inside a git repo must already be ignored. Live production keys are created by tenant admins in Console and stored in deployment secret managers.
 
+## CLI
+
+The package ships the `paybond` CLI (`paybond`, `paybond-init`, `paybond-kit-login`, `paybond-mcp-server`).
+
+Scaffold a starter project from bundled templates:
+
+```bash
+npx -p @paybond/kit paybond init --template travel-agent
+npm install
+npm run smoke
+```
+
+End-to-end sandbox smoke (bind + execute + evidence) with no app code:
+
+```bash
+npx -p @paybond/kit paybond agent sandbox smoke \
+  --policy-file paybond.policy.yaml \
+  --operation travel.book_hotel \
+  --requested-spend-cents 18700 \
+  --evidence-preset cost_and_completion \
+  --result-body '{"status":"completed","cost_cents":18700}' \
+  --format json
+```
+
+`agent sandbox smoke` only requires `@paybond/kit`. Framework demo commands (`agent demo vercel-ai smoke`, etc.) load their optional peers on demand.
+
+Offline local dev loop and trace dashboard:
+
+```bash
+npx -p @paybond/kit paybond dev loop --offline
+npx -p @paybond/kit paybond dev trace
+```
+
 ## First guardrail scaffold
 
-Use this first when you have a paid tool and want Paybond guardrails in the sandbox:
+Use this when you have a paid tool and want Paybond guardrails in the sandbox:
 
 ```bash
 npx -p @paybond/kit paybond-init \
@@ -114,15 +164,6 @@ await paybond.guardrails.submitSandboxEvidence({
 
 The `paybond.harbor` and `paybond.guardrails` clients are created by `Paybond.open(...)` and bound to the tenant resolved from the service-account API key. Production integrations read `capability_token` from `paybond.intents.create(...)`, or from `paybond.intents.fund(...)` after an `x402_usdc_base` payment challenge is satisfied.
 
-Scaffold a guardrail integration:
-
-```bash
-npx -p @paybond/kit paybond-init \
-  --preset paid-tool-guard \
-  --framework provider-agnostic \
-  --out paybond-paid-tool-guard.ts
-```
-
 ## What the package includes
 
 Core SDK:
@@ -135,6 +176,12 @@ Core SDK:
 - Runtime-neutral and framework aliases: `paybondAgentToolSpendGuard`, `paybondRuntimeNeutralToolSpendGuard`, `paybondLangGraphToolSpendGuard`, and `paybondMCPToolSpendGuard`
 - `paybondRuntimeToolCallAdapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor
 
+Agent middleware (`@paybond/kit/agent`) and framework subpaths (`vercel-ai`, `openai-agents`, `langgraph`, `claude-agents`, `mcp`, `policy`):
+
+- `PaybondAgentRun`, tool registry, interceptor, and policy-file binding
+- Framework adapters with optional peer dependencies (see table above)
+- `paybond init`, `paybond agent run bind`, `paybond agent tool execute`, and `paybond agent sandbox smoke`
+
 Gateway and trust helpers:
 
 - `GatewaySignalClient` and `ServiceAccountSignalSession` for tenant-scoped Signal reads and signed portfolio artifacts
@@ -145,10 +192,6 @@ Gateway and trust helpers:
 - `paybond-init` for generating a Paybond guardrail integration helper
 
 Agent-facing surfaces are model-provider agnostic. Paybond verifies tool operations and tenant scope, not whether a tool call came from OpenAI, Anthropic, Gemini, a local model, or another runtime.
-
-Advanced exports:
-
-- Low-level signing helpers for callers that need to pre-build signed request bodies or evidence payloads
 
 `allowedTools` values are your own tool or operation names, not a Paybond-owned catalog. Harbor enforces string matching against whatever names you chose when creating the intent.
 
@@ -161,12 +204,13 @@ Gateway-backed protocol helpers throw `ProtocolHttpError` with parsed `errorCode
 ## What it does not include
 
 - No operator-tier settlement or console workflows
-- No model-provider-specific TypeScript agent wrapper; use the documented app-side wrapper pattern with `paybond.spendGuard(...)`
+- No bundled LLM or model runtime — bring your own agent framework and install optional peers when needed
 - No model-provider-specific MCP wrapper; the MCP server is host-agnostic and works with any MCP-compatible runtime
 
 ## Docs
 
 - Long-form docs: https://paybond.ai/docs/kit
+- Agent quickstart: https://paybond.ai/docs/kit/quickstart-agent
 - One-command guardrails: https://paybond.ai/docs/kit/one-command-guardrails
 - TypeScript quickstart: https://paybond.ai/docs/kit/quickstart-typescript
 - TypeScript SDK reference: https://paybond.ai/docs/kit/sdk-reference-typescript

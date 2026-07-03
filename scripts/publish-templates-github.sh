@@ -21,6 +21,60 @@ for (const t of m.templates) {
 }
 ")
 
+publish_existing_repo() {
+  local repo="$1"
+  local description="$2"
+  local dir="$3"
+  local workdir
+  workdir="$(mktemp -d)"
+
+  echo "    repo exists — syncing onto main"
+  git clone --depth 1 "git@github.com:$OWNER/$repo.git" "$workdir"
+  rsync -a --delete --exclude .git "$dir/" "$workdir/"
+  pushd "$workdir" >/dev/null
+  git add -A
+  if git diff --staged --quiet; then
+    echo "    no changes to publish"
+  else
+    git commit -m "$(cat <<EOF
+Sync Paybond starter template.
+
+${description}. Node 22 CI with package-lock.json and npm ci smoke workflow.
+EOF
+)"
+    git push origin main
+  fi
+  popd >/dev/null
+  rm -rf "$workdir"
+}
+
+publish_new_repo() {
+  local repo="$1"
+  local description="$2"
+  local dir="$3"
+  local workdir
+  workdir="$(mktemp -d)"
+
+  rsync -a --exclude .git "$dir/" "$workdir/"
+  pushd "$workdir" >/dev/null
+  git init -b main
+  git add -A
+  git commit -m "$(cat <<EOF
+Initial Paybond starter template.
+
+${description}. Clone, paybond login, and npm run smoke in under a minute.
+EOF
+)"
+  gh repo create "$OWNER/$repo" \
+    --public \
+    --description "$description — Paybond agent spend controls starter template." \
+    --source=. \
+    --remote=origin \
+    --push
+  popd >/dev/null
+  rm -rf "$workdir"
+}
+
 while IFS='|' read -r repo description; do
   dir="$TEMPLATES/$repo"
   if [[ ! -d "$dir" ]]; then
@@ -30,29 +84,12 @@ while IFS='|' read -r repo description; do
 
   echo "==> publishing $OWNER/$repo"
   cp "$LICENSE_SRC" "$dir/LICENSE"
-
-  pushd "$dir" >/dev/null
-  rm -rf .git
-  git init -b main
-  git add -A
-  git commit -m "$(cat <<EOF
-Initial Paybond starter template.
-
-${description}. Clone, paybond login, and npm run smoke in under a minute.
-EOF
-)"
+  rm -rf "$dir/.git"
 
   if gh repo view "$OWNER/$repo" >/dev/null 2>&1; then
-    echo "    repo exists — pushing updates to main"
-    git remote add origin "git@github.com:$OWNER/$repo.git" 2>/dev/null || git remote set-url origin "git@github.com:$OWNER/$repo.git"
-    git push -u origin main
+    publish_existing_repo "$repo" "$description" "$dir"
   else
-    gh repo create "$OWNER/$repo" \
-      --public \
-      --description "$description — Paybond agent spend controls starter template." \
-      --source=. \
-      --remote=origin \
-      --push
+    publish_new_repo "$repo" "$description" "$dir"
   fi
 
   gh api "repos/$OWNER/$repo" -X PATCH -f is_template=true >/dev/null
@@ -61,7 +98,6 @@ EOF
     --add-topic agents \
     --add-topic agent-spend-controls 2>/dev/null || true
 
-  popd >/dev/null
   echo "    https://github.com/$OWNER/$repo"
 done <<< "$repos"
 

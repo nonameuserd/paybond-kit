@@ -7,11 +7,13 @@ import {
   PaybondToolRegistryValidationError,
   PaybondUnregisteredSideEffectingToolError,
 } from "../../agent/index.js";
-import { runVercelAiSandboxDemo } from "../../vercel-ai/sandbox-demo.js";
-import { runLangGraphSandboxDemo } from "../../langgraph/sandbox-demo.js";
 import { runGenericSandboxDemo } from "../../agent/generic-sandbox-demo.js";
-import { runClaudeAgentsSandboxDemo } from "../../claude-agents/sandbox-demo.js";
-import { runOpenAIAgentsSandboxDemo } from "../../openai-agents/sandbox-demo.js";
+import {
+  loadRunClaudeAgentsSandboxDemo,
+  loadRunLangGraphSandboxDemo,
+  loadRunOpenAIAgentsSandboxDemo,
+  loadRunVercelAiSandboxDemo,
+} from "../agent/demo-loaders.js";
 import {
   buildSmokeRegistry,
   loadAgentRegistryFile,
@@ -1030,6 +1032,7 @@ export async function handleAgentDemoVercelAiSmoke(
   );
 
   return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const runVercelAiSandboxDemo = await loadRunVercelAiSandboxDemo();
     const demo = await runVercelAiSandboxDemo({
       paybond: session.paybond,
       operation: operationFlag.value,
@@ -1090,6 +1093,7 @@ export async function handleAgentDemoLanggraphSmoke(
   );
 
   return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const runLangGraphSandboxDemo = await loadRunLangGraphSandboxDemo();
     const demo = await runLangGraphSandboxDemo({
       paybond: session.paybond,
       operation: operationFlag.value,
@@ -1210,6 +1214,7 @@ export async function handleAgentDemoClaudeAgentsSmoke(
   );
 
   return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const runClaudeAgentsSandboxDemo = await loadRunClaudeAgentsSandboxDemo();
     const demo = await runClaudeAgentsSandboxDemo({
       paybond: session.paybond,
       operation: operationFlag.value,
@@ -1261,6 +1266,7 @@ export async function handleAgentDemoOpenAIAgentsSmoke(
   );
 
   return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const runOpenAIAgentsSandboxDemo = await loadRunOpenAIAgentsSandboxDemo();
     const demo = await runOpenAIAgentsSandboxDemo({
       paybond: session.paybond,
       operation: operationFlag.value,

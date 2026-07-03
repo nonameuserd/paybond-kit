@@ -3,7 +3,9 @@
  * Generates cloneable starter repos under kit/ts/templates/<repo>/ from manifest.json.
  * Run from repository root: node kit/ts/scripts/generate-templates.mjs
  */
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdirSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +15,12 @@ const TEMPLATES_DIR = join(KIT_TS_DIR, "templates");
 const REPO_ROOT = join(KIT_TS_DIR, "../..");
 const ROOT_TEMPLATES = join(REPO_ROOT, "templates");
 const POLICY_PRESETS = join(REPO_ROOT, "kit/policy/presets");
+const KIT_PACK_DIR = join(KIT_TS_DIR, ".template-pack");
+
+const kitPackageJson = JSON.parse(
+  await readFile(join(KIT_TS_DIR, "package.json"), "utf8"),
+);
+const KIT_VERSION = kitPackageJson.version;
 
 const manifest = JSON.parse(await readFile(join(TEMPLATES_DIR, "manifest.json"), "utf8"));
 
@@ -28,6 +36,9 @@ __pycache__/
 const ENV_EXAMPLE = `# Copy to .env.local after paybond login
 PAYBOND_API_KEY=
 PAYBOND_GATEWAY_URL=https://api.paybond.ai
+`;
+
+const NPMRC = `legacy-peer-deps=true
 `;
 
 const TS_CONFIG = `{
@@ -161,7 +172,7 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - run: npm install
+      - run: npm ci
       - run: ${smokeCommand}
         env:
           PAYBOND_API_KEY: \${{ secrets.PAYBOND_SANDBOX_API_KEY }}
@@ -482,6 +493,98 @@ Local \`paybond.policy.yaml\` is yours to edit. Bundled preset: **${entry.preset
 `;
 }
 
+function isKitVersionOnRegistry(version) {
+  try {
+    execSync(`npm view @paybond/kit@${version} version`, { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function packLocalKitTarball() {
+  mkdirSync(KIT_PACK_DIR, { recursive: true });
+  const output = execSync(
+    `npm pack --pack-destination "${KIT_PACK_DIR}" --silent --ignore-scripts`,
+    {
+      cwd: KIT_TS_DIR,
+      encoding: "utf8",
+    },
+  );
+  const tarballName = output
+    .trim()
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (!tarballName) {
+    throw new Error("npm pack did not return a tarball name");
+  }
+  return join(KIT_PACK_DIR, tarballName);
+}
+
+async function rewriteKitLockToRegistry(lockPath, kitVersion) {
+  const lock = JSON.parse(await readFile(lockPath, "utf8"));
+  const kitRange = `^${kitVersion}`;
+  const registryResolved = `https://registry.npmjs.org/@paybond/kit/-/kit-${kitVersion}.tgz`;
+
+  if (lock.packages?.[""]?.dependencies?.["@paybond/kit"]) {
+    lock.packages[""].dependencies["@paybond/kit"] = kitRange;
+  }
+
+  for (const [key, entry] of Object.entries(lock.packages ?? {})) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+    if (key === "node_modules/@paybond/kit" || entry.name === "@paybond/kit") {
+      entry.version = kitVersion;
+      entry.resolved = registryResolved;
+      delete entry.link;
+    }
+  }
+
+  await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+}
+
+async function refreshTemplatePackageLock(dir, consumerPackageJson) {
+  await writeFile(
+    join(dir, "package.json"),
+    `${JSON.stringify(consumerPackageJson, null, 2)}\n`,
+  );
+
+  const kitDependency = consumerPackageJson.dependencies?.["@paybond/kit"];
+  if (!kitDependency || isKitVersionOnRegistry(KIT_VERSION)) {
+    execSync("npm install --package-lock-only", { cwd: dir, stdio: "inherit" });
+    return;
+  }
+
+  let tarballPath;
+  try {
+    tarballPath = packLocalKitTarball();
+    const lockPackageJson = {
+      ...consumerPackageJson,
+      dependencies: {
+        ...consumerPackageJson.dependencies,
+        "@paybond/kit": `file:${tarballPath}`,
+      },
+    };
+    await writeFile(
+      join(dir, "package.json"),
+      `${JSON.stringify(lockPackageJson, null, 2)}\n`,
+    );
+    execSync("npm install --package-lock-only", { cwd: dir, stdio: "inherit" });
+    await writeFile(
+      join(dir, "package.json"),
+      `${JSON.stringify(consumerPackageJson, null, 2)}\n`,
+    );
+    await rewriteKitLockToRegistry(join(dir, "package-lock.json"), KIT_VERSION);
+  } finally {
+    if (tarballPath) {
+      await unlink(tarballPath).catch(() => {});
+    }
+  }
+}
+
 async function writeTemplate(entry) {
   const dir = join(TEMPLATES_DIR, entry.repo);
   await rm(dir, { recursive: true, force: true });
@@ -518,30 +621,25 @@ async function writeTemplate(entry) {
   await writeFile(join(dir, "tsconfig.json"), TS_CONFIG);
   await writeFile(join(dir, "src/paybond.config.ts"), PAYBOND_CONFIG_TS);
   await writeFile(join(dir, "src/index.ts"), tsIndexDemo(entry));
-  await writeFile(
-    join(dir, "package.json"),
-    `${JSON.stringify(
-      {
-        name: entry.repo,
-        private: false,
-        type: "module",
-        scripts: {
-          build: "tsc -p tsconfig.json",
-          start: "node dist/index.js",
-          smoke,
-        },
-        dependencies: entry.dependencies,
-        devDependencies: {
-          "@types/node": "^22.10.1",
-          typescript: "^5.7.2",
-        },
-        engines: { node: ">=22" },
-      },
-      null,
-      2,
-    )}\n`,
-  );
+  const consumerPackageJson = {
+    name: entry.repo,
+    private: false,
+    type: "module",
+    scripts: {
+      build: "tsc -p tsconfig.json",
+      start: "node dist/index.js",
+      smoke,
+    },
+    dependencies: entry.dependencies,
+    devDependencies: {
+      "@types/node": "^22.10.1",
+      typescript: "^5.7.2",
+    },
+    engines: { node: ">=22" },
+  };
   await writeFile(join(dir, ".github/workflows/smoke.yml"), CI_WORKFLOW("npm run smoke"));
+  await writeFile(join(dir, ".npmrc"), NPMRC);
+  await refreshTemplatePackageLock(dir, consumerPackageJson);
 }
 
 for (const entry of manifest.templates) {
@@ -578,10 +676,13 @@ Regenerate from manifest: \`node kit/ts/scripts/generate-templates.mjs\`
 `,
 );
 
+const excludeGitMetadata = (src) =>
+  !src.endsWith("/.git") && !src.includes("/.git/");
+
 for (const entry of manifest.templates) {
   await cp(join(TEMPLATES_DIR, entry.repo), join(ROOT_TEMPLATES, entry.repo), {
     recursive: true,
-    filter: (src) => !src.includes("/.git"),
+    filter: excludeGitMetadata,
   });
 }
 
@@ -594,7 +695,7 @@ await cp(join(TEMPLATES_DIR, "manifest.json"), join(PYTHON_TEMPLATES, "manifest.
 for (const entry of manifest.templates) {
   await cp(join(TEMPLATES_DIR, entry.repo), join(PYTHON_TEMPLATES, entry.repo), {
     recursive: true,
-    filter: (src) => !src.includes(`${entry.repo}/.git`),
+    filter: excludeGitMetadata,
   });
 }
 console.log(`synced ${manifest.templates.length} templates to ${PYTHON_TEMPLATES}`);
