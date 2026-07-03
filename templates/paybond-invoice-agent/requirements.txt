@@ -1,2 +1,2 @@
-paybond-kit>=0.11.7
+paybond-kit>=0.11.9
 langgraph>=1.2.0

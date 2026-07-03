@@ -62,7 +62,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.11.7";
+const SERVER_VERSION = "0.11.9";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -2126,6 +2126,8 @@ export function settingsFromEnv(
     gatewayBaseUrl: requireSecureGatewayUrl(
       optionalEnv(env.PAYBOND_GATEWAY_URL) ??
         optionalEnv(env.PAYBOND_GATEWAY_BASE_URL) ??
+        readEnvFileValue(envFile, "PAYBOND_GATEWAY_URL") ??
+        readEnvFileValue(envFile, "PAYBOND_GATEWAY_BASE_URL") ??
         DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     ),
     apiKey,

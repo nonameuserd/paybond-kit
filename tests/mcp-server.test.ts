@@ -223,14 +223,18 @@ describe("PaybondMCPServer", () => {
     });
   });
 
-  it("loads PAYBOND_API_KEY from the local env file when process env is absent", () => {
+  it("loads PAYBOND_API_KEY and gateway URL from the local env file when process env is absent", () => {
     const cwd = mkdtempSync(join(tmpdir(), "paybond-mcp-"));
     const envFile = join(cwd, ".env.local");
-    writeFileSync(envFile, `PAYBOND_API_KEY=${apiKey()}\n`, "utf8");
+    writeFileSync(
+      envFile,
+      `PAYBOND_API_KEY=${apiKey()}\nPAYBOND_GATEWAY_BASE_URL=https://gateway.from-file.test\n`,
+      "utf8",
+    );
 
     expect(settingsFromEnv({ PAYBOND_ENV_FILE: envFile })).toMatchObject({
       apiKey: apiKey(),
-      gatewayBaseUrl: "https://api.paybond.ai",
+      gatewayBaseUrl: "https://gateway.from-file.test",
     });
   });
 
