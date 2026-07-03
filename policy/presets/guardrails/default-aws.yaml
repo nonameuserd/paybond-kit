@@ -1,0 +1,8 @@
+tools:
+  aws.ec2.start_instance:
+    max_spend_cents: 50000
+
+intent:
+  budget:
+    currency: usd
+    max_spend_usd: 500

@@ -1,0 +1,23 @@
+version: 1
+name: read-only-agent-v1
+default_deny: true
+
+tools:
+  search.web:
+    side_effecting: false
+
+  search.products:
+    side_effecting: false
+
+  saas.list_plans:
+    side_effecting: false
+
+  aws.ec2.describe_instances:
+    side_effecting: false
+
+intent:
+  allowed_tools:
+    - search.web
+    - search.products
+    - saas.list_plans
+    - aws.ec2.describe_instances

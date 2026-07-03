@@ -1,0 +1,8 @@
+tools:
+  travel.book_hotel:
+    max_spend_cents: 20000
+
+intent:
+  budget:
+    currency: usd
+    max_spend_usd: 200
