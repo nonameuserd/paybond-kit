@@ -1,12 +1,12 @@
 import { resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 
+import { PaybondAgentRun } from "../../agent/run.js";
 import {
-  PaybondAgentRun,
   PaybondAutoEvidenceSubmitError,
   PaybondToolRegistryValidationError,
   PaybondUnregisteredSideEffectingToolError,
-} from "../../agent/index.js";
+} from "../../agent/types.js";
 import { runGenericSandboxDemo } from "../../agent/generic-sandbox-demo.js";
 import {
   loadRunClaudeAgentsSandboxDemo,

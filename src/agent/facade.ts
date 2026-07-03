@@ -1,5 +1,5 @@
-import { createPaybondClaudeAgentsConfig } from "../claude-agents/index.js";
-import type { ClaudeAgentsConfig } from "../claude-agents/index.js";
+import { createPaybondClaudeAgentsConfig } from "../claude-agents/config.js";
+import type { ClaudeAgentsConfig } from "../claude-agents/config.js";
 import type { PaybondLangGraphHooks } from "../langgraph/config.js";
 import { createOpenAIAgentsAdapter, createPaybondOpenAIAgentsConfig } from "../openai-agents/index.js";
 import type { PaybondPolicy } from "../policy/load.js";

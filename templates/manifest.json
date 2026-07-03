@@ -13,7 +13,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 18700 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2",
+        "@paybond/kit": "^0.11.3",
         "@langchain/core": "^1.2.1",
         "@langchain/langgraph": "^1.4.7",
         "zod": "^4.2.0"
@@ -33,7 +33,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 4500 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2",
+        "@paybond/kit": "^0.11.3",
         "ai": "^5.0.0",
         "zod": "^4.2.0"
       },
@@ -52,7 +52,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 2900 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2",
+        "@paybond/kit": "^0.11.3",
         "@openai/agents": "^0.4.0",
         "zod": "^4.2.0"
       },
@@ -71,7 +71,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 4500 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2",
+        "@paybond/kit": "^0.11.3",
         "@openai/agents": "^0.4.0",
         "zod": "^4.2.0"
       },
@@ -90,7 +90,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 18700 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2",
+        "@paybond/kit": "^0.11.3",
         "@anthropic-ai/claude-agent-sdk": "^0.2.100",
         "zod": "^4.2.0"
       },
@@ -110,7 +110,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 500 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2"
+        "@paybond/kit": "^0.11.3"
       },
       "mcp_tool_policy": "spend-write"
     },
@@ -127,7 +127,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 12000 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2"
+        "@paybond/kit": "^0.11.3"
       },
       "demo_mode": "generic"
     },
@@ -143,7 +143,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 12500 },
       "dependencies": {
-        "@paybond/kit": "^0.11.2"
+        "@paybond/kit": "^0.11.3"
       },
       "demo_mode": "generic"
     },
@@ -159,7 +159,7 @@
       "evidence_preset": "cost_and_completion",
       "smoke_result_body": { "status": "completed", "cost_cents": 2900 },
       "python_dependencies": {
-        "paybond-kit": ">=0.11.2",
+        "paybond-kit": ">=0.11.3",
         "langgraph": ">=1.2.0"
       },
       "demo_import": "paybond_kit.langgraph_sandbox_demo",

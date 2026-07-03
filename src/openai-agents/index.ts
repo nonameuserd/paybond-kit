@@ -1,15 +1,41 @@
-import {
-  defineToolInputGuardrail,
-  ToolGuardrailFunctionOutputFactory,
-  type FunctionTool,
-  type RunConfig,
-  type ToolInputGuardrailDefinition,
+import { createRequire } from "node:module";
+
+import type {
+  FunctionTool,
+  RunConfig,
+  ToolInputGuardrailDefinition,
 } from "@openai/agents";
 import {
   createToolInputGuardAdapter,
   type PaybondAgentRun,
   type PaybondToolInputGuardDecision,
 } from "../agent/index.js";
+
+type OpenAIAgentsModule = typeof import("@openai/agents");
+
+let cachedOpenAIAgents: OpenAIAgentsModule | undefined;
+
+/**
+ * Lazily resolve the optional `@openai/agents` peer dependency.
+ *
+ * Importing this module must not require the peer to be installed, so consumers of
+ * other frameworks (LangGraph, Vercel AI, etc.) can load the Paybond barrel without it.
+ * The peer is only needed when the OpenAI Agents adapter functions actually run.
+ */
+function loadOpenAIAgents(): OpenAIAgentsModule {
+  if (cachedOpenAIAgents === undefined) {
+    try {
+      const require = createRequire(import.meta.url);
+      cachedOpenAIAgents = require("@openai/agents") as OpenAIAgentsModule;
+    } catch (err) {
+      throw new Error(
+        'The OpenAI Agents integration requires the optional peer dependency "@openai/agents"; install it with: npm install @openai/agents',
+        { cause: err },
+      );
+    }
+  }
+  return cachedOpenAIAgents;
+}
 
 export type PaybondOpenAIAgentsAdapterOptions = {
   /**
@@ -40,7 +66,10 @@ export { isFunctionTool as isOpenAIFunctionTool };
 /** Map a framework-neutral Paybond decision to OpenAI tool guardrail output. */
 export function mapPaybondDecisionToOpenAIToolGuardrail(
   decision: PaybondToolInputGuardDecision,
-): ReturnType<typeof ToolGuardrailFunctionOutputFactory.allow> {
+): ReturnType<
+  typeof import("@openai/agents").ToolGuardrailFunctionOutputFactory.allow
+> {
+  const { ToolGuardrailFunctionOutputFactory } = loadOpenAIAgents();
   if (decision.kind === "allow") {
     return ToolGuardrailFunctionOutputFactory.allow({
       paybond: {
@@ -66,6 +95,7 @@ function buildPaybondInputGuardrail(
   run: PaybondAgentRun,
   toolName: string,
 ): ToolInputGuardrailDefinition {
+  const { defineToolInputGuardrail } = loadOpenAIAgents();
   const guard = createToolInputGuardAdapter(run);
   return defineToolInputGuardrail({
     name: `paybond_spend_${toolName}`,

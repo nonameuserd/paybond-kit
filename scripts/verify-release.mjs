@@ -134,6 +134,9 @@ for (const required of [
   "package/dist/login.d.ts",
   "package/completion-presets/catalog.json",
   "package/completion-presets/catalog.sha256",
+  "package/policy/presets/travel.yaml",
+  "package/policy/presets/domain/travel.yaml",
+  "package/policy/presets/guardrails/default-travel.yaml",
 ]) {
   if (!packedFiles.includes(required)) {
     throw new Error(`packed tarball must include ${required}`);
@@ -407,6 +410,36 @@ try {
     ].join("\n"),
   );
   runLogged("node", [tarballConsumerSmoke], npmConsumerRoot);
+
+  const tarballPeerSmoke = join(npmConsumerRoot, "verify-no-framework-peers.mjs");
+  writeFileSync(
+    tarballPeerSmoke,
+    [
+      'import { pathToFileURL } from "node:url";',
+      'import { join } from "node:path";',
+      'const presetsPath = pathToFileURL(',
+      '  join(process.cwd(), "node_modules/@paybond/kit/dist/policy/presets.js"),',
+      ").href;",
+      'const { resolvePolicyPresetPath } = await import(presetsPath);',
+      'const travelPath = resolvePolicyPresetPath("travel");',
+      'if (!travelPath.includes("travel.yaml")) {',
+      '  throw new Error(`expected travel preset path, got ${travelPath}`);',
+      "}",
+      'const cliPath = join(process.cwd(), "node_modules/@paybond/kit/dist/cli.js");',
+      'const { spawnSync } = await import("node:child_process");',
+      'const result = spawnSync(process.execPath, [cliPath, "dev", "smoke", "--offline", "--format", "json"], {',
+      '  encoding: "utf8",',
+      "});",
+      'const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;',
+      'if (output.includes("ERR_MODULE_NOT_FOUND")) {',
+      '  throw new Error(`CLI must not require optional framework peers at import time:\\n${output}`);',
+      "}",
+      'if (output.includes("policy preset file not found for: travel")) {',
+      '  throw new Error(`travel preset must ship in the published tarball:\\n${output}`);',
+      "}",
+    ].join("\n"),
+  );
+  runLogged("node", [tarballPeerSmoke], npmConsumerRoot);
 } finally {
   rmSync(scratch, { force: true, recursive: true });
   rmSync(tarball, { force: true });

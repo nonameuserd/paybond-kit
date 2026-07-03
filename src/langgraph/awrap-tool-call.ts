@@ -1,5 +1,7 @@
-import { ToolMessage } from "@langchain/core/messages";
-import { isCommand, type Command } from "@langchain/langgraph";
+import { createRequire } from "node:module";
+
+import type { ToolMessage } from "@langchain/core/messages";
+import type { Command } from "@langchain/langgraph";
 
 import type { PaybondAgentRun } from "../agent/run.js";
 import {
@@ -25,6 +27,49 @@ export type PaybondLangGraphAwrapToolCall = (
   execute: (request: PaybondLangGraphToolCallRequest) => Promise<unknown>,
 ) => Promise<unknown>;
 
+type LangGraphCoreMessagesModule = typeof import("@langchain/core/messages");
+type LangGraphModule = typeof import("@langchain/langgraph");
+
+let cachedCoreMessages: LangGraphCoreMessagesModule | undefined;
+let cachedLangGraph: LangGraphModule | undefined;
+
+function missingLangGraphPeerError(err: unknown): Error {
+  return new Error(
+    'The LangGraph integration requires the optional peer dependencies "@langchain/core" and "@langchain/langgraph"; install them with: npm install @langchain/core @langchain/langgraph',
+    { cause: err },
+  );
+}
+
+/**
+ * Lazily resolve `@langchain/core/messages`; importing this module must not require the peer.
+ */
+function loadCoreMessages(): LangGraphCoreMessagesModule {
+  if (cachedCoreMessages === undefined) {
+    try {
+      const require = createRequire(import.meta.url);
+      cachedCoreMessages = require("@langchain/core/messages") as LangGraphCoreMessagesModule;
+    } catch (err) {
+      throw missingLangGraphPeerError(err);
+    }
+  }
+  return cachedCoreMessages;
+}
+
+/**
+ * Lazily resolve `@langchain/langgraph`; importing this module must not require the peer.
+ */
+function loadLangGraph(): LangGraphModule {
+  if (cachedLangGraph === undefined) {
+    try {
+      const require = createRequire(import.meta.url);
+      cachedLangGraph = require("@langchain/langgraph") as LangGraphModule;
+    } catch (err) {
+      throw missingLangGraphPeerError(err);
+    }
+  }
+  return cachedLangGraph;
+}
+
 function toolCallFields(request: PaybondLangGraphToolCallRequest): {
   name: string;
   toolCallId: string;
@@ -43,6 +88,7 @@ function denyToolMessage(
   toolCallId: string,
   content: string,
 ): ToolMessage {
+  const { ToolMessage } = loadCoreMessages();
   return new ToolMessage({
     content,
     name: name || "unknown",
@@ -52,13 +98,15 @@ function denyToolMessage(
 }
 
 function isToolMessage(value: unknown): value is ToolMessage {
-  return value instanceof ToolMessage;
+  return value instanceof loadCoreMessages().ToolMessage;
 }
 
 export function normalizeLangGraphHookResult(
   call: { name: string; id?: string },
   result: unknown,
 ): ToolMessage | Command {
+  const { isCommand } = loadLangGraph();
+  const { ToolMessage } = loadCoreMessages();
   if (isToolMessage(result) || isCommand(result)) {
     return result;
   }

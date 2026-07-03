@@ -1,7 +1,6 @@
-import {
-  createSdkMcpServer,
-  type SdkMcpToolDefinition,
-} from "@anthropic-ai/claude-agent-sdk";
+import { createRequire } from "node:module";
+
+import type { SdkMcpToolDefinition } from "@anthropic-ai/claude-agent-sdk";
 
 import type { PaybondAgentRun } from "../agent/run.js";
 import {
@@ -12,6 +11,32 @@ import {
   PaybondSpendApprovalRequiredError,
   PaybondSpendDeniedError,
 } from "../index.js";
+
+type ClaudeAgentSdkModule = typeof import("@anthropic-ai/claude-agent-sdk");
+
+let cachedClaudeAgentSdk: ClaudeAgentSdkModule | undefined;
+
+/**
+ * Lazily resolve the optional `@anthropic-ai/claude-agent-sdk` peer dependency.
+ *
+ * Importing this module must not require the peer to be installed, so the Paybond barrel
+ * can load for consumers of other frameworks. The peer is only needed when the Claude Agents
+ * config is actually built.
+ */
+function loadClaudeAgentSdk(): ClaudeAgentSdkModule {
+  if (cachedClaudeAgentSdk === undefined) {
+    try {
+      const require = createRequire(import.meta.url);
+      cachedClaudeAgentSdk = require("@anthropic-ai/claude-agent-sdk") as ClaudeAgentSdkModule;
+    } catch (err) {
+      throw new Error(
+        'The Claude Agents integration requires the optional peer dependency "@anthropic-ai/claude-agent-sdk"; install it with: npm install @anthropic-ai/claude-agent-sdk',
+        { cause: err },
+      );
+    }
+  }
+  return cachedClaudeAgentSdk;
+}
 
 /** Pre-built SDK tool from `tool()` in `@anthropic-ai/claude-agent-sdk`. */
 export type ClaudeAgentSdkTool = SdkMcpToolDefinition;
@@ -34,7 +59,9 @@ export type PaybondClaudeAgentsConfigOptions = {
 };
 
 export type ClaudeAgentsConfig = {
-  mcpServer: ReturnType<typeof createSdkMcpServer>;
+  mcpServer: ReturnType<
+    typeof import("@anthropic-ai/claude-agent-sdk").createSdkMcpServer
+  >;
   allowedTools: string[];
   /** Same tool array as input — side-effecting handlers are wrapped in-place. */
   agentTools: ClaudeAgentSdkTool[];
@@ -187,6 +214,7 @@ export function createPaybondClaudeAgentsConfig(
   tools: ClaudeAgentSdkTool[],
   options?: PaybondClaudeAgentsConfigOptions,
 ): ClaudeAgentsConfig {
+  const { createSdkMcpServer } = loadClaudeAgentSdk();
   const sdkTools = assertClaudeAgentSdkTools(tools);
   const serverName = options?.serverName?.trim() || "paybond";
 

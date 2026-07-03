@@ -8,7 +8,7 @@
     "smoke": "paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation procurement.submit_po --requested-spend-cents 12000 --evidence-preset cost_and_completion --result-body '{\"status\":\"completed\",\"cost_cents\":12000}' --format json"
   },
   "dependencies": {
-    "@paybond/kit": "^0.11.2"
+    "@paybond/kit": "^0.11.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",

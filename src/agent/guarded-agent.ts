@@ -18,7 +18,7 @@ import { paybondToolNode } from "../langgraph/tool-node.js";
 import {
   createPaybondClaudeAgentsConfig,
   type ClaudeAgentsConfig,
-} from "../claude-agents/index.js";
+} from "../claude-agents/config.js";
 import {
   createPaybondGenericAgentConfig,
 } from "./generic-runner.js";
