@@ -364,6 +364,49 @@ try {
     ["Call the guarded handler inside the MCP tool implementation before paid or external work runs."],
     "paybond-init --force scaffold",
   );
+
+  const npmConsumerRoot = join(scratch, "npm-consumer");
+  mkdirSync(npmConsumerRoot, { recursive: true });
+  writeFileSync(
+    join(npmConsumerRoot, "package.json"),
+    JSON.stringify(
+      {
+        name: "paybond-kit-tarball-consumer",
+        private: true,
+        type: "module",
+        dependencies: {
+          "@paybond/kit": `file:${tarball}`,
+        },
+      },
+      null,
+      2,
+    ),
+  );
+  runLogged(npmBin, ["install", "--ignore-scripts"], npmConsumerRoot);
+  const tarballConsumerLs = run(npmBin, ["ls", "ajv", "--json"], npmConsumerRoot);
+  if (!tarballConsumerLs.includes('"ajv"')) {
+    throw new Error("packed @paybond/kit consumer install must include ajv as a transitive dependency");
+  }
+  const tarballConsumerSmoke = join(npmConsumerRoot, "verify-completion-evidence.mjs");
+  writeFileSync(
+    tarballConsumerSmoke,
+    [
+      'import { pathToFileURL } from "node:url";',
+      'import { join } from "node:path";',
+      'const modulePath = pathToFileURL(',
+      '  join(process.cwd(), "node_modules/@paybond/kit/dist/completion-validate-evidence.js"),',
+      ").href;",
+      'const { validateCompletionEvidence } = await import(modulePath);',
+      "const result = validateCompletionEvidence({",
+      '  presetId: "cost_and_completion",',
+      '  canonicalPayload: { status: "completed", cost_cents: 100 },',
+      "});",
+      'if (!result.canonical_schema_ok) {',
+      '  throw new Error(`validateCompletionEvidence failed: ${JSON.stringify(result)}`);',
+      "}",
+    ].join("\n"),
+  );
+  runLogged("node", [tarballConsumerSmoke], npmConsumerRoot);
 } finally {
   rmSync(scratch, { force: true, recursive: true });
   rmSync(tarball, { force: true });

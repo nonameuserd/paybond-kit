@@ -1,8 +1,0 @@
-tools:
-  commerce.checkout:
-    max_spend_cents: 10000
-
-intent:
-  budget:
-    currency: usd
-    max_spend_usd: 100

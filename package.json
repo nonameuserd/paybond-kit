@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.11.1",
+  "version": "0.11.2",
   "mcpName": "io.github.nonameuserd/paybond",
   "description": "Paybond Kit for TypeScript: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement.",
   "license": "Apache-2.0",
@@ -150,6 +150,7 @@
     "@noble/ed25519": "^2.2.1",
     "@noble/hashes": "^1.7.1",
     "@noble/secp256k1": "^2.2.3",
+    "ajv": "^8.17.1",
     "blake3": "^2.1.7",
     "uuid": "^14.0.0"
   },
@@ -161,7 +162,6 @@
     "@openai/agents": "^0.12.0",
     "@types/node": "^22.10.0",
     "ai": "^7.0.4",
-    "ajv": "^8.17.1",
     "typescript": "^5.7.2",
     "vitest": "^4.1.8",
     "zod": "^4.4.3"

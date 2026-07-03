@@ -502,6 +502,17 @@ function isKitVersionOnRegistry(version) {
   }
 }
 
+function fetchKitRegistryIntegrity(version) {
+  try {
+    return execSync(`npm view @paybond/kit@${version} dist.integrity`, {
+      stdio: "pipe",
+      encoding: "utf8",
+    }).trim();
+  } catch {
+    return undefined;
+  }
+}
+
 function packLocalKitTarball() {
   mkdirSync(KIT_PACK_DIR, { recursive: true });
   const output = execSync(
@@ -527,6 +538,7 @@ async function rewriteKitLockToRegistry(lockPath, kitVersion) {
   const lock = JSON.parse(await readFile(lockPath, "utf8"));
   const kitRange = `^${kitVersion}`;
   const registryResolved = `https://registry.npmjs.org/@paybond/kit/-/kit-${kitVersion}.tgz`;
+  const registryIntegrity = fetchKitRegistryIntegrity(kitVersion);
 
   if (lock.packages?.[""]?.dependencies?.["@paybond/kit"]) {
     lock.packages[""].dependencies["@paybond/kit"] = kitRange;
@@ -540,6 +552,9 @@ async function rewriteKitLockToRegistry(lockPath, kitVersion) {
       entry.version = kitVersion;
       entry.resolved = registryResolved;
       delete entry.link;
+      if (registryIntegrity) {
+        entry.integrity = registryIntegrity;
+      }
     }
   }
 

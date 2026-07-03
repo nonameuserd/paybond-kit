@@ -12,7 +12,7 @@ Paybond is the SDK to use when you do not want to build your own delegated agent
 npm install @paybond/kit
 ```
 
-`@paybond/kit` is an ESM-only package for modern Node.js runtimes. Use `import` from a Node ESM / `NodeNext` project or a compatible bundler.
+`@paybond/kit` is an ESM-only package for Node.js runtimes. Use `import` from a Node ESM / `NodeNext` project or a compatible bundler.
 
 ### Optional framework integrations
 

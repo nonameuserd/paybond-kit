@@ -8,7 +8,7 @@
     "smoke": "paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation commerce.checkout --requested-spend-cents 4500 --evidence-preset cost_and_completion --result-body '{\"status\":\"completed\",\"cost_cents\":4500}' --format json"
   },
   "dependencies": {
-    "@paybond/kit": "^0.11.1",
+    "@paybond/kit": "^0.11.2",
     "ai": "^5.0.0",
     "zod": "^4.2.0"
   },
