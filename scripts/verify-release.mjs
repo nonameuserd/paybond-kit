@@ -386,9 +386,12 @@ try {
     ),
   );
   runLogged(npmBin, ["install", "--ignore-scripts"], npmConsumerRoot);
-  const tarballConsumerLs = run(npmBin, ["ls", "ajv", "--json"], npmConsumerRoot);
+  const tarballConsumerLs = run(npmBin, ["ls", "ajv", "zod", "--json"], npmConsumerRoot);
   if (!tarballConsumerLs.includes('"ajv"')) {
     throw new Error("packed @paybond/kit consumer install must include ajv as a transitive dependency");
+  }
+  if (!tarballConsumerLs.includes('"zod"')) {
+    throw new Error("packed @paybond/kit consumer install must include zod as a transitive dependency");
   }
   const tarballConsumerSmoke = join(npmConsumerRoot, "verify-completion-evidence.mjs");
   writeFileSync(
@@ -410,6 +413,26 @@ try {
     ].join("\n"),
   );
   runLogged("node", [tarballConsumerSmoke], npmConsumerRoot);
+
+  const tarballPolicySchemaSmoke = join(npmConsumerRoot, "verify-policy-schema.mjs");
+  writeFileSync(
+    tarballPolicySchemaSmoke,
+    [
+      'import { pathToFileURL } from "node:url";',
+      'import { join } from "node:path";',
+      'const schemaPath = pathToFileURL(',
+      '  join(process.cwd(), "node_modules/@paybond/kit/dist/policy/schema.js"),',
+      ").href;",
+      'const { parsePaybondPolicyDocumentV1 } = await import(schemaPath);',
+      "parsePaybondPolicyDocumentV1({",
+      '  version: 1,',
+      '  name: "smoke",',
+      "  default_deny: true,",
+      "  tools: {},",
+      "});",
+    ].join("\n"),
+  );
+  runLogged("node", [tarballPolicySchemaSmoke], npmConsumerRoot);
 
   const tarballPeerSmoke = join(npmConsumerRoot, "verify-no-framework-peers.mjs");
   writeFileSync(

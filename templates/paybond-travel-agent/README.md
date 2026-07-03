@@ -10,7 +10,7 @@ cd paybond-travel-agent
 cp .env.example .env.local
 paybond login
 npm install
-npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation travel.book_hotel --requested-spend-cents 18700 --evidence-preset cost_and_completion --result-body '{"status":"completed","cost_cents":18700}' --format json
+npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation travel.book_hotel --requested-spend-cents 18700 --result-body '{"status":"completed","cost_cents":18700}' --format json
 ```
 
 ## Run the demo

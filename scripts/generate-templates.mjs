@@ -206,7 +206,6 @@ function smokeCommand(entry) {
     "--policy-file paybond.policy.yaml",
     `--operation ${entry.primary_operation}`,
     `--requested-spend-cents ${entry.requested_spend_cents}`,
-    `--evidence-preset ${entry.evidence_preset}`,
     `--result-body '${resultBody}'`,
     "--format json",
   ].join(" ");

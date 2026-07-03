@@ -2189,12 +2189,13 @@ export class PaybondGuardrails {
     }
     if (input.completionPreset !== undefined) {
       payload.completion_preset = input.completionPreset;
-    }
-    if (input.templateId !== undefined) {
-      payload.template_id = input.templateId;
-    }
-    if (input.parameters !== undefined) {
-      payload.parameters = input.parameters;
+    } else {
+      if (input.templateId !== undefined) {
+        payload.template_id = input.templateId;
+      }
+      if (input.parameters !== undefined) {
+        payload.parameters = input.parameters;
+      }
     }
     const { res, text, url } = await this.postJSON(
       "/v1/sandbox/guardrails/bootstrap",

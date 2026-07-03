@@ -99,13 +99,14 @@ export function policySandboxBootstrap(
     completionPreset: evidencePreset,
     metadata: options.metadata,
     idempotencyKey: options.idempotencyKey,
-    templateId: preset.harbor_template_id,
-    parameters: preset.parameters,
   };
 
   // Gateway rejects requests that include both completion_preset and evidence_schema.
+  // Gateway also rejects completion_preset and template_id together — catalog resolves the template.
   if (!evidencePreset.trim()) {
     bootstrap.evidenceSchema = options.evidenceSchema ?? preset.evidence_schema;
+    bootstrap.templateId = preset.harbor_template_id;
+    bootstrap.parameters = preset.parameters;
   } else if (options.evidenceSchema !== undefined) {
     throw new PaybondPolicySandboxBootstrapError(
       "completion_preset and evidenceSchema are mutually exclusive for sandbox bootstrap",

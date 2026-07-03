@@ -46,10 +46,10 @@ describe("policySandboxBootstrap", () => {
       requestedSpendCents: 20_000,
       currency: "usd",
       completionPreset: "cost_and_completion",
-      templateId: preset.harbor_template_id,
-      parameters: preset.parameters,
     });
     expect(bootstrap.evidenceSchema).toBeUndefined();
+    expect(bootstrap.templateId).toBeUndefined();
+    expect(bootstrap.parameters).toBeUndefined();
   });
 
   it("resolves bootstrap by explicit tool name and operation override", async () => {

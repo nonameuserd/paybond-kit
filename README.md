@@ -66,12 +66,11 @@ End-to-end sandbox smoke (bind + execute + evidence) with no app code:
 ```bash
 npx -p @paybond/kit paybond agent sandbox smoke \
   --policy-file paybond.policy.yaml \
-  --operation travel.book_hotel \
-  --requested-spend-cents 18700 \
-  --evidence-preset cost_and_completion \
   --result-body '{"status":"completed","cost_cents":18700}' \
   --format json
 ```
+
+With `--policy-file`, Kit sends `completion_preset` from the tool's `evidence_preset` and omits `evidence_schema` and `template_id` (Gateway rejects conflicting bootstrap fields). Requires `@paybond/kit` 0.11.5+.
 
 `agent sandbox smoke` only requires `@paybond/kit`. Framework demo commands (`agent demo vercel-ai smoke`, etc.) load their optional peers on demand.
 

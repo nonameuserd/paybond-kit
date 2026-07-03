@@ -196,6 +196,45 @@ describe("paybond agent CLI commands", () => {
     expect(payload.data.execute.evidence.submitted).toBe(true);
   });
 
+  it("agent sandbox smoke rejects --policy-file with --evidence-preset", async () => {
+    const cwd = await mkdtemp(join(process.cwd(), ".tmp-paybond-policy-smoke-conflict-"));
+    const policyPath = join(cwd, "paybond.policy.json");
+    await writeFile(
+      policyPath,
+      JSON.stringify({
+        version: 1,
+        name: "travel-agent-v1",
+        default_deny: true,
+        tools: {
+          "travel.book_hotel": {
+            side_effecting: true,
+            max_spend_cents: 100,
+            evidence_preset: "cost_and_completion",
+          },
+        },
+      }),
+      "utf8",
+    );
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "sandbox",
+        "smoke",
+        "--policy-file",
+        "paybond.policy.json",
+        "--evidence-preset",
+        "cost_and_completion",
+        "--result-body",
+        '{"status":"ok","cost_cents":100}',
+      ],
+      { cwd },
+    );
+    expect(code).toBe(1);
+    expect(payload.ok).toBe(false);
+    expect(payload.error?.code).toBe("cli.usage.conflicting_args");
+    expect(payload.error?.message).toContain("--policy-file or --evidence-preset, not both");
+  });
+
   it("agent run reload-policy applies stricter policy to persisted run", async () => {
     const cwd = await mkdtemp(join(process.cwd(), ".tmp-paybond-reload-policy-"));
     const policyPath = join(cwd, "paybond.policy.json");

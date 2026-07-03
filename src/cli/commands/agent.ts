@@ -886,6 +886,13 @@ export async function handleAgentSandboxSmoke(ctx: CliContext, argv: string[]): 
     }
   }
 
+  if (resolvedPolicyFile && presetFlag.value?.trim()) {
+    throw agentCliError(
+      "agent sandbox smoke accepts --policy-file or --evidence-preset, not both; completion_preset is derived from tool evidence_preset in the policy file",
+      { code: "cli.usage.conflicting_args", category: "usage" },
+    );
+  }
+
   const resolvedOperation = operationFlag.value?.trim() || solutionSmokeDefaults?.operation;
   const resolvedSpend = spendFlag.value?.trim() || (
     solutionSmokeDefaults ? String(solutionSmokeDefaults.requestedSpendCents) : undefined
@@ -928,9 +935,6 @@ export async function handleAgentSandboxSmoke(ctx: CliContext, argv: string[]): 
     }
     if (resolvedSpend) {
       bindArgv.push("--requested-spend-cents", resolvedSpend);
-    }
-    if (resolvedEvidencePreset) {
-      bindArgv.push("--completion-preset", resolvedEvidencePreset);
     }
   } else {
     bindArgv.push(

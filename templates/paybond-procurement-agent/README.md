@@ -10,7 +10,7 @@ cd paybond-procurement-agent
 cp .env.example .env.local
 paybond login
 npm install
-npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation procurement.submit_po --requested-spend-cents 12000 --evidence-preset cost_and_completion --result-body '{"status":"completed","cost_cents":12000}' --format json
+npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation procurement.submit_po --requested-spend-cents 12000 --result-body '{"status":"completed","cost_cents":12000}' --format json
 ```
 
 ## Run the demo
