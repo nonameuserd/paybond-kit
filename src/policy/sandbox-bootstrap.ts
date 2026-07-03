@@ -91,16 +91,26 @@ export function policySandboxBootstrap(
     );
   }
 
-  return {
+  const bootstrap: PaybondRunBindingSandboxBootstrapInput = {
     kind: "sandbox",
     operation,
     requestedSpendCents,
     currency: options.currency ?? document.intent?.budget?.currency,
-    evidenceSchema: options.evidenceSchema ?? preset.evidence_schema,
     completionPreset: evidencePreset,
     metadata: options.metadata,
     idempotencyKey: options.idempotencyKey,
     templateId: preset.harbor_template_id,
     parameters: preset.parameters,
   };
+
+  // Gateway rejects requests that include both completion_preset and evidence_schema.
+  if (!evidencePreset.trim()) {
+    bootstrap.evidenceSchema = options.evidenceSchema ?? preset.evidence_schema;
+  } else if (options.evidenceSchema !== undefined) {
+    throw new PaybondPolicySandboxBootstrapError(
+      "completion_preset and evidenceSchema are mutually exclusive for sandbox bootstrap",
+    );
+  }
+
+  return bootstrap;
 }

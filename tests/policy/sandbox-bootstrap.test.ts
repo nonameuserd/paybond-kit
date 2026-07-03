@@ -45,11 +45,11 @@ describe("policySandboxBootstrap", () => {
       operation: "travel.book_hotel",
       requestedSpendCents: 20_000,
       currency: "usd",
-      evidenceSchema: preset.evidence_schema,
       completionPreset: "cost_and_completion",
       templateId: preset.harbor_template_id,
       parameters: preset.parameters,
     });
+    expect(bootstrap.evidenceSchema).toBeUndefined();
   });
 
   it("resolves bootstrap by explicit tool name and operation override", async () => {

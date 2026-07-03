@@ -2181,7 +2181,7 @@ export class PaybondGuardrails {
     if (input.currency !== undefined) {
       payload.currency = input.currency;
     }
-    if (input.evidenceSchema !== undefined) {
+    if (input.evidenceSchema !== undefined && input.completionPreset === undefined) {
       payload.evidence_schema = input.evidenceSchema;
     }
     if (input.metadata !== undefined) {
