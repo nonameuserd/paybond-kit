@@ -159,6 +159,68 @@ describe("PaybondToolInterceptor.wrapExecute", () => {
     );
   });
 
+  it("prefers sandbox bind spend over policy max_spend_cents when args are empty", async () => {
+    const guard = makeGuard();
+    const submitSandboxEvidence = vi.fn(async () => ({
+      tenant_id: "tenant-a",
+      intent_id: "intent-sandbox",
+      sandbox_lifecycle_status: "completed",
+      predicate_passed: true,
+    }));
+    const host: PaybondAgentRunHost = {
+      harbor: {
+        tenantId: "tenant-a",
+        getIntent: async () => ({
+          tenant_id: "tenant-a",
+          allowed_tools: ["saas.provision_seat"],
+        }),
+      },
+      guardrails: {
+        bootstrapSandbox: async (input) => ({
+          tenant_id: "tenant-a",
+          intent_id: "intent-sandbox",
+          capability_token: "cap-sandbox",
+          operation: input.operation,
+          requested_spend_cents: input.requestedSpendCents,
+          sandbox_lifecycle_status: "funded",
+        }),
+        submitSandboxEvidence,
+      },
+      spendGuard: () => guard,
+    };
+    const registry = createPaybondToolRegistry({
+      defaultDeny: true,
+      sideEffecting: {
+        "saas.provision_seat": {
+          spendCents: 5_000,
+          evidencePreset: "cost_and_completion",
+        },
+      },
+    });
+    const run = await PaybondAgentRun.bind(host, {
+      bootstrap: {
+        kind: "sandbox",
+        operation: "saas.provision_seat",
+        requestedSpendCents: 2_900,
+      },
+      registry,
+    });
+
+    await run.interceptor.wrapExecute({
+      toolName: "saas.provision_seat",
+      toolCallId: "smoke-1",
+      arguments: {},
+      execute: async () => ({ status: "completed", cost_cents: 2_900 }),
+    });
+
+    expect(guard.assertSpendAuthorized).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: "saas.provision_seat",
+        requestedSpendCents: 2_900,
+      }),
+    );
+  });
+
   it("denies unregistered side-effecting tools when defaultDeny is enabled", async () => {
     const guard = makeGuard();
     const host = makeHost(guard);

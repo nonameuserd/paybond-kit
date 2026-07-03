@@ -13,6 +13,11 @@ if ! command -v gh >/dev/null 2>&1; then
 fi
 
 manifest="$ROOT/kit/ts/templates/manifest.json"
+
+echo "==> verifying @paybond/kit package-lock integrity against npm"
+node "$ROOT/kit/ts/scripts/verify-template-lock-integrity.mjs" \
+  --templates-dir="$TEMPLATES"
+
 repos=$(node -e "
 const m = require('$manifest');
 for (const t of m.templates) {

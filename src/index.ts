@@ -8,8 +8,6 @@ import {
   buildSignedCreateIntentBodyWithPolicyBinding,
   type BuildSignedCreateIntentParams,
   type BuildSignedCreateIntentWithPolicyBindingParams,
-  type PolicyBindingRef,
-  type PublishedPolicyHead,
   type SettlementRail,
 } from "./principal-intent.js";
 import { signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
@@ -43,8 +41,12 @@ import {
 } from "./agent/index.js";
 import {
   GatewayAgentRunTraceReporter,
-  type AgentRunUpsertInput,
 } from "./agent/gateway-trace-reporter.js";
+import {
+  fetchWithGatewayRetries,
+  gatewayRetryDelayMs,
+  shouldRetryGatewayResponse,
+} from "./gateway-retry.js";
 import {
   parsePolicyRemoteValidateResponse,
   policyValidateQueryString,
@@ -1005,19 +1007,6 @@ function normalizeBase(url: string): string {
   return requireSecureGatewayUrl(url);
 }
 
-function backoffMs(attempt: number): number {
-  const base = 200 * 2 ** attempt;
-  const jitter = Math.random() * 100;
-  return Math.min(base + jitter, 5000);
-}
-
-function parseRetryAfterSeconds(v: string | null): number | null {
-  if (!v) return null;
-  const n = Number.parseFloat(v.trim());
-  if (!Number.isFinite(n)) return null;
-  return Math.min(n, 30);
-}
-
 export type PaybondEnvironment = "live" | "sandbox";
 
 function normalizeExpectedEnvironment(value: PaybondEnvironment | undefined): PaybondEnvironment | null {
@@ -1373,16 +1362,19 @@ export class HarborClient {
       } catch (e) {
         lastErr = e;
         if (attempt + 1 >= this.maxRetries) throw e;
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        await new Promise((r) => setTimeout(r, gatewayRetryDelayMs(attempt, null)));
         continue;
       }
       if ([429, 500, 502, 503, 504].includes(res.status)) {
         if (attempt + 1 >= this.maxRetries) {
           return res;
         }
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
+        if (!(await shouldRetryGatewayResponse(res))) {
+          return res;
+        }
+        await new Promise((r) =>
+          setTimeout(r, gatewayRetryDelayMs(attempt, res.headers.get("retry-after"))),
+        );
         continue;
       }
       return res;
@@ -1411,16 +1403,19 @@ export class HarborClient {
       } catch (e) {
         lastErr = e;
         if (attempt + 1 >= this.maxRetries) throw e;
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        await new Promise((r) => setTimeout(r, gatewayRetryDelayMs(attempt, null)));
         continue;
       }
       if ([429, 500, 502, 503, 504].includes(res.status)) {
         if (attempt + 1 >= this.maxRetries) {
           return res;
         }
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
+        if (!(await shouldRetryGatewayResponse(res))) {
+          return res;
+        }
+        await new Promise((r) =>
+          setTimeout(r, gatewayRetryDelayMs(attempt, res.headers.get("retry-after"))),
+        );
         if (retryBodyText !== undefined) {
           init = {
             ...init,
@@ -1792,26 +1787,7 @@ export class GatewayHarborClient {
   }
 
   private async fetchWithRetries(url: string, init: RequestInit): Promise<Response> {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-      let res: Response;
-      try {
-        res = await fetch(url, init);
-      } catch (e) {
-        lastErr = e;
-        if (attempt + 1 >= this.maxRetries) throw e;
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
-        continue;
-      }
-      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < this.maxRetries) {
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-      return res;
-    }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    return fetchWithGatewayRetries(url, init, this.maxRetries);
   }
 
   private async postJSON(
@@ -2130,26 +2106,7 @@ export class PaybondGuardrails {
   }
 
   private async fetchWithRetries(url: string, init: RequestInit): Promise<Response> {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-      let res: Response;
-      try {
-        res = await fetch(url, init);
-      } catch (e) {
-        lastErr = e;
-        if (attempt + 1 >= this.maxRetries) throw e;
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
-        continue;
-      }
-      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < this.maxRetries) {
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-      return res;
-    }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    return fetchWithGatewayRetries(url, init, this.maxRetries);
   }
 
   private async postJSON(
@@ -2203,7 +2160,7 @@ export class PaybondGuardrails {
       { idempotencyKey: input.idempotencyKey },
     );
     if (!res.ok) {
-      throw new HarborHttpError(`Gateway sandbox guardrail bootstrap HTTP ${res.status}: ${text}`, {
+      throw new HarborHttpError(`Gateway sandbox guardrail bootstrap HTTP ${res.status}`, {
         statusCode: res.status,
         url,
         bodyText: text,
@@ -2243,7 +2200,7 @@ export class PaybondGuardrails {
       { idempotencyKey: input.idempotencyKey },
     );
     if (!res.ok) {
-      throw new HarborHttpError(`Gateway sandbox guardrail evidence HTTP ${res.status}: ${text}`, {
+      throw new HarborHttpError(`Gateway sandbox guardrail evidence HTTP ${res.status}`, {
         statusCode: res.status,
         url,
         bodyText: text,
@@ -2583,16 +2540,19 @@ export class GatewaySignalClient {
       } catch (e) {
         lastErr = e;
         if (attempt + 1 >= this.maxRetries) throw e;
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        await new Promise((r) => setTimeout(r, gatewayRetryDelayMs(attempt, null)));
         continue;
       }
       if ([429, 500, 502, 503, 504].includes(res.status)) {
         if (attempt + 1 >= this.maxRetries) {
           return res;
         }
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
+        if (!(await shouldRetryGatewayResponse(res))) {
+          return res;
+        }
+        await new Promise((r) =>
+          setTimeout(r, gatewayRetryDelayMs(attempt, res.headers.get("retry-after"))),
+        );
         continue;
       }
       return res;
@@ -2754,16 +2714,19 @@ export class GatewayFraudClient {
       } catch (e) {
         lastErr = e;
         if (attempt + 1 >= this.maxRetries) throw e;
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        await new Promise((r) => setTimeout(r, gatewayRetryDelayMs(attempt, null)));
         continue;
       }
       if ([429, 500, 502, 503, 504].includes(res.status)) {
         if (attempt + 1 >= this.maxRetries) {
           return res;
         }
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
+        if (!(await shouldRetryGatewayResponse(res))) {
+          return res;
+        }
+        await new Promise((r) =>
+          setTimeout(r, gatewayRetryDelayMs(attempt, res.headers.get("retry-after"))),
+        );
         continue;
       }
       return res;
@@ -3069,16 +3032,19 @@ export class GatewayA2AClient {
       } catch (e) {
         lastErr = e;
         if (attempt + 1 >= this.maxRetries) throw e;
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        await new Promise((r) => setTimeout(r, gatewayRetryDelayMs(attempt, null)));
         continue;
       }
       if ([429, 500, 502, 503, 504].includes(res.status)) {
         if (attempt + 1 >= this.maxRetries) {
           return res;
         }
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
+        if (!(await shouldRetryGatewayResponse(res))) {
+          return res;
+        }
+        await new Promise((r) =>
+          setTimeout(r, gatewayRetryDelayMs(attempt, res.headers.get("retry-after"))),
+        );
         continue;
       }
       return res;
@@ -3154,28 +3120,7 @@ export class GatewayProtocolClient {
     url: string,
     init: RequestInit,
   ): Promise<Response> {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < this.maxRetries; attempt++) {
-      let res: Response;
-      try {
-        res = await fetch(url, init);
-      } catch (e) {
-        lastErr = e;
-        if (attempt + 1 >= this.maxRetries) {
-          throw e;
-        }
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
-        continue;
-      }
-      if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < this.maxRetries) {
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-      return res;
-    }
-    throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    return fetchWithGatewayRetries(url, init, this.maxRetries);
   }
 
   private headers(extra?: HeadersInit): Headers {
@@ -3415,15 +3360,15 @@ async function resolveGatewayTenantId(
       if (attempt + 1 >= maxRetries) {
         throw e;
       }
-      await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+      await new Promise((r) => setTimeout(r, gatewayRetryDelayMs(attempt, null)));
       continue;
     }
     const text = await res.text();
     if (!res.ok) {
       if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < maxRetries) {
-        const raSec = parseRetryAfterSeconds(res.headers.get("retry-after"));
-        const delayMs = raSec != null ? raSec * 1000 : backoffMs(attempt);
-        await new Promise((r) => setTimeout(r, delayMs));
+        await new Promise((r) =>
+          setTimeout(r, gatewayRetryDelayMs(attempt, res.headers.get("retry-after"))),
+        );
         continue;
       }
       throw new GatewayAuthError(`gateway principal HTTP ${res.status}`, {

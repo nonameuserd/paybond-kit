@@ -951,18 +951,28 @@ export async function handleAgentSandboxSmoke(ctx: CliContext, argv: string[]): 
   smokeOperation = String(bindResult.data.operation ?? smokeOperation);
 
   const runId = String(bindResult.data.run_id ?? "");
+  const storedForExecute = await loadAgentRunContext(ctx.cwd, runId);
+  const executeArgv: string[] = [
+    ...(productionFlag.present ? ["--production"] : []),
+    "--run-id",
+    runId,
+    "--operation",
+    smokeOperation,
+    "--tool-call-id",
+    "smoke-1",
+    "--result-body",
+    JSON.stringify(resultBody),
+  ];
+  if (storedForExecute.requested_spend_cents != null) {
+    executeArgv.push(
+      "--requested-spend-cents",
+      String(storedForExecute.requested_spend_cents),
+    );
+  } else if (resolvedSpend) {
+    executeArgv.push("--requested-spend-cents", resolvedSpend);
+  }
   try {
-    const executeResult = await handleAgentToolExecute(ctx, [
-      ...(productionFlag.present ? ["--production"] : []),
-      "--run-id",
-      runId,
-      "--operation",
-      smokeOperation,
-      "--tool-call-id",
-      "smoke-1",
-      "--result-body",
-      JSON.stringify(resultBody),
-    ]);
+    const executeResult = await handleAgentToolExecute(ctx, executeArgv);
     const stored = await loadAgentRunContext(ctx.cwd, runId);
     const bindForChecklist = {
       ...bindResult.data,

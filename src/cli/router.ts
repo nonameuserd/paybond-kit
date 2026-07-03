@@ -1,4 +1,6 @@
+import { HarborHttpError, SignalHttpError } from "../index.js";
 import { commandPath, createContext } from "./context.js";
+import { formatSdkHttpErrorMessage, summarizeGatewayHttpError } from "./http-error-message.js";
 import {
   handleA2a,
   handleAuditExports,
@@ -59,6 +61,7 @@ import {
 import {
   CliError,
   EXIT_SUCCESS,
+  exitCodeForHttpStatus,
   type CliDependencies,
   type CliErrorShape,
   type CommandResult,
@@ -87,6 +90,37 @@ function renderTable(command: string, result: CommandResult, globals: GlobalOpti
   return lines;
 }
 
+function isSdkHttpError(err: unknown): err is HarborHttpError | SignalHttpError {
+  if (err instanceof HarborHttpError || err instanceof SignalHttpError) {
+    return true;
+  }
+  if (!(err instanceof Error)) {
+    return false;
+  }
+  const candidate = err as HarborHttpError;
+  return typeof candidate.statusCode === "number" && typeof candidate.bodyText === "string";
+}
+
+function sdkHttpErrorShape(
+  err: HarborHttpError | SignalHttpError,
+): { shape: CliErrorShape; exitCode: number } {
+  const mapped = exitCodeForHttpStatus(err.statusCode);
+  const summary = summarizeGatewayHttpError(err.statusCode, err.bodyText);
+  const gatewayCode =
+    typeof summary.details.gateway_code === "string"
+      ? summary.details.gateway_code
+      : undefined;
+  return {
+    shape: {
+      category: mapped.category,
+      code: gatewayCode || `cli.gateway.http_${err.statusCode}`,
+      message: formatSdkHttpErrorMessage(err.message, err.statusCode, err.bodyText),
+      details: summary.details,
+    },
+    exitCode: mapped.exitCode,
+  };
+}
+
 function toErrorShape(err: unknown): { shape: CliErrorShape; exitCode: number } {
   if (err instanceof CliError) {
     if (err.message === "help") {
@@ -104,6 +138,9 @@ function toErrorShape(err: unknown): { shape: CliErrorShape; exitCode: number } 
       },
       exitCode: err.exitCode,
     };
+  }
+  if (isSdkHttpError(err)) {
+    return sdkHttpErrorShape(err);
   }
   return {
     shape: {

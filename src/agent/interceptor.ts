@@ -425,10 +425,18 @@ export class PaybondToolInterceptor {
     const operation = (input.operation ?? defaultOperation).trim();
     assertOperationAllowed(operation, this.binding.allowedTools);
 
-    const requestedSpendCents =
-      input.requestedSpendCents ??
-      this.binding.registry.resolveSpendCents(toolName, input.arguments) ??
-      0;
+    let requestedSpendCents = input.requestedSpendCents;
+    if (requestedSpendCents === undefined) {
+      requestedSpendCents = this.binding.registry.resolveSpendCents(toolName, input.arguments);
+    }
+    if (this.binding.sandbox !== undefined) {
+      const sandboxSpend = this.binding.sandbox.requestedSpendCents;
+      requestedSpendCents =
+        requestedSpendCents === undefined
+          ? sandboxSpend
+          : Math.min(requestedSpendCents, sandboxSpend);
+    }
+    requestedSpendCents ??= 0;
 
     return {
       toolName,

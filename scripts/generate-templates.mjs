@@ -8,6 +8,12 @@ import { mkdirSync } from "node:fs";
 import { execSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  fetchKitRegistryIntegrity,
+  isKitVersionOnRegistry,
+  patchKitLockIntegrity,
+  resolveKitLockIntegrity,
+} from "./template-lock-integrity.mjs";
 
 const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
 const KIT_TS_DIR = join(SCRIPT_DIR, "..");
@@ -16,6 +22,8 @@ const REPO_ROOT = join(KIT_TS_DIR, "../..");
 const ROOT_TEMPLATES = join(REPO_ROOT, "templates");
 const POLICY_PRESETS = join(REPO_ROOT, "kit/policy/presets");
 const KIT_PACK_DIR = join(KIT_TS_DIR, ".template-pack");
+/** @type {string | undefined} */
+let sharedPrepublishTarballPath;
 
 const kitPackageJson = JSON.parse(
   await readFile(join(KIT_TS_DIR, "package.json"), "utf8"),
@@ -492,26 +500,6 @@ Local \`paybond.policy.yaml\` is yours to edit. Bundled preset: **${entry.preset
 `;
 }
 
-function isKitVersionOnRegistry(version) {
-  try {
-    execSync(`npm view @paybond/kit@${version} version`, { stdio: "pipe" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function fetchKitRegistryIntegrity(version) {
-  try {
-    return execSync(`npm view @paybond/kit@${version} dist.integrity`, {
-      stdio: "pipe",
-      encoding: "utf8",
-    }).trim();
-  } catch {
-    return undefined;
-  }
-}
-
 function packLocalKitTarball() {
   mkdirSync(KIT_PACK_DIR, { recursive: true });
   const output = execSync(
@@ -533,31 +521,20 @@ function packLocalKitTarball() {
   return join(KIT_PACK_DIR, tarballName);
 }
 
-async function rewriteKitLockToRegistry(lockPath, kitVersion) {
-  const lock = JSON.parse(await readFile(lockPath, "utf8"));
-  const kitRange = `^${kitVersion}`;
-  const registryResolved = `https://registry.npmjs.org/@paybond/kit/-/kit-${kitVersion}.tgz`;
-  const registryIntegrity = fetchKitRegistryIntegrity(kitVersion);
-
-  if (lock.packages?.[""]?.dependencies?.["@paybond/kit"]) {
-    lock.packages[""].dependencies["@paybond/kit"] = kitRange;
+async function stampKitLock(lockPath, kitVersion, tarballPath) {
+  const integrity = await resolveKitLockIntegrity(kitVersion, { tarballPath });
+  if (!integrity) {
+    throw new Error(
+      `@paybond/kit@${kitVersion} is not on the npm registry and no local pack tarball was provided. ` +
+        `Publish the kit or run generate-templates after npm pack.`,
+    );
   }
-
-  for (const [key, entry] of Object.entries(lock.packages ?? {})) {
-    if (!entry || typeof entry !== "object") {
-      continue;
-    }
-    if (key === "node_modules/@paybond/kit" || entry.name === "@paybond/kit") {
-      entry.version = kitVersion;
-      entry.resolved = registryResolved;
-      delete entry.link;
-      if (registryIntegrity) {
-        entry.integrity = registryIntegrity;
-      }
-    }
+  if (!fetchKitRegistryIntegrity(kitVersion) && tarballPath) {
+    console.warn(
+      `@paybond/kit@${kitVersion} is not on npm yet; stamping template lockfiles from local npm pack integrity.`,
+    );
   }
-
-  await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+  await patchKitLockIntegrity(lockPath, kitVersion, integrity);
 }
 
 async function refreshTemplatePackageLock(dir, consumerPackageJson) {
@@ -567,14 +544,22 @@ async function refreshTemplatePackageLock(dir, consumerPackageJson) {
   );
 
   const kitDependency = consumerPackageJson.dependencies?.["@paybond/kit"];
-  if (!kitDependency || isKitVersionOnRegistry(KIT_VERSION)) {
-    execSync("npm install --package-lock-only", { cwd: dir, stdio: "inherit" });
+  if (!kitDependency) {
     return;
   }
 
-  let tarballPath;
-  try {
+  if (isKitVersionOnRegistry(KIT_VERSION)) {
+    execSync("npm install --package-lock-only", { cwd: dir, stdio: "inherit" });
+    await stampKitLock(join(dir, "package-lock.json"), KIT_VERSION);
+    return;
+  }
+
+  let tarballPath = sharedPrepublishTarballPath;
+  if (!tarballPath) {
     tarballPath = packLocalKitTarball();
+    sharedPrepublishTarballPath = tarballPath;
+  }
+  try {
     const lockPackageJson = {
       ...consumerPackageJson,
       dependencies: {
@@ -591,11 +576,9 @@ async function refreshTemplatePackageLock(dir, consumerPackageJson) {
       join(dir, "package.json"),
       `${JSON.stringify(consumerPackageJson, null, 2)}\n`,
     );
-    await rewriteKitLockToRegistry(join(dir, "package-lock.json"), KIT_VERSION);
+    await stampKitLock(join(dir, "package-lock.json"), KIT_VERSION, tarballPath);
   } finally {
-    if (tarballPath) {
-      await unlink(tarballPath).catch(() => {});
-    }
+    // Shared tarball cleaned up after all templates are generated.
   }
 }
 
@@ -713,3 +696,7 @@ for (const entry of manifest.templates) {
   });
 }
 console.log(`synced ${manifest.templates.length} templates to ${PYTHON_TEMPLATES}`);
+
+if (sharedPrepublishTarballPath) {
+  await unlink(sharedPrepublishTarballPath).catch(() => {});
+}

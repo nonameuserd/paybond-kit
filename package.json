@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.11.5",
+  "version": "0.11.6",
   "mcpName": "io.github.nonameuserd/paybond",
   "description": "Paybond Kit for TypeScript: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement.",
   "license": "Apache-2.0",
@@ -117,6 +117,7 @@
     "test": "vitest run",
     "pack:dry-run": "npm pack --dry-run",
     "verify:release": "node ./scripts/verify-release.mjs",
+    "verify:template-locks": "node ./scripts/verify-template-lock-integrity.mjs",
     "prepack": "npm run build"
   },
   "peerDependencies": {
