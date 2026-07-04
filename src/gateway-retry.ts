@@ -1,6 +1,8 @@
 /** Cap Cloudflare edge retry hints so CLI flows do not block for a full minute. */
 export const CLOUDFLARE_EDGE_MAX_RETRY_DELAY_MS = 8_000;
 
+type JsonRecord = Record<string, unknown>;
+
 export function parseCloudflareRetryAfterMs(bodyText: string): number | null {
   if (!isCloudflareEdgeErrorBody(bodyText)) {
     return null;
