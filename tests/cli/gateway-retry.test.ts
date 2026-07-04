@@ -49,18 +49,47 @@ describe("gateway-retry", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("does not retry Cloudflare edge 502 bodies", async () => {
-    const body = JSON.stringify({ cloudflare_error: true, title: "Error 502: Bad gateway" });
-    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 502 }));
+  it("retries Cloudflare edge 502 bodies once", async () => {
+    vi.useFakeTimers();
+    const body = JSON.stringify({
+      cloudflare_error: true,
+      title: "Error 502: Bad gateway",
+      retry_after: 60,
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(body, { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
-    const res = await fetchWithGatewayRetries(
+    const pending = fetchWithGatewayRetries(
       "https://api.paybond.ai/v1/sandbox/guardrails/bootstrap",
       {},
       3,
     );
+    await vi.runAllTimersAsync();
+    const res = await pending;
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
+  });
+
+  it("returns Cloudflare edge 502 after one retry", async () => {
+    vi.useFakeTimers();
+    const body = JSON.stringify({ cloudflare_error: true, title: "Error 502: Bad gateway" });
+    const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 502 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = fetchWithGatewayRetries(
+      "https://api.paybond.ai/v1/sandbox/guardrails/bootstrap",
+      {},
+      3,
+    );
+    await vi.runAllTimersAsync();
+    const res = await pending;
     expect(res.status).toBe(502);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 
   it("throws the last network error when fetch never succeeds", async () => {

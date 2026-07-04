@@ -206,6 +206,8 @@ export async function handleDevTrace(ctx: CliContext, argv: string[]): Promise<C
   const server = await startDevTraceServer({
     port,
     cwd: ctx.cwd,
+    envFile: ctx.globals.envFile,
+    hasCredentials: credentials.source !== "missing",
     onListen(url) {
       traceUrl = url;
       ctx.stderr.write(`Paybond dev trace dashboard listening on ${url}\n`);
@@ -220,6 +222,8 @@ export async function handleDevTrace(ctx: CliContext, argv: string[]): Promise<C
     process.once("SIGINT", shutdown);
     process.once("SIGTERM", shutdown);
   });
+
+  ctx.stderr.write("Trace dashboard stopped.\n");
 
   return {
     data: {

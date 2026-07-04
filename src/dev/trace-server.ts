@@ -8,6 +8,8 @@ export type DevTraceServerOptions = {
   port?: number;
   host?: string;
   cwd?: string;
+  envFile?: string;
+  hasCredentials?: boolean;
   onListen?: (url: string) => void;
 };
 
@@ -15,6 +17,9 @@ export async function startDevTraceServer(options: DevTraceServerOptions = {}): 
   const port = options.port ?? DEV_TRACE_DEFAULT_PORT;
   const host = options.host ?? "127.0.0.1";
   const cwd = options.cwd ?? process.cwd();
+  const hasCredentials =
+    options.hasCredentials ??
+    devTraceHasCredentials({ cwd, envFile: options.envFile });
   const dashboardHtml = loadDevTraceDashboardHtml();
 
   const server = createServer((req, res) => {
@@ -27,7 +32,7 @@ export async function startDevTraceServer(options: DevTraceServerOptions = {}): 
         JSON.stringify(
           {
             events,
-            has_credentials: devTraceHasCredentials(),
+            has_credentials: hasCredentials,
           },
           null,
           2,

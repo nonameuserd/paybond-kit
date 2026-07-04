@@ -1,4 +1,21 @@
-type JsonRecord = Record<string, unknown>;
+/** Cap Cloudflare edge retry hints so CLI flows do not block for a full minute. */
+export const CLOUDFLARE_EDGE_MAX_RETRY_DELAY_MS = 8_000;
+
+export function parseCloudflareRetryAfterMs(bodyText: string): number | null {
+  if (!isCloudflareEdgeErrorBody(bodyText)) {
+    return null;
+  }
+  try {
+    const body = JSON.parse(bodyText.trim()) as JsonRecord;
+    const raw = body.retry_after;
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      return null;
+    }
+    return Math.min(raw * 1000, CLOUDFLARE_EDGE_MAX_RETRY_DELAY_MS);
+  } catch {
+    return null;
+  }
+}
 
 /** True when the body is a Cloudflare-generated edge error (not Paybond gateway JSON). */
 export function isCloudflareEdgeErrorBody(bodyText: string): boolean {
@@ -71,6 +88,7 @@ export async function fetchWithGatewayRetries(
   maxRetries: number,
 ): Promise<Response> {
   let lastErr: unknown;
+  let cloudflareRetries = 0;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     let res: Response;
     try {
@@ -84,6 +102,18 @@ export async function fetchWithGatewayRetries(
       continue;
     }
     if ([429, 500, 502, 503, 504].includes(res.status) && attempt + 1 < maxRetries) {
+      const bodyText = await res.clone().text();
+      if (isCloudflareEdgeErrorBody(bodyText)) {
+        if (cloudflareRetries >= 1) {
+          return res;
+        }
+        cloudflareRetries += 1;
+        const delayMs =
+          parseCloudflareRetryAfterMs(bodyText) ??
+          gatewayRetryDelayMs(attempt, res.headers.get("retry-after"));
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
       if (!(await shouldRetryGatewayResponse(res))) {
         return res;
       }

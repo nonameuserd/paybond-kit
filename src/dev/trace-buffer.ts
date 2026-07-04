@@ -1,9 +1,11 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, isAbsolute, resolve } from "node:path";
 
 import type { PaybondTraceEvent, PaybondTraceSink } from "../agent/types.js";
+import { readEnvFileValue } from "../cli/credentials.js";
+import { DEFAULT_ENV_FILE } from "../cli/globals.js";
 
 export const DEV_TRACE_DEFAULT_PORT = 9477;
 export const DEV_AUDIT_DIR = ".paybond";
@@ -133,8 +135,18 @@ export function buildDevStartupBannerLines(port = DEV_TRACE_DEFAULT_PORT): strin
   ];
 }
 
-export function devTraceHasCredentials(): boolean {
-  return Boolean(process.env.PAYBOND_API_KEY?.trim());
+export function devTraceHasCredentials(options: { cwd?: string; envFile?: string } = {}): boolean {
+  if (process.env.PAYBOND_API_KEY?.trim()) {
+    return true;
+  }
+  const envFile = (options.envFile ?? process.env.PAYBOND_ENV_FILE ?? DEFAULT_ENV_FILE).trim();
+  const base = options.cwd ?? process.cwd();
+  const envPath = isAbsolute(envFile) ? resolve(envFile) : resolve(base, envFile);
+  try {
+    return Boolean(readEnvFileValue(readFileSync(envPath, "utf8"), "PAYBOND_API_KEY"));
+  } catch {
+    return false;
+  }
 }
 
 export async function appendDevAuditLog(

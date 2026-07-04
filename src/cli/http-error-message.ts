@@ -2,10 +2,55 @@ import type { CliErrorDetails } from "./types.js";
 
 type JsonRecord = Record<string, unknown>;
 
+const HARBOR_REJECT_PREFIX = "sandbox guardrail Harbor ";
+const HARBOR_GATEWAY_CODES = new Set(["harbor_evidence_failed", "harbor_create_failed"]);
+
 function asRecord(value: unknown): JsonRecord | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonRecord)
     : undefined;
+}
+
+function sandboxGuardrailPhaseFromOperation(operation: string): string | undefined {
+  const lowered = operation.toLowerCase();
+  if (lowered.includes("sandbox guardrail evidence")) {
+    return "evidence";
+  }
+  if (lowered.includes("sandbox guardrail bootstrap")) {
+    return "bootstrap";
+  }
+  return undefined;
+}
+
+function sandboxGuardrailHarborCloudflareFallback(operation: string): string {
+  const phase = sandboxGuardrailPhaseFromOperation(operation) ?? "request";
+  const hint =
+    phase === "evidence"
+      ? "check --result-body includes top-level status and cost_cents"
+      : "check sandbox guardrail bootstrap inputs";
+  return `sandbox guardrail Harbor ${phase} rejected (gateway unavailable; ${hint})`;
+}
+
+function cloudflareEdgeSummaryMessage(
+  statusCode: number,
+  retryAfter: number | undefined,
+): string {
+  let message = `gateway edge error (HTTP ${statusCode}); upstream response was masked by the edge proxy`;
+  if (retryAfter !== undefined) {
+    message += `. Retry after ${retryAfter} seconds`;
+  }
+  return message;
+}
+
+function formatCloudflareCliMessage(
+  operation: string,
+  statusCode: number,
+  retryAfter: number | undefined,
+): string {
+  if (sandboxGuardrailPhaseFromOperation(operation) !== undefined) {
+    return sandboxGuardrailHarborCloudflareFallback(operation);
+  }
+  return `${operation}: ${cloudflareEdgeSummaryMessage(statusCode, retryAfter)}`;
 }
 
 /**
@@ -30,18 +75,12 @@ export function summarizeGatewayHttpError(
     if (body.cloudflare_error === true) {
       const retryAfter =
         typeof body.retry_after === "number" ? body.retry_after : undefined;
-      const title =
-        typeof body.title === "string"
-          ? body.title.replace(/^Error \d+:\s*/i, "")
-          : "service temporarily unavailable";
-      let message = `Gateway unavailable (HTTP ${statusCode}): ${title}`;
-      if (retryAfter !== undefined) {
-        message += `. Retry after ${retryAfter} seconds.`;
-      }
+      const message = cloudflareEdgeSummaryMessage(statusCode, retryAfter);
       return {
         message,
         details: {
           gateway_status: statusCode,
+          cloudflare_error: true,
           ...(retryAfter !== undefined ? { retry_after: retryAfter } : {}),
         },
       };
@@ -53,12 +92,20 @@ export function summarizeGatewayHttpError(
         typeof nested.code === "string" ? nested.code : String(nested.code ?? "");
       const gatewayMessage =
         typeof nested.message === "string" ? nested.message : "";
+      const harborCode =
+        typeof nested.harbor_code === "string" ? nested.harbor_code : "";
       if (gatewayMessage) {
+        const harborRejection =
+          gatewayMessage.startsWith(HARBOR_REJECT_PREFIX) ||
+          harborCode.length > 0 ||
+          HARBOR_GATEWAY_CODES.has(gatewayCode);
         return {
           message: gatewayMessage,
           details: {
             gateway_status: statusCode,
             ...(gatewayCode ? { gateway_code: gatewayCode } : {}),
+            ...(harborCode ? { harbor_code: harborCode } : {}),
+            ...(harborRejection ? { harbor_rejection: true } : {}),
           },
         };
       }
@@ -106,11 +153,18 @@ export function formatSdkHttpErrorMessage(
 ): string {
   const operation = rawMessage.replace(/ HTTP \d+:[\s\S]*$/u, "").trim() || "Gateway request";
   const summary = summarizeGatewayHttpError(statusCode, bodyText);
+  if (summary.details.harbor_rejection) {
+    return summary.message;
+  }
+  if (summary.details.cloudflare_error === true) {
+    const retryAfter =
+      typeof summary.details.retry_after === "number"
+        ? summary.details.retry_after
+        : undefined;
+    return formatCloudflareCliMessage(operation, statusCode, retryAfter);
+  }
   if (summary.message === `Gateway HTTP ${statusCode}`) {
     return `${operation} HTTP ${statusCode}`;
-  }
-  if (summary.message.startsWith("Gateway unavailable")) {
-    return `${operation}: ${summary.message}`;
   }
   return `${operation} HTTP ${statusCode}: ${summary.message}`;
 }

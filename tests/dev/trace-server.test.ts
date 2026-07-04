@@ -1,8 +1,11 @@
 import { get } from "node:http";
 import type { IncomingMessage } from "node:http";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
-import { recordSmokeTraceEvent } from "../../src/dev/trace-buffer.js";
+import { devTraceHasCredentials, recordSmokeTraceEvent } from "../../src/dev/trace-buffer.js";
 import { DEV_TRACE_SECURITY_HEADERS } from "../../src/dev/trace-security-headers.js";
 import { loadDevTraceDashboardHtml } from "../../src/dev/trace-ui.js";
 import { startDevTraceServer } from "../../src/dev/trace-server.js";
@@ -75,5 +78,37 @@ describe("dev trace dashboard", () => {
     expect(typeof parsed.has_credentials).toBe("boolean");
 
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  it("reports has_credentials from env file when process env is unset", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-trace-"));
+    await writeFile(join(cwd, ".env.local"), "PAYBOND_API_KEY=sk_test_from_file\n", "utf8");
+    const previous = process.env.PAYBOND_API_KEY;
+    delete process.env.PAYBOND_API_KEY;
+    try {
+      expect(devTraceHasCredentials({ cwd, envFile: ".env.local" })).toBe(true);
+      const server = await startDevTraceServer({ port: 0, cwd, envFile: ".env.local" });
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("expected bound TCP port");
+      }
+      const eventsPayload = await new Promise<string>((resolve, reject) => {
+        get(`http://127.0.0.1:${address.port}/api/events`, (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk) => chunks.push(chunk));
+          response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+          response.on("error", reject);
+        }).on("error", reject);
+      });
+      const parsed = JSON.parse(eventsPayload) as { has_credentials: boolean };
+      expect(parsed.has_credentials).toBe(true);
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    } finally {
+      if (previous === undefined) {
+        delete process.env.PAYBOND_API_KEY;
+      } else {
+        process.env.PAYBOND_API_KEY = previous;
+      }
+    }
   });
 });
