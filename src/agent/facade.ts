@@ -5,6 +5,8 @@ import { createOpenAIAgentsAdapter, createPaybondOpenAIAgentsConfig } from "../o
 import type { PaybondPolicy } from "../policy/load.js";
 import type { PaybondPolicyLoadSource } from "../policy/load.js";
 import { isKnownPolicyPresetId, resolvePolicyPresetPath } from "../policy/presets.js";
+import { createPaybondCloudflareAgentsConfig } from "../cloudflare-agents/config.js";
+import { createPaybondMastraConfig } from "../mastra/config.js";
 import { createPaybondVercelAgentConfig } from "../vercel-ai/config.js";
 import { paybondVercelToolApproval } from "../vercel-ai/tool-approval.js";
 import {
@@ -108,6 +110,13 @@ export function toPaybondAgentResult<TTools>(
         hooks.allowedTools = result.claudeAgentsConfig.allowedTools;
       }
       break;
+    case "mastra":
+      break;
+    case "cloudflare-agents":
+      if (result.toolApproval) {
+        hooks.toolApproval = result.toolApproval;
+      }
+      break;
     default: {
       const exhaustive: never = result.framework;
       throw new Error(`unsupported guarded agent framework: ${String(exhaustive)}`);
@@ -171,6 +180,10 @@ export function wrapPaybondTools(
       return createPaybondOpenAIAgentsConfig(run, tools as never).tools;
     case "claude-agents":
       return createPaybondClaudeAgentsConfig(run, tools as never).agentTools;
+    case "mastra":
+      return createPaybondMastraConfig(run, tools as never).tools;
+    case "cloudflare-agents":
+      return createPaybondCloudflareAgentsConfig(run, tools as never).tools;
     case "langgraph":
       throw new Error(
         'framework "langgraph" does not wrap tools in place; use instrument() or createPaybondLangGraphHooks(run)',

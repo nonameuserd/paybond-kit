@@ -58,4 +58,18 @@ describe("paybond init completion", () => {
     await expect(runCompletionInit(["--preset", "api_response_ok", "--out", out])).resolves.toBe(1);
     expect(await readFile(out, "utf8")).toBe("existing");
   });
+
+  it("scaffolds x402_travel_booking vertical preset with vendor contract pins", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-completion-init-"));
+    const out = join(cwd, "paybond-completion-x402-travel-booking.ts");
+    const preset = getCompletionPreset("x402_travel_booking");
+
+    await expect(runCompletionInit(["--preset", "x402_travel_booking", "--out", out])).resolves.toBe(0);
+
+    const body = await readFile(out, "utf8");
+    expect(body).toContain('export const COMPLETION_PRESET_ID = "x402_travel_booking"');
+    expect(body).toContain("confirmation_number: string");
+    expect(body).toContain(`export const VENDOR_CONTRACT_API_VERSION = "${preset.vendor_contract?.api_version}"`);
+    expect(body).toContain("mapVendorEvidenceToCanonical");
+  });
 });

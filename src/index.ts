@@ -47,6 +47,7 @@ import {
   gatewayRetryDelayMs,
   shouldRetryGatewayResponse,
 } from "./gateway-retry.js";
+import { PaybondAudit, PaybondAuditExports } from "./audit/index.js";
 import {
   parsePolicyRemoteValidateResponse,
   policyValidateQueryString,
@@ -60,6 +61,15 @@ import {
 import { paybondPolicyPresets } from "./policy/policy-api.js";
 import { paybondSolutionPresets } from "./solutions/api.js";
 import { requireSecureGatewayUrl } from "./gateway-url.js";
+import {
+  executeFundWithX402,
+  PaybondX402FundingFailedError,
+  PaybondX402FundingPendingError,
+  buildX402FundRequestEnvelope,
+  type FundRequestEnvelope,
+  type PaymentRequired,
+  type X402FundPollOptions,
+} from "./x402-funding.js";
 
 declare const Buffer: {
   from(input: string, encoding?: string): {
@@ -1661,6 +1671,43 @@ export class HarborClient {
   }
 
   /**
+   * POST `/intents/{intentId}/settlement/confirm` — confirms the settlement action implied by
+   * stored evidence evaluation (does not choose release vs refund).
+   */
+  async confirmSettlement(
+    intentId: string,
+    body: Record<string, unknown> = {},
+    options?: { idempotencyKey?: string },
+  ): Promise<Record<string, unknown>> {
+    const url = `${this.base}intents/${intentId}/settlement/confirm`;
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-tenant-id": this.tenantId,
+    };
+    if (options?.idempotencyKey?.trim()) {
+      headers["idempotency-key"] = options.idempotencyKey.trim();
+    }
+    const res = await this.fetchWithRetries(
+      url,
+      {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+      },
+      { retryBody: body },
+    );
+    const text = await res.text();
+    if (!res.ok) {
+      throw new HarborHttpError(`Harbor settlement confirm HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return JSON.parse(text) as Record<string, unknown>;
+  }
+
+  /**
    * `GET /ledger/v1/tip` — latest sequence and entry commitment for the authenticated tenant.
    *
    * @throws HarborHttpError on HTTP failure
@@ -2071,6 +2118,27 @@ export class GatewayHarborClient {
       });
     }
     return parseSubmitEvidenceResponse(JSON.parse(text));
+  }
+
+  /** Recognition-gated Gateway Harbor settlement confirmation. */
+  async confirmSettlement(
+    intentId: string,
+    body: Record<string, unknown>,
+    options: GatewayHarborMutationOptions,
+  ): Promise<Record<string, unknown>> {
+    const { res, text, url } = await this.postJSON(
+      `/harbor/intents/${encodeURIComponent(intentId)}/settlement/confirm`,
+      body,
+      this.mutationHeaders("confirmSettlement", options),
+    );
+    if (!res.ok) {
+      throw new HarborHttpError(`Gateway Harbor settlement confirm HTTP ${res.status}: ${text}`, {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+      });
+    }
+    return JSON.parse(text) as Record<string, unknown>;
   }
 }
 
@@ -3473,6 +3541,14 @@ export type PaybondSubmitEvidenceParams = Omit<
   recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
 };
 
+/** Parameters for {@link PaybondIntents.confirmSettlement}. */
+export type PaybondConfirmSettlementParams = {
+  intentId: string;
+  recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+  body?: Record<string, unknown>;
+  idempotencyKey?: string;
+};
+
 function nowRfc3339Seconds(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
@@ -3487,7 +3563,8 @@ export type PaybondCreateIntentWithPolicyBindingParams = Omit<
 };
 
 /**
- * Ergonomic intent helpers: principal-signed intent create, x402 funding, and payee-signed evidence.
+ * Ergonomic intent helpers: principal-signed intent create, x402 funding, payee-signed evidence,
+ * and settlement confirmation.
  */
 export class PaybondIntents {
   constructor(private readonly harbor: HarborClient | GatewayHarborClient) {}
@@ -3550,6 +3627,39 @@ export class PaybondIntents {
   }
 
   /**
+   * One-call x402 fund flow: sign 402 challenges, retry with `payment-signature`, and poll until funded.
+   *
+   * Wallet keys stay app-owned — pass injectable `signPayment` and `issueRecognitionProof` callbacks.
+   */
+  async fundWithX402(params: {
+    intentId: string;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+    signPayment: (challenge: PaymentRequired) => Promise<string>;
+    issueRecognitionProof: (
+      envelope: FundRequestEnvelope,
+    ) => Promise<AgentRecognitionProofV1 | Record<string, unknown>>;
+    pollOptions?: X402FundPollOptions;
+    idempotencyKey?: string;
+  }): Promise<FundIntentResult> {
+    const { intentId, recognitionProof, signPayment, issueRecognitionProof, pollOptions, idempotencyKey } =
+      params;
+    return executeFundWithX402({
+      intentId,
+      recognitionProof,
+      signPayment,
+      issueRecognitionProof,
+      pollOptions,
+      fund: ({ recognitionProof: proof, paymentSignature }) =>
+        this.fund({
+          intentId,
+          recognitionProof: proof,
+          paymentSignature,
+          idempotencyKey,
+        }),
+    });
+  }
+
+  /**
    * Sign payee evidence and POST it. `payeeSigningSeed` must be 32 bytes.
    */
   async submitEvidence(
@@ -3570,6 +3680,15 @@ export class PaybondIntents {
     });
     return this.harbor.submitEvidence(rest.intentId, wire, { idempotencyKey, recognitionProof } as never);
   }
+
+  /**
+   * Confirm Harbor settlement through Gateway `POST /harbor/intents/{id}/settlement/confirm`.
+   * Confirms the action implied by stored evidence; does not choose release vs refund.
+   */
+  async confirmSettlement(params: PaybondConfirmSettlementParams): Promise<Record<string, unknown>> {
+    const { intentId, recognitionProof, body = {}, idempotencyKey } = params;
+    return this.harbor.confirmSettlement(intentId, body, { idempotencyKey, recognitionProof } as never);
+  }
 }
 
 /**
@@ -3583,6 +3702,7 @@ export class Paybond {
   readonly a2a: GatewayA2AClient;
   readonly protocol: GatewayProtocolClient;
   readonly intents: PaybondIntents;
+  readonly audit: PaybondAudit;
   readonly agentRun: PaybondAgentRunFacade;
 
   private constructor(
@@ -3592,6 +3712,7 @@ export class Paybond {
     fraud: GatewayFraudClient,
     a2a: GatewayA2AClient,
     protocol: GatewayProtocolClient,
+    audit: PaybondAudit,
   ) {
     this.harbor = harbor;
     this.guardrails = guardrails;
@@ -3600,6 +3721,7 @@ export class Paybond {
     this.a2a = a2a;
     this.protocol = protocol;
     this.intents = new PaybondIntents(harbor);
+    this.audit = audit;
     this.agentRun = new PaybondAgentRunFacade(this);
   }
 
@@ -3638,7 +3760,13 @@ export class Paybond {
       staticGatewayBearerToken: init.apiKey,
       maxRetries,
     });
-    return new Paybond(harbor, guardrails, signal, fraud, a2a, protocol);
+    const audit = new PaybondAudit(
+      PaybondAuditExports.open(gatewayBaseUrl, tenantId, {
+        staticGatewayBearerToken: init.apiKey,
+        maxRetries,
+      }),
+    );
+    return new Paybond(harbor, guardrails, signal, fraud, a2a, protocol, audit);
   }
 
   /** Reserved for future HTTP client cleanup; safe to call after work completes. */
@@ -3796,13 +3924,27 @@ export {
 export {
   AGENT_RECOGNITION_GATEWAY_VERIFIER_ID,
   AGENT_RECOGNITION_PROOF_KIND_V1,
+  AGENT_RECOGNITION_PURPOSE_CREATE,
+  AGENT_RECOGNITION_PURPOSE_FUND,
   AGENT_RECOGNITION_PURPOSE_EVIDENCE_SUBMIT,
   newAgentRecognitionRequestEnvelope,
   signAgentRecognitionProofV1,
+  signHarborCreateRecognitionProof,
+  signHarborFundRecognitionProof,
   signHarborEvidenceSubmitRecognitionProof,
+  signHarborSettlementConfirmRecognitionProof,
   type SignAgentRecognitionProofV1Params,
   type SignedAgentRecognitionProofV1,
 } from "./agent-recognition.js";
+export {
+  executeFundWithX402,
+  buildX402FundRequestEnvelope,
+  PaybondX402FundingFailedError,
+  PaybondX402FundingPendingError,
+  type FundRequestEnvelope,
+  type PaymentRequired,
+  type X402FundPollOptions,
+} from "./x402-funding.js";
 export {
   validateCompletionEvidence,
   type CompletionEvidenceValidationReport,
@@ -3903,6 +4045,21 @@ export {
   type PaybondToolResolution,
   type PaybondWrapToolsOptions,
 } from "./agent/index.js";
+export {
+  PaybondAudit,
+  PaybondAuditExports,
+  GatewayAuditExportsClient,
+  parseAuditExportList,
+  parseAuditExportJobGet,
+  verifyAuditManifest,
+  verifyAuditBundleLocal,
+  type AuditExportJobDetail,
+  type AuditExportJobGetResponse,
+  type AuditExportJobSummary,
+  type AuditExportListPage,
+  type AuditVerifyResult,
+  type AuditExportsGateway,
+} from "./audit/index.js";
 export {
   PaybondPolicy,
   composePolicyLayers,

@@ -134,7 +134,7 @@ function evidenceFieldComments(preset: CompletionPreset): string[] {
   }
   lines.push(
     "// Sandbox: bootstrap with completionPreset to evaluate a strong Harbor predicate on evidence submit.",
-    "// Production: publish the managed template head, then create intents with policy_binding (signing v5).",
+    "// Production: publish the managed template head, then create intents with policy_binding (signing v7).",
     `//   paybond policy templates`,
     `//   paybond policy preview --template ${preset.harbor_template_id} --parameters-file parameters.json --evidence-file evidence.json`,
   );
@@ -220,11 +220,16 @@ ${buildTsFieldLines(preset.evidence_schema).join("\n")}
 ${vendorPackHelpers}
 ${buildFn}
 
-// Production: use buildSignedCreateIntentBodyWithPolicyBinding from @paybond/kit after publishing ${preset.harbor_template_id}.
+// Production (signing v7): publish managed template head for ${preset.harbor_template_id}, then:
+// import { PaybondPolicy } from "@paybond/kit";
+// const policy = await PaybondPolicy.load("./paybond.policy.yaml");
+// const created = await paybond.intents.createWithPolicyBinding(
+//   policy.toIntentCreateInput({ principalDid, principalSigningSeed, payeeDid, payeeSigningSeed, deadlineRfc3339, settlementRail: "stripe_connect", recognitionProof, publishedPolicyHead }),
+// );
 export const policyBindingStub = {
   template_id: HARBOR_TEMPLATE_ID,
   parameters: completionTemplateParameters,
-  // head_seq and digest_hex are assigned after: paybond policy publish ...
+  // version_seq and head_digest are assigned after publishing the managed template head.
 };
 
 const DEFAULT_OPERATION = "paid_tool.operation";

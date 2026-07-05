@@ -9,9 +9,12 @@ import {
 } from "../../agent/types.js";
 import { resolveCliGatewayErrorMessage } from "../http-error-message.js";
 import { runGenericSandboxDemo } from "../../agent/generic-sandbox-demo.js";
+import { runMcpSandboxDemo } from "../../mcp/sandbox-demo.js";
 import {
   loadRunClaudeAgentsSandboxDemo,
+  loadRunCloudflareAgentsSandboxDemo,
   loadRunLangGraphSandboxDemo,
+  loadRunMastraSandboxDemo,
   loadRunOpenAIAgentsSandboxDemo,
   loadRunVercelAiSandboxDemo,
 } from "../agent/demo-loaders.js";
@@ -1442,6 +1445,110 @@ export async function handleAgentDemoGenericSmoke(
   });
 }
 
+export async function handleAgentDemoMastraSmoke(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const productionFlag = consumeBooleanFlag(argv, "--production");
+  const operationFlag = consumeFlag(productionFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const presetFlag = consumeFlag(spendFlag.rest, "--evidence-preset");
+  if (!operationFlag.value || !spendFlag.value || !presetFlag.value) {
+    throw agentCliError(
+      "agent demo mastra smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const requestedSpendCents = parseRequiredNonNegativeInt(
+    spendFlag.value,
+    "--requested-spend-cents",
+  );
+
+  return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const runMastraSandboxDemo = await loadRunMastraSandboxDemo();
+    const demo = await runMastraSandboxDemo({
+      paybond: session.paybond,
+      operation: operationFlag.value,
+      requestedSpendCents,
+      evidencePreset: presetFlag.value,
+    });
+
+    if (!demo.authorization.allow) {
+      throw agentCliError("Mastra sandbox demo authorization did not pass", {
+        code: "cli.agent.authorization_denied",
+        exitCode: 3,
+        category: "forbidden",
+        details: { authorization: demo.authorization },
+      });
+    }
+
+    if (!demo.execute.tool_result) {
+      throw agentCliError("Mastra sandbox demo did not produce a paid tool result", {
+        code: "cli.agent.tool_execute_failed",
+        details: { execute: demo.execute },
+      });
+    }
+
+    return {
+      data: demo,
+      warnings: session.warnings,
+    };
+  });
+}
+
+export async function handleAgentDemoCloudflareAgentsSmoke(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const productionFlag = consumeBooleanFlag(argv, "--production");
+  const operationFlag = consumeFlag(productionFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const presetFlag = consumeFlag(spendFlag.rest, "--evidence-preset");
+  if (!operationFlag.value || !spendFlag.value || !presetFlag.value) {
+    throw agentCliError(
+      "agent demo cloudflare-agents smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const requestedSpendCents = parseRequiredNonNegativeInt(
+    spendFlag.value,
+    "--requested-spend-cents",
+  );
+
+  return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const runCloudflareAgentsSandboxDemo = await loadRunCloudflareAgentsSandboxDemo();
+    const demo = await runCloudflareAgentsSandboxDemo({
+      paybond: session.paybond,
+      operation: operationFlag.value,
+      requestedSpendCents,
+      evidencePreset: presetFlag.value,
+    });
+
+    if (!demo.authorization.allow) {
+      throw agentCliError("Cloudflare Agents sandbox demo authorization did not pass", {
+        code: "cli.agent.authorization_denied",
+        exitCode: 3,
+        category: "forbidden",
+        details: { authorization: demo.authorization },
+      });
+    }
+
+    if (!demo.execute.tool_result) {
+      throw agentCliError("Cloudflare Agents sandbox demo did not produce a paid tool result", {
+        code: "cli.agent.tool_execute_failed",
+        details: { execute: demo.execute },
+      });
+    }
+
+    return {
+      data: demo,
+      warnings: session.warnings,
+    };
+  });
+}
+
 export async function handleAgentDemoClaudeAgentsSmoke(
   ctx: CliContext,
   argv: string[],
@@ -1493,6 +1600,61 @@ export async function handleAgentDemoClaudeAgentsSmoke(
       throw agentCliError("Claude Agents sandbox demo did not produce a paid tool result", {
         code: "cli.agent.tool_execute_failed",
         details: { allowed_tools: demo.allowed_tools },
+      });
+    }
+
+    return {
+      data: demo,
+      warnings: session.warnings,
+    };
+  });
+}
+
+export async function handleAgentDemoMcpSmoke(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const productionFlag = consumeBooleanFlag(argv, "--production");
+  const operationFlag = consumeFlag(productionFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const presetFlag = consumeFlag(spendFlag.rest, "--evidence-preset");
+  if (!operationFlag.value || !spendFlag.value || !presetFlag.value) {
+    throw agentCliError(
+      "agent demo mcp smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const requestedSpendCents = parseRequiredNonNegativeInt(
+    spendFlag.value,
+    "--requested-spend-cents",
+  );
+
+  return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const demo = await runMcpSandboxDemo({
+      paybond: session.paybond,
+      apiKey: session.apiKey,
+      gatewayBaseUrl: ctx.globals.gateway,
+      operation: operationFlag.value,
+      requestedSpendCents,
+      evidencePreset: presetFlag.value,
+    });
+
+    if (!demo.authorization.allow) {
+      throw agentCliError("MCP sandbox demo authorization did not pass", {
+        code: "cli.agent.authorization_denied",
+        exitCode: 3,
+        category: "forbidden",
+        details: { authorization: demo.authorization },
+      });
+    }
+
+    if (!demo.evidence.submitted) {
+      throw agentCliError("MCP sandbox demo did not submit evidence", {
+        code: "cli.agent.evidence_failed",
+        exitCode: 5,
+        category: "gateway",
+        details: { tool_result: demo.tool_result },
       });
     }
 
@@ -1707,6 +1869,33 @@ export async function handleAgent(
       });
     }
     return handleAgentDemoOpenAIAgentsSmoke(ctx, argv.slice(1));
+  }
+  if (group === "demo" && subcommand === "mcp") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent demo mcp requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentDemoMcpSmoke(ctx, argv.slice(1));
+  }
+  if (group === "demo" && subcommand === "mastra") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent demo mastra requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentDemoMastraSmoke(ctx, argv.slice(1));
+  }
+  if (group === "demo" && subcommand === "cloudflare-agents") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent demo cloudflare-agents requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentDemoCloudflareAgentsSmoke(ctx, argv.slice(1));
   }
   throw agentCliError(`unknown agent subcommand: agent ${group} ${subcommand}`, {
     code: "cli.usage.unknown_command",

@@ -40,8 +40,11 @@ export function redactSensitiveFields(value: unknown): unknown {
       const lowered = key.toLowerCase();
       if (
         lowered === "capability_token" ||
+        lowered === "capabilitytoken" ||
         lowered === "access_token" ||
+        lowered === "accesstoken" ||
         lowered === "refresh_token" ||
+        lowered === "refreshtoken" ||
         (lowered.endsWith("_token") && lowered !== "token_type")
       ) {
         out[key] = hasRedactableScalarContent(child) ? "[redacted]" : child;

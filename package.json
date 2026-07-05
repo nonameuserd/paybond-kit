@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.11.10",
+  "version": "0.11.11",
   "mcpName": "io.github.nonameuserd/paybond",
   "description": "Paybond Kit for TypeScript: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement.",
   "license": "Apache-2.0",
@@ -45,6 +45,14 @@
     "./mcp": {
       "types": "./dist/mcp/index.d.ts",
       "import": "./dist/mcp/index.js"
+    },
+    "./mastra": {
+      "types": "./dist/mastra/index.d.ts",
+      "import": "./dist/mastra/index.js"
+    },
+    "./cloudflare-agents": {
+      "types": "./dist/cloudflare-agents/index.d.ts",
+      "import": "./dist/cloudflare-agents/index.js"
     },
     "./policy": {
       "types": "./dist/policy/index.d.ts",
@@ -124,6 +132,8 @@
     "@anthropic-ai/claude-agent-sdk": ">=0.2.100",
     "@langchain/core": ">=0.3.0",
     "@langchain/langgraph": ">=0.2.50",
+    "@mastra/core": ">=1.0.0",
+    "agents": ">=0.10.0",
     "@openai/agents": ">=0.12.0",
     "ai": ">=4.0.0",
     "zod": "^3.25.32 || ^4.2.0"
@@ -136,6 +146,12 @@
       "optional": true
     },
     "@langchain/langgraph": {
+      "optional": true
+    },
+    "@mastra/core": {
+      "optional": true
+    },
+    "agents": {
       "optional": true
     },
     "@openai/agents": {
@@ -155,13 +171,15 @@
     "ajv": "^8.17.1",
     "blake3": "^2.1.7",
     "uuid": "^14.0.0",
-    "zod": "^4.4.3"
+    "zod": "^3.25.32 || ^4.2.0"
   },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.197",
     "@langchain/core": "^1.2.1",
     "@langchain/langgraph": "^1.4.7",
     "@langchain/langgraph-sdk": "^1.9.25",
+    "@mastra/core": "^1.49.0",
+    "agents": "^0.17.3",
     "@openai/agents": "^0.12.0",
     "@types/node": "^22.10.0",
     "ai": "^7.0.4",

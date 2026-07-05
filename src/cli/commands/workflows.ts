@@ -4,7 +4,21 @@ import {
   extractNextCursor,
   partialResultsWarning,
 } from "../automation.js";
+import {
+  signHarborCreateRecognitionProof,
+  signHarborEvidenceSubmitRecognitionProof,
+  signHarborFundRecognitionProof,
+  signHarborSettlementConfirmRecognitionProof,
+} from "../../agent-recognition.js";
+import {
+  DEPRECATED_INTENTS_FUND_BODY_WARNING,
+  fundBodyShimUsed,
+  parseHarborMutationFlags,
+  resolveFundPaymentSignatureFromBody,
+  resolveHarborRecognition,
+} from "../intents-harbor-mutation.js";
 import { commandPath, requireConfirmation, type CliContext, withGateway } from "../context.js";
+import { withPaybondCli } from "../paybond.js";
 import { consumeFlag, parseOptionalNonNegativeInt, parseRequiredNonNegativeInt } from "../globals.js";
 import { maskApiKey, redactSensitiveFields } from "../redact.js";
 import { CliError, type CommandResult } from "../types.js";
@@ -91,6 +105,9 @@ export async function handleKeys(ctx: CliContext, subcommand: string, argv: stri
 }
 
 export async function handleIntents(ctx: CliContext, subcommand: string, argv: string[]): Promise<CommandResult> {
+  if (subcommand === "create") {
+    return handleIntentsCreate(ctx, argv);
+  }
   return withGateway(ctx, async (gateway) => {
     if (subcommand === "list") {
       const statusFlag = consumeFlag(argv, "--status");
@@ -117,34 +134,147 @@ export async function handleIntents(ctx: CliContext, subcommand: string, argv: s
       const body = await gateway.getJson(`/harbor/operator/v1/intents/${encodeURIComponent(intentId)}`);
       return { data: redactSensitiveFields(body) as Record<string, unknown> };
     }
-    if (subcommand === "create") {
-      const { payload } = await resolveJsonBody(argv, {
-        missingMessage: "intents create requires --body <json-file> or --stdin",
-      });
-      const body = await gateway.postJson("/harbor/intents", payload);
-      return { data: redactSensitiveFields(body) as Record<string, unknown> };
-    }
     if (!intentId) {
       throw new CliError(`intents ${subcommand} requires <intent_id>`, { category: "usage", code: "cli.usage.missing_intent_id" });
     }
     if (subcommand === "fund") {
-      const { payload } = await resolveJsonBody(argv, { required: false });
-      const body = await gateway.postJson(`/harbor/intents/${encodeURIComponent(intentId)}/fund`, payload);
-      return { data: redactSensitiveFields(body) as Record<string, unknown> };
+      return handleIntentsFund(ctx, intentId, argv.slice(1));
     }
     if (subcommand === "evidence") {
-      const { payload } = await resolveJsonBody(argv, {
-        missingMessage: "intents evidence requires --body <json-file> or --stdin",
-      });
-      const body = await gateway.postJson(`/harbor/intents/${encodeURIComponent(intentId)}/evidence`, payload);
-      return { data: redactSensitiveFields(body) as Record<string, unknown> };
+      return handleIntentsEvidence(ctx, intentId, argv.slice(1));
     }
     if (subcommand === "settlement-confirm") {
-      const { payload } = await resolveJsonBody(argv, { required: false });
-      const body = await gateway.postJson(`/harbor/intents/${encodeURIComponent(intentId)}/settlement/confirm`, payload);
-      return { data: redactSensitiveFields(body) as Record<string, unknown> };
+      return handleIntentsSettlementConfirm(ctx, intentId, argv);
     }
     throw new CliError(`unknown intents subcommand: ${subcommand}`, { category: "usage", code: "cli.usage.unknown_command" });
+  });
+}
+
+async function handleIntentsCreate(ctx: CliContext, argv: string[]): Promise<CommandResult> {
+  const flags = parseHarborMutationFlags(argv);
+  const { payload } = await resolveJsonBody(flags.restArgv, {
+    missingMessage: "intents create requires --body <json-file> or --stdin",
+  });
+  const body = payload ?? {};
+
+  return withPaybondCli(ctx, async (session) => {
+    const recognition = await resolveHarborRecognition(ctx, flags);
+    const recognitionProof = signHarborCreateRecognitionProof({
+      tenantId: session.paybond.harbor.tenantId,
+      intentBody: body,
+      keyId: recognition.agentRecognitionKeyId,
+      signingSeed: recognition.agentRecognitionSigningSeed,
+    });
+    const result = await session.paybond.harbor.createIntent(body, {
+      recognitionProof,
+      idempotencyKey: flags.idempotencyKey?.trim(),
+    });
+    return {
+      data: redactSensitiveFields(result) as Record<string, unknown>,
+      warnings: session.warnings.length ? session.warnings : undefined,
+    };
+  });
+}
+
+async function handleIntentsEvidence(
+  ctx: CliContext,
+  intentId: string,
+  argv: string[],
+): Promise<CommandResult> {
+  const flags = parseHarborMutationFlags(argv);
+  const { payload } = await resolveJsonBody(flags.restArgv, {
+    missingMessage: "intents evidence requires --body <json-file> or --stdin",
+  });
+  const body = payload ?? {};
+
+  return withPaybondCli(ctx, async (session) => {
+    const recognition = await resolveHarborRecognition(ctx, flags);
+    const recognitionProof = signHarborEvidenceSubmitRecognitionProof({
+      tenantId: session.paybond.harbor.tenantId,
+      intentId,
+      evidenceBody: body,
+      keyId: recognition.agentRecognitionKeyId,
+      signingSeed: recognition.agentRecognitionSigningSeed,
+    });
+    const result = await session.paybond.harbor.submitEvidence(intentId, body, {
+      recognitionProof,
+      idempotencyKey: flags.idempotencyKey?.trim(),
+    });
+    return {
+      data: redactSensitiveFields(result) as Record<string, unknown>,
+      warnings: session.warnings.length ? session.warnings : undefined,
+    };
+  });
+}
+
+async function handleIntentsFund(
+  ctx: CliContext,
+  intentId: string,
+  argv: string[],
+): Promise<CommandResult> {
+  const flags = parseHarborMutationFlags(argv);
+  const paymentSignatureFlag = consumeFlag(flags.restArgv, "--payment-signature");
+  let paymentSignature = paymentSignatureFlag.value?.trim() || undefined;
+  const deprecationWarnings: string[] = [];
+  const bodyShimUsed = fundBodyShimUsed(paymentSignatureFlag.rest);
+
+  const { payload } = await resolveJsonBody(paymentSignatureFlag.rest, { required: false });
+  if (bodyShimUsed) {
+    deprecationWarnings.push(DEPRECATED_INTENTS_FUND_BODY_WARNING);
+    if (!paymentSignature) {
+      paymentSignature = resolveFundPaymentSignatureFromBody(payload);
+    }
+  }
+
+  return withPaybondCli(ctx, async (session) => {
+    const recognition = await resolveHarborRecognition(ctx, flags);
+    const recognitionProof = signHarborFundRecognitionProof({
+      tenantId: session.paybond.harbor.tenantId,
+      intentId,
+      keyId: recognition.agentRecognitionKeyId,
+      signingSeed: recognition.agentRecognitionSigningSeed,
+    });
+    const result = await session.paybond.harbor.fundIntent(intentId, {
+      recognitionProof,
+      paymentSignature,
+      idempotencyKey: flags.idempotencyKey?.trim(),
+    });
+    const warnings = [...session.warnings, ...deprecationWarnings];
+    return {
+      data: redactSensitiveFields(result) as Record<string, unknown>,
+      warnings: warnings.length ? warnings : undefined,
+    };
+  });
+}
+
+async function handleIntentsSettlementConfirm(
+  ctx: CliContext,
+  intentId: string,
+  argv: string[],
+): Promise<CommandResult> {
+  const flags = parseHarborMutationFlags(argv);
+  const { payload } = await resolveJsonBody(flags.restArgv, { required: false });
+
+  return withPaybondCli(ctx, async (session) => {
+    const recognition = await resolveHarborRecognition(ctx, flags);
+    const body = payload ?? {};
+    const recognitionProof = signHarborSettlementConfirmRecognitionProof({
+      tenantId: session.paybond.harbor.tenantId,
+      intentId,
+      body,
+      keyId: recognition.agentRecognitionKeyId,
+      signingSeed: recognition.agentRecognitionSigningSeed,
+    });
+    const result = await session.paybond.intents.confirmSettlement({
+      intentId,
+      body,
+      recognitionProof,
+      idempotencyKey: flags.idempotencyKey?.trim(),
+    });
+    return {
+      data: redactSensitiveFields(result) as Record<string, unknown>,
+      warnings: session.warnings.length ? session.warnings : undefined,
+    };
   });
 }
 

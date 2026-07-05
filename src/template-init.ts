@@ -7,6 +7,7 @@ import type { PolicyPresetId } from "./policy/presets.js";
 
 export type TemplateId =
   | "travel-agent"
+  | "mastra-travel-agent"
   | "vercel-shopping-agent"
   | "openai-agents-demo"
   | "openai-shopping-agent"
@@ -40,7 +41,8 @@ export type TemplateFramework =
   | "vercel-ai"
   | "openai-agents"
   | "claude-agents"
-  | "mcp";
+  | "mcp"
+  | "mastra";
 
 const TEMPLATE_FRAMEWORK_ALIASES: Record<string, TemplateFramework> = {
   generic: "generic",
@@ -52,6 +54,7 @@ const TEMPLATE_FRAMEWORK_ALIASES: Record<string, TemplateFramework> = {
   claude: "claude-agents",
   "claude-agents": "claude-agents",
   mcp: "mcp",
+  mastra: "mastra",
 };
 
 /** Normalize CLI `--framework` values to bundled template framework ids. */
@@ -70,6 +73,8 @@ function frameworkForEntry(entry: TemplateManifestEntry): TemplateFramework {
 const TEMPLATE_ALIASES: Record<string, TemplateId> = {
   "travel-agent": "travel-agent",
   "paybond-travel-agent": "travel-agent",
+  "mastra-travel-agent": "mastra-travel-agent",
+  "paybond-mastra-travel-agent": "mastra-travel-agent",
   "vercel-shopping-agent": "vercel-shopping-agent",
   "paybond-vercel-shopping-agent": "vercel-shopping-agent",
   "openai-agents-demo": "openai-agents-demo",
@@ -273,13 +278,14 @@ export function templateInitUsage(): string {
     "       paybond init [--solution ...] [--framework ...]  (wizard scaffold)",
     "",
     "Templates:",
-    "  travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
+    "  travel-agent, mastra-travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
     "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, aws-operator",
     "",
-    "Frameworks (with --template): generic|langgraph|vercel-ai|openai|openai-agents|claude-agents|mcp",
+    "Frameworks (with --template): generic|langgraph|vercel-ai|openai|openai-agents|claude-agents|mcp|mastra",
     "",
     "Examples:",
     "  paybond init --template travel-agent --framework langgraph",
+    "  paybond init --template mastra-travel-agent --framework mastra",
     "  paybond init --template paybond-vercel-shopping-agent --force",
     "  paybond init --solution travel --framework langgraph --non-interactive",
   ].join("\n");

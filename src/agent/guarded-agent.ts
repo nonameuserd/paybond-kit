@@ -20,6 +20,14 @@ import {
   type ClaudeAgentsConfig,
 } from "../claude-agents/config.js";
 import {
+  createPaybondCloudflareAgentsConfig,
+  type CloudflareAgentsToolSet,
+} from "../cloudflare-agents/config.js";
+import {
+  createPaybondMastraConfig,
+  type MastraToolLike,
+} from "../mastra/config.js";
+import {
   createPaybondGenericAgentConfig,
 } from "./generic-runner.js";
 import type { PaybondToolRegistry } from "./registry.js";
@@ -32,7 +40,9 @@ export type GuardedAgentFramework =
   | "openai-agents"
   | "vercel-ai"
   | "langgraph"
-  | "claude-agents";
+  | "claude-agents"
+  | "mastra"
+  | "cloudflare-agents";
 
 export type CreateGuardedAgentInput<TTools = unknown> = {
   policy: PaybondPolicyLoadSource | PaybondPolicy;
@@ -176,6 +186,26 @@ export async function createGuardedAgent<TTools>(
         framework: "claude-agents",
         agentTools: claudeAgentsConfig.agentTools,
         claudeAgentsConfig,
+      } as CreateGuardedAgentResult<TTools>;
+    }
+    case "mastra": {
+      const config = createPaybondMastraConfig(run, input.tools as MastraToolLike[]);
+      return {
+        ...base,
+        framework: "mastra",
+        agentTools: config.tools,
+      } as CreateGuardedAgentResult<TTools>;
+    }
+    case "cloudflare-agents": {
+      const config = createPaybondCloudflareAgentsConfig(
+        run,
+        input.tools as CloudflareAgentsToolSet,
+      );
+      return {
+        ...base,
+        framework: "cloudflare-agents",
+        agentTools: config.tools,
+        toolApproval: config.toolApproval,
       } as CreateGuardedAgentResult<TTools>;
     }
     default: {

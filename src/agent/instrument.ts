@@ -781,3 +781,17 @@ export function instrumentPaybondMCP<TTools>(
 ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
   return frameworkInstrument(paybond, "generic", input);
 }
+
+export function instrumentPaybondMastra<TTools>(
+  paybond: PaybondAgentRunHost,
+  input: Omit<PaybondInstrumentBaseInput<TTools>, "framework"> & { tools: TTools },
+): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+  return frameworkInstrument(paybond, "mastra", input);
+}
+
+export function instrumentPaybondCloudflareAgents<TTools>(
+  paybond: PaybondAgentRunHost,
+  input: Omit<PaybondInstrumentBaseInput<TTools>, "framework"> & { tools: TTools },
+): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+  return frameworkInstrument(paybond, "cloudflare-agents", input);
+}

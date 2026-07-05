@@ -1,5 +1,6 @@
 import { resolveJsonBody } from "../body.js";
-import { verifyAuditBundleLocal } from "../audit-export.js";
+import { verifyAuditBundleLocal } from "../../audit/verify.js";
+import { PaybondAuditExports } from "../../audit/exports.js";
 import {
   buildListQueryParams,
   extractNextCursor,
@@ -120,34 +121,27 @@ export async function handleAuditExports(ctx: CliContext, subcommand: string, ar
     }
   }
   return withGateway(ctx, async (gateway) => {
+    const exportsClient = PaybondAuditExports.fromGateway(gateway);
     if (subcommand === "list") {
       const limitFlag = consumeFlag(argv, "--limit");
       const cursorFlag = consumeFlag(argv, "--cursor");
-      const params = buildListQueryParams(limitFlag.value, cursorFlag.value, { limit: "50" });
-      const body = await gateway.getJson(`/v1/compliance/audit-exports?${params.toString()}`);
-      const exports = Array.isArray(body.jobs)
-        ? body.jobs
-        : Array.isArray(body.items)
-          ? body.items
-          : Array.isArray(body.exports)
-            ? body.exports
-            : [];
-      const nextCursor = extractNextCursor(body);
-      const warnings = partialResultsWarning(nextCursor) ? [partialResultsWarning(nextCursor)!] : undefined;
+      const page = await exportsClient.list({
+        limit: limitFlag.value ? Number.parseInt(limitFlag.value, 10) : undefined,
+        cursor: cursorFlag.value,
+      });
+      const warnings = partialResultsWarning(page.next_cursor)
+        ? [partialResultsWarning(page.next_cursor)!]
+        : undefined;
       const data: Record<string, unknown> = {
-        exports: exports.map((item) => {
-          const row = item as Record<string, unknown>;
-          return {
-            job_id: String(row.job_id ?? row.id ?? ""),
-            status: String(row.status ?? ""),
-            created_at: String(row.created_at ?? ""),
-            expires_at: row.expires_at ? String(row.expires_at) : null,
-            scope: row.scope ? String(row.scope) : undefined,
-          };
-        }),
+        exports: page.jobs.map((item) => ({
+          job_id: item.id,
+          status: item.status,
+          created_at: item.created_at,
+          expires_at: item.expires_at,
+        })),
       };
-      if (nextCursor) {
-        data.next_cursor = nextCursor;
+      if (page.next_cursor) {
+        data.next_cursor = page.next_cursor;
       }
       return { data, warnings };
     }
@@ -158,11 +152,9 @@ export async function handleAuditExports(ctx: CliContext, subcommand: string, ar
     if (subcommand === "get") {
       const issueDownload = consumeBooleanFlag(argv.slice(1), "--issue-download").present;
       const outputFlag = consumeFlag(argv.slice(1), "--output");
-      const query = issueDownload ? "?issue_download=1" : "";
-      const body = await gateway.getJson(`/v1/compliance/audit-exports/${encodeURIComponent(jobId)}${query}`);
+      const body = await exportsClient.get(jobId, { issueDownload });
       if (outputFlag.value) {
-        const job = (body.job ?? body) as Record<string, unknown>;
-        const token = String(job.download_token ?? "");
+        const token = String(body.job.download_token ?? "");
         if (!token) {
           throw new CliError("audit exports get --output requires a ready export with --issue-download", {
             category: "validation",
@@ -197,12 +189,12 @@ export async function handleAuditExports(ctx: CliContext, subcommand: string, ar
           },
         };
       }
-      return { data: body };
+      return { data: body as unknown as Record<string, unknown> };
     }
     if (subcommand === "delete") {
       requireConfirmation(ctx.globals, "delete audit export job");
-      await gateway.deleteJson(`/v1/compliance/audit-exports/${encodeURIComponent(jobId)}`);
-      return { data: { job_id: jobId, deleted: true } };
+      const data = await exportsClient.delete(jobId);
+      return { data };
     }
     throw new CliError(`unknown audit exports subcommand: ${subcommand}`, { category: "usage", code: "cli.usage.unknown_command" });
   });

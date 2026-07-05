@@ -24,7 +24,7 @@ describe("completion catalog schema", () => {
     const catalog = loadCompletionCatalog();
     verifyCatalogVendorContracts(catalog);
     const vendorPacks = catalog.presets.filter((preset) => preset.kind === "vendor_pack");
-    expect(vendorPacks).toHaveLength(9);
+    expect(vendorPacks).toHaveLength(12);
     for (const preset of vendorPacks) {
       expect(preset.vendor_contract, `${preset.preset_id}.vendor_contract`).toBeTruthy();
       expect(preset.vendor_contract?.quality_fields.length).toBeGreaterThan(0);

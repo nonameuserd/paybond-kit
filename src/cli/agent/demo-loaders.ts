@@ -82,3 +82,27 @@ export async function loadRunOpenAIAgentsSandboxDemo() {
     throw err;
   }
 }
+
+export async function loadRunMastraSandboxDemo() {
+  try {
+    const mod = await import("../../mastra/sandbox-demo.js");
+    return mod.runMastraSandboxDemo;
+  } catch (err) {
+    if (isMissingModuleError(err, "@mastra/core")) {
+      throw missingPeerDependencyError("@mastra/core", "mastra");
+    }
+    throw err;
+  }
+}
+
+export async function loadRunCloudflareAgentsSandboxDemo() {
+  try {
+    const mod = await import("../../cloudflare-agents/sandbox-demo.js");
+    return mod.runCloudflareAgentsSandboxDemo;
+  } catch (err) {
+    if (isMissingModuleError(err, "ai")) {
+      throw missingPeerDependencyError("ai", "cloudflare-agents");
+    }
+    throw err;
+  }
+}

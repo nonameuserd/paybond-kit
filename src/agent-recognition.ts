@@ -31,7 +31,10 @@ export const AGENT_RECOGNITION_PROOF_SCHEMA_VERSION = 1;
 export const AGENT_RECOGNITION_PROOF_KIND_V1 = "paybond.agent_recognition_proof_v1";
 export const AGENT_RECOGNITION_SIGNATURE_ALGORITHM_ED25519 = "ed25519-sha256-json-v1";
 export const AGENT_RECOGNITION_GATEWAY_VERIFIER_ID = "paybond-gateway";
+export const AGENT_RECOGNITION_PURPOSE_CREATE = "harbor.intent.create";
+export const AGENT_RECOGNITION_PURPOSE_FUND = "harbor.intent.fund";
 export const AGENT_RECOGNITION_PURPOSE_EVIDENCE_SUBMIT = "harbor.intent.evidence.submit";
+export const AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM = "harbor.intent.settlement.confirm";
 export const AGENT_RECOGNITION_MAX_FRESHNESS_MS = 10 * 60 * 1000;
 
 const SCOPE_TOKEN_RE = /^[a-z0-9][a-z0-9._:/-]{0,127}$/;
@@ -241,6 +244,40 @@ export function signAgentRecognitionProofV1(
   };
 }
 
+/** Build a recognition proof for Gateway `POST /harbor/intents`. */
+export function signHarborCreateRecognitionProof(input: {
+  tenantId: string;
+  intentBody: Record<string, unknown>;
+  keyId: string;
+  signingSeed: Uint8Array;
+}): SignedAgentRecognitionProofV1 {
+  return signAgentRecognitionProofV1(input.signingSeed, {
+    keyId: input.keyId,
+    purpose: AGENT_RECOGNITION_PURPOSE_CREATE,
+    tenantId: input.tenantId,
+    method: "POST",
+    path: "/harbor/intents",
+    body: input.intentBody,
+  });
+}
+
+/** Build a recognition proof for Gateway `POST /harbor/intents/{intentId}/fund`. */
+export function signHarborFundRecognitionProof(input: {
+  tenantId: string;
+  intentId: string;
+  keyId: string;
+  signingSeed: Uint8Array;
+}): SignedAgentRecognitionProofV1 {
+  return signAgentRecognitionProofV1(input.signingSeed, {
+    keyId: input.keyId,
+    purpose: AGENT_RECOGNITION_PURPOSE_FUND,
+    tenantId: input.tenantId,
+    method: "POST",
+    path: `/harbor/intents/${input.intentId}/fund`,
+    body: {},
+  });
+}
+
 /** Build a recognition proof for Gateway `POST /harbor/intents/{intentId}/evidence`. */
 export function signHarborEvidenceSubmitRecognitionProof(input: {
   tenantId: string;
@@ -256,5 +293,23 @@ export function signHarborEvidenceSubmitRecognitionProof(input: {
     method: "POST",
     path: `/harbor/intents/${input.intentId}/evidence`,
     body: input.evidenceBody,
+  });
+}
+
+/** Build a recognition proof for Gateway `POST /harbor/intents/{intentId}/settlement/confirm`. */
+export function signHarborSettlementConfirmRecognitionProof(input: {
+  tenantId: string;
+  intentId: string;
+  body?: Record<string, unknown>;
+  keyId: string;
+  signingSeed: Uint8Array;
+}): SignedAgentRecognitionProofV1 {
+  return signAgentRecognitionProofV1(input.signingSeed, {
+    keyId: input.keyId,
+    purpose: AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM,
+    tenantId: input.tenantId,
+    method: "POST",
+    path: `/harbor/intents/${input.intentId}/settlement/confirm`,
+    body: input.body ?? {},
   });
 }

@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -149,6 +149,9 @@ describe("scaffoldPaybondPolicy", () => {
     const policy = await PaybondPolicy.load(out);
     expect(policy.defaultDeny).toBe(true);
     expect(policy.intent?.allowed_tools).toEqual(["travel.book_hotel"]);
+
+    const yaml = await readFile(out, "utf8");
+    expect(yaml).toContain("createWithPolicyBinding");
 
     const report = await policy.validate();
     expect(report.valid).toBe(true);

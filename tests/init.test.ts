@@ -41,6 +41,8 @@ describe("paybond-init", () => {
       "paybond.spendGuard(guardrail.intent_id, guardrail.capability_token)",
       "paybond.guardrails.submitSandboxEvidence",
       "Use the guarded handler with OpenAI, Gemini, Claude/Anthropic, local models, or any custom runtime.",
+      "createWithPolicyBinding",
+      "Production (signing v7)",
     ]) {
       expect(body).toContain(fragment);
     }
@@ -96,6 +98,8 @@ describe("paybond-init", () => {
       "wrapAgentTools",
       "travel.book_hotel",
       "cost_and_completion",
+      "createWithPolicyBinding",
+      "Production (signing v7)",
     ]) {
       expect(body).toContain(fragment);
     }
@@ -169,12 +173,43 @@ describe("paybond-init", () => {
     expect(body).toContain("paybondToolNode");
   });
 
+  it("scaffolds agent-middleware mastra framework with createTool wiring", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-init-"));
+    const out = join(cwd, "paybond-agent-middleware-mastra.ts");
+
+    await expect(main(["--preset", "agent-middleware", "--framework", "mastra", "--out", out])).resolves.toBe(0);
+
+    const body = await readFile(out, "utf8");
+    expect(body).toContain("createGuardedMastraTools");
+    expect(body).toContain("@paybond/kit/mastra");
+    expect(body).toContain("@mastra/core/tools");
+    expect(body).toContain("createPaybondMastraConfig");
+    expect(body).toContain("Paybond for paid tools");
+    expect(body).toContain("paybond.policy.yaml");
+    expect(body).toContain("agent demo mastra smoke");
+  });
+
+  it("scaffolds agent-middleware mcp framework with tool surface wiring", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-init-"));
+    const out = join(cwd, "paybond-agent-middleware-mcp.ts");
+
+    await expect(main(["--preset", "agent-middleware", "--framework", "mcp", "--out", out])).resolves.toBe(0);
+
+    const body = await readFile(out, "utf8");
+    expect(body).toContain("createPaybondMcpToolSurface");
+    expect(body).toContain("@paybond/kit/mcp");
+    expect(body).toContain("createMcpToolSurface");
+    expect(body).toContain("Paybond for paid tools");
+    expect(body).toContain("paybond.policy.yaml");
+    expect(body).toContain("agent demo mcp smoke");
+  });
+
   it("rejects invalid framework for agent-middleware preset", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-init-"));
     const out = join(cwd, "paybond-agent-middleware.ts");
 
     await expect(
-      main(["--preset", "agent-middleware", "--framework", "mcp", "--out", out]),
+      main(["--preset", "agent-middleware", "--framework", "crewai", "--out", out]),
     ).resolves.toBe(1);
   });
 });

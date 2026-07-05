@@ -172,6 +172,7 @@ tools:
     operation: ${operation}
 
 intent:
+  # Production: publish template head, then paybond.intents.createWithPolicyBinding(policy.toIntentCreateInput(...))
   policy_binding:
     template_id: ${templateId}
   allowed_tools:
@@ -214,6 +215,7 @@ tools:
     operation: ${operation}
 
 intent:
+  # Production: publish template head, then paybond.intents.createWithPolicyBinding(policy.toIntentCreateInput(...))
   policy_binding:
     template_id: ${templateId}
   allowed_tools:

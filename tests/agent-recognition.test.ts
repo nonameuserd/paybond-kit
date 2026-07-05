@@ -3,10 +3,16 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
+  AGENT_RECOGNITION_PURPOSE_CREATE,
   AGENT_RECOGNITION_PURPOSE_EVIDENCE_SUBMIT,
+  AGENT_RECOGNITION_PURPOSE_FUND,
+  AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM,
   newAgentRecognitionRequestEnvelope,
   signAgentRecognitionProofV1,
+  signHarborCreateRecognitionProof,
+  signHarborFundRecognitionProof,
   signHarborEvidenceSubmitRecognitionProof,
+  signHarborSettlementConfirmRecognitionProof,
 } from "../src/agent-recognition.js";
 
 function seedFromLabel(label: string): Uint8Array {
@@ -53,6 +59,47 @@ describe("signAgentRecognitionProofV1", () => {
     expect(proof.ed25519_signature_hex).toMatch(/^[0-9a-f]{128}$/);
   });
 
+  it("binds harbor create proofs to the signed intent body", () => {
+    const signingSeed = seedFromLabel("httpserver-agent-recognition");
+    const intentBody = {
+      intent_id: "550e8400-e29b-41d4-a716-446655440000",
+      max_spend_cents: 500,
+      currency: "USD",
+    };
+
+    const proof = signHarborCreateRecognitionProof({
+      tenantId: "tenant-a",
+      intentBody,
+      keyId: "kid-1",
+      signingSeed,
+    });
+
+    expect(proof.purpose).toBe(AGENT_RECOGNITION_PURPOSE_CREATE);
+    expect(proof.request_envelope.path).toBe("/harbor/intents");
+    expect(proof.request_envelope.body_digest_sha256_hex).toBe(
+      createHash("sha256").update(JSON.stringify(intentBody)).digest("hex"),
+    );
+  });
+
+  it("binds harbor fund proofs to an empty request body", () => {
+    const signingSeed = seedFromLabel("httpserver-agent-recognition");
+
+    const proof = signHarborFundRecognitionProof({
+      tenantId: "tenant-a",
+      intentId: "550e8400-e29b-41d4-a716-446655440000",
+      keyId: "kid-1",
+      signingSeed,
+    });
+
+    expect(proof.purpose).toBe(AGENT_RECOGNITION_PURPOSE_FUND);
+    expect(proof.request_envelope.path).toBe(
+      "/harbor/intents/550e8400-e29b-41d4-a716-446655440000/fund",
+    );
+    expect(proof.request_envelope.body_digest_sha256_hex).toBe(
+      createHash("sha256").update(JSON.stringify({})).digest("hex"),
+    );
+  });
+
   it("binds harbor evidence submit proofs to the signed evidence body", () => {
     const signingSeed = seedFromLabel("httpserver-agent-recognition");
     const evidenceBody = {
@@ -75,6 +122,27 @@ describe("signAgentRecognitionProofV1", () => {
     );
     expect(proof.request_envelope.body_digest_sha256_hex).toBe(
       createHash("sha256").update(JSON.stringify(evidenceBody)).digest("hex"),
+    );
+  });
+
+  it("binds harbor settlement confirm proofs to the request body", () => {
+    const signingSeed = seedFromLabel("httpserver-agent-recognition");
+    const body = { note: "confirm implied action" };
+
+    const proof = signHarborSettlementConfirmRecognitionProof({
+      tenantId: "tenant-a",
+      intentId: "550e8400-e29b-41d4-a716-446655440000",
+      body,
+      keyId: "kid-1",
+      signingSeed,
+    });
+
+    expect(proof.purpose).toBe(AGENT_RECOGNITION_PURPOSE_SETTLEMENT_CONFIRM);
+    expect(proof.request_envelope.path).toBe(
+      "/harbor/intents/550e8400-e29b-41d4-a716-446655440000/settlement/confirm",
+    );
+    expect(proof.request_envelope.body_digest_sha256_hex).toBe(
+      createHash("sha256").update(JSON.stringify(body)).digest("hex"),
     );
   });
 });

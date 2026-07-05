@@ -380,6 +380,62 @@ describe("paybond agent CLI commands", () => {
     expect(payload.data.bind.intent_id).toBe(AGENT_SMOKE_INTENT);
   });
 
+  it("agent demo mastra smoke runs bundled createTool demo", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-mastra-demo-"));
+    const fetch = createAgentGatewayFetch();
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "demo",
+        "mastra",
+        "smoke",
+        "--operation",
+        "paid-tool",
+        "--requested-spend-cents",
+        "100",
+        "--evidence-preset",
+        "cost_and_completion",
+      ],
+      { cwd, fetch: fetch as typeof fetch },
+    );
+    expect(code).toBe(0);
+    expect(payload.ok).toBe(true);
+    expect(payload.data.authorization.allow).toBe(true);
+    expect(payload.data.execute.tool_result).toEqual({
+      status: "completed",
+      cost_cents: 100,
+    });
+    expect(payload.data.bind.intent_id).toBe(AGENT_SMOKE_INTENT);
+  });
+
+  it("agent demo cloudflare-agents smoke runs bundled AI SDK tool demo", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-cloudflare-demo-"));
+    const fetch = createAgentGatewayFetch();
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "demo",
+        "cloudflare-agents",
+        "smoke",
+        "--operation",
+        "paid-tool",
+        "--requested-spend-cents",
+        "100",
+        "--evidence-preset",
+        "cost_and_completion",
+      ],
+      { cwd, fetch: fetch as typeof fetch },
+    );
+    expect(code).toBe(0);
+    expect(payload.ok).toBe(true);
+    expect(payload.data.authorization.allow).toBe(true);
+    expect(payload.data.execute.tool_result).toEqual({
+      status: "completed",
+      cost_cents: 100,
+    });
+    expect(payload.data.bind.intent_id).toBe(AGENT_SMOKE_INTENT);
+  });
+
   it("agent demo generic smoke runs bundled generic runner demo", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-generic-demo-"));
     const fetch = createAgentGatewayFetch();
@@ -452,6 +508,32 @@ describe("paybond agent CLI commands", () => {
     expect(payload.ok).toBe(true);
     expect(payload.data.guardrail.behavior).toBe("allow");
     expect(payload.data.execute.tool_result).toBeDefined();
+    expect(payload.data.bind.intent_id).toBe(AGENT_SMOKE_INTENT);
+  });
+
+  it("agent demo mcp smoke runs bundled in-process MCP demo", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-mcp-demo-"));
+    const fetch = createAgentGatewayFetch();
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "demo",
+        "mcp",
+        "smoke",
+        "--operation",
+        "paid-tool",
+        "--requested-spend-cents",
+        "100",
+        "--evidence-preset",
+        "cost_and_completion",
+      ],
+      { cwd, fetch: fetch as typeof fetch },
+    );
+    expect(code).toBe(0);
+    expect(payload.ok).toBe(true);
+    expect(payload.data.authorization.allow).toBe(true);
+    expect(payload.data.evidence.submitted).toBe(true);
+    expect(payload.data.tool_result).toEqual({ status: "completed", cost_cents: 100 });
     expect(payload.data.bind.intent_id).toBe(AGENT_SMOKE_INTENT);
   });
 

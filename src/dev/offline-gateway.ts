@@ -1,10 +1,15 @@
 /**
  * In-process offline Gateway mock for `paybond dev --offline`.
- * Simulates sandbox capability bootstrap, verify, evidence, and settlement completion.
+ * Simulates sandbox capability bootstrap, verify, evidence, settlement completion,
+ * and an optional x402 `/fund` state machine for Harbor intent funding smoke.
  */
+
+import { X402FundStateMachine } from "./x402-fund-mock.js";
 
 export const OFFLINE_DEV_INTENT_ID = "00000000-0000-4000-8000-000000000001";
 export const OFFLINE_DEV_TENANT_ID = "tenant-dev-offline";
+
+const HARBOR_FUND_PATH = /^\/harbor\/intents\/([^/]+)\/fund$/;
 
 /** Synthetic sandbox API key shape accepted by offline mocks (never validated remotely). */
 export const OFFLINE_SANDBOX_API_KEY =
@@ -27,11 +32,33 @@ export type OfflineGatewayMockOptions = {
   denyMessage?: string;
 };
 
-function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+function jsonResponse(
+  body: Record<string, unknown>,
+  status = 200,
+  extraHeaders: Record<string, string> = {},
+): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...extraHeaders },
   });
+}
+
+function readRequestHeader(init: RequestInit | undefined, name: string): string | undefined {
+  if (!init?.headers) {
+    return undefined;
+  }
+  const headers = new Headers(init.headers);
+  return headers.get(name) ?? undefined;
+}
+
+function parseHarborFundPath(url: string): string | null {
+  try {
+    const pathname = new URL(url).pathname;
+    const match = pathname.match(HARBOR_FUND_PATH);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Build a fetch implementation that stubs Gateway routes for local dev smoke. */
@@ -39,9 +66,25 @@ export function createOfflineDevGatewayFetch(
   options: OfflineGatewayMockOptions = {},
 ): typeof fetch {
   const allowVerify = options.allowVerify ?? true;
+  const x402FundState = new X402FundStateMachine();
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = input.toString();
+    const method = (init?.method ?? "GET").toUpperCase();
     const body = init?.body ? JSON.parse(String(init.body)) : {};
+    const harborFundIntentId =
+      method === "POST" ? parseHarborFundPath(url) : null;
+    if (harborFundIntentId) {
+      const paymentSignature = readRequestHeader(init, "payment-signature");
+      const mock = x402FundState.next(
+        harborFundIntentId,
+        OFFLINE_DEV_TENANT_ID,
+        paymentSignature,
+      );
+      if (mock) {
+        return jsonResponse(mock.body, mock.status, mock.headers);
+      }
+      return jsonResponse({}, 404);
+    }
     if (url.endsWith("/v1/auth/principal")) {
       return jsonResponse({
         tenant_id: OFFLINE_DEV_TENANT_ID,

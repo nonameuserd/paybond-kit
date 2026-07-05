@@ -1,0 +1,22 @@
+# Reference implementation — edit freely. Regenerate with:
+# paybond policy init --preset travel --out paybond.policy.yaml
+
+version: 1
+name: travel-agent-v1
+default_deny: true
+
+tools:
+  travel.book_hotel:
+    side_effecting: true
+    max_spend_cents: 20000
+    evidence_preset: cost_and_completion
+
+  search.web:
+    side_effecting: false
+
+intent:
+  allowed_tools:
+    - travel.book_hotel
+  budget:
+    currency: usd
+    max_spend_usd: 200

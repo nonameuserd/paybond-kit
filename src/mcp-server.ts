@@ -62,7 +62,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.11.10";
+const SERVER_VERSION = "0.11.11";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -276,6 +276,25 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
       intent_id: { type: "string" },
       state: { type: "string" },
       tenant_id: { type: "string" },
+    }),
+  },
+  paybond_list_audit_exports: {
+    title: "List Audit Exports",
+    annotations: readOnlyToolAnnotations("List Audit Exports"),
+    outputSchema: outputObjectSchema({
+      tenant_realm_id: { type: "string" },
+      jobs: {
+        type: "array",
+        items: { type: "object", additionalProperties: true },
+      },
+      next_cursor: { type: "string" },
+    }),
+  },
+  paybond_get_audit_export: {
+    title: "Get Audit Export",
+    annotations: readOnlyToolAnnotations("Get Audit Export"),
+    outputSchema: outputObjectSchema({
+      job: { type: "object", additionalProperties: true },
     }),
   },
   paybond_get_reputation_receipt: {
@@ -940,6 +959,34 @@ class PaybondMCPRuntime {
       {
         "x-tenant-id": await this.tenantId(),
       },
+    );
+  }
+
+  async listAuditExports(init: {
+    limit?: number;
+    cursor?: string;
+  }): Promise<Record<string, unknown>> {
+    const params = new URLSearchParams({
+      limit: String(
+        Math.max(1, Math.min(intArg(init.limit ?? 50, "limit"), 200)),
+      ),
+    });
+    if (init.cursor?.trim()) {
+      params.set("cursor", init.cursor.trim());
+    }
+    const body = await this.gateway.getJSON(
+      `/v1/compliance/audit-exports?${params.toString()}`,
+    );
+    return body;
+  }
+
+  async getAuditExport(
+    jobId: string,
+    init?: { issueDownload?: boolean },
+  ): Promise<Record<string, unknown>> {
+    const query = init?.issueDownload ? "?issue_download=1" : "";
+    return this.gateway.getJSON(
+      `/v1/compliance/audit-exports/${encodeURIComponent(jobId)}${query}`,
     );
   }
 
@@ -1762,6 +1809,42 @@ export class PaybondMCPServer {
         ),
         call: async (args) =>
           this.runtime.getIntent(uuidArg(args.intent_id, "intent_id")),
+      },
+      {
+        name: "paybond_list_audit_exports",
+        description:
+          "List tenant-scoped compliance audit export jobs through the gateway operator view.",
+        inputSchema: objectSchema({
+          limit: { type: "integer", minimum: 1, maximum: 200 },
+          cursor: { type: "string" },
+        }),
+        call: async (args) =>
+          this.runtime.listAuditExports({
+            limit: args.limit === undefined ? undefined : intArg(args.limit, "limit"),
+            cursor: optionalString(args.cursor),
+          }),
+      },
+      {
+        name: "paybond_get_audit_export",
+        description:
+          "Fetch one tenant-scoped compliance audit export job detail through the gateway operator view.",
+        inputSchema: objectSchema(
+          {
+            job_id: {
+              type: "string",
+              description: "Compliance audit export job identifier.",
+            },
+            issue_download: {
+              type: "boolean",
+              description: "When true, request a bundle download token for ready exports.",
+            },
+          },
+          ["job_id"],
+        ),
+        call: async (args) =>
+          this.runtime.getAuditExport(stringArg(args.job_id, "job_id"), {
+            issueDownload: args.issue_download === true,
+          }),
       },
       {
         name: "paybond_get_reputation_receipt",

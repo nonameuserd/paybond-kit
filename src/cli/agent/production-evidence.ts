@@ -110,6 +110,47 @@ export async function resolveProductionEvidenceFromCli(input: {
   };
 }
 
+export type AgentRecognitionCredentials = {
+  agentRecognitionKeyId: string;
+  agentRecognitionSigningSeed: Uint8Array;
+};
+
+/** Resolve agent recognition signing credentials from CLI flags and APP_* env fallbacks. */
+export async function resolveAgentRecognitionFromCli(input: {
+  cwd: string;
+  envFile: string;
+  agentRecognitionKeyId?: string;
+  agentRecognitionSigningSeedHex?: string;
+}): Promise<AgentRecognitionCredentials> {
+  const agentRecognitionKeyId =
+    input.agentRecognitionKeyId?.trim() ||
+    (await readConfiguredEnvValue(input.cwd, input.envFile, "APP_AGENT_RECOGNITION_KEY_ID"));
+  const agentRecognitionSigningSeedHex =
+    input.agentRecognitionSigningSeedHex?.trim() ||
+    (await readConfiguredEnvValue(input.cwd, input.envFile, "APP_AGENT_RECOGNITION_SEED_HEX"));
+
+  if (!agentRecognitionKeyId) {
+    throw new CliError(
+      "Harbor intent mutation requires --agent-recognition-key-id or APP_AGENT_RECOGNITION_KEY_ID",
+      { category: "usage", code: "cli.agent.recognition_incomplete" },
+    );
+  }
+  if (!agentRecognitionSigningSeedHex) {
+    throw new CliError(
+      "Harbor intent mutation requires --agent-recognition-signing-seed-hex or APP_AGENT_RECOGNITION_SEED_HEX",
+      { category: "usage", code: "cli.agent.recognition_incomplete" },
+    );
+  }
+
+  return {
+    agentRecognitionKeyId,
+    agentRecognitionSigningSeed: parseSeed32Hex(
+      agentRecognitionSigningSeedHex,
+      "--agent-recognition-signing-seed-hex",
+    ),
+  };
+}
+
 export function productionEvidenceToPersisted(
   credentials: PaybondRunProductionEvidenceCredentials,
 ): PersistedProductionEvidence {

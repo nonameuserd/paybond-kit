@@ -17,10 +17,12 @@ describe("paybond init --template", () => {
     const entries = await listTemplateEntries();
     expect(entries.length).toBeGreaterThanOrEqual(9);
     expect(entries.some((entry) => entry.id === "travel-agent")).toBe(true);
+    expect(entries.some((entry) => entry.id === "mastra-travel-agent")).toBe(true);
   });
 
   it("normalizes repo slugs to template ids", () => {
     expect(normalizeTemplateId("paybond-travel-agent")).toBe("travel-agent");
+    expect(normalizeTemplateId("paybond-mastra-travel-agent")).toBe("mastra-travel-agent");
     expect(normalizeTemplateId("openai-shopping-agent")).toBe("openai-shopping-agent");
   });
 
@@ -74,6 +76,28 @@ describe("paybond init --template", () => {
       framework: "langgraph",
     });
     expect(result.template_id).toBe("travel-agent");
+  });
+
+  it("copies mastra-travel-agent template into an empty directory", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-template-mastra-"));
+    const result = await copyTemplateToDirectory({
+      cwd,
+      templateId: "mastra-travel-agent",
+      framework: "mastra",
+    });
+
+    expect(result.template_id).toBe("mastra-travel-agent");
+    expect(result.repo).toBe("paybond-mastra-travel-agent");
+    expect(result.framework).toBe("mastra");
+
+    const indexSource = await readFile(join(cwd, "src/index.ts"), "utf8");
+    expect(indexSource).toContain("runMastraSandboxDemo");
+    expect(indexSource).toContain("@paybond/kit/mastra");
+
+    const packageJson = JSON.parse(await readFile(join(cwd, "package.json"), "utf8")) as {
+      dependencies: Record<string, string>;
+    };
+    expect(packageJson.dependencies["@mastra/core"]).toMatch(/^\^/);
   });
 
   it("CLI init --template writes scaffold files", async () => {

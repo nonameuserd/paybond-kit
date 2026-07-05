@@ -32,7 +32,10 @@ type AgentMiddlewareFramework =
   | "claude-agents"
   | "langgraph"
   | "vercel-ai"
-  | "openai";
+  | "openai"
+  | "mastra"
+  | "cloudflare-agents"
+  | "mcp";
 
 type Preset = "paid-tool-guard" | "agent-middleware";
 
@@ -55,6 +58,9 @@ const AGENT_MIDDLEWARE_FRAMEWORKS = new Set<AgentMiddlewareFramework>([
   "openai",
   "langgraph",
   "vercel-ai",
+  "mastra",
+  "cloudflare-agents",
+  "mcp",
 ]);
 
 const AGENT_MIDDLEWARE_FRAMEWORK_ALIASES: Record<string, AgentMiddlewareFramework> = {
@@ -67,6 +73,31 @@ const PRESET_DEFAULT_OUT: Record<Preset, string> = {
   "paid-tool-guard": "paybond-paid-tool-guard.ts",
   "agent-middleware": "paybond-agent-middleware.ts",
 };
+
+/** Comment block for production intent create via policy_binding (signing v7). */
+function productionPolicyBindingComments(harborTemplateId: string): string {
+  return `// Production (signing v7): publish managed template head for ${harborTemplateId}, then create a funded intent.
+// import { PaybondPolicy } from "@paybond/kit";
+// const policy = await PaybondPolicy.load("./paybond.policy.yaml");
+// const publishedHead = {
+//   templateId: "<template_id>",
+//   versionSeq: 1,
+//   materializedPredicate: { /* from publish response */ },
+//   policyContentDigestHex: "<digest_hex>",
+// };
+// const intentInput = policy.toIntentCreateInput({
+//   principalDid,
+//   principalSigningSeed: principalSeed32,
+//   payeeDid,
+//   payeeSigningSeed: payeeSeed32,
+//   deadlineRfc3339,
+//   settlementRail: "stripe_connect",
+//   recognitionProof,
+//   publishedPolicyHead: publishedHead,
+// });
+// const created = await paybond.intents.createWithPolicyBinding(intentInput);
+// Fund if needed, then attach middleware: paybond.agentRun.bind({ attach: { intentId, capabilityToken, productionEvidence }, registry })`;
+}
 
 const FRAMEWORK_NOTES: Record<Framework, string> = {
   generic: "Wrap the returned function around any side-effecting tool handler.",
@@ -90,7 +121,7 @@ function usage(): string {
     "  agent-middleware    PaybondAgentRun + tool registry middleware",
     "",
     "Frameworks (paid-tool-guard): generic|provider-agnostic|openai|claude|anthropic|gemini|google-ai|vercel-ai|langgraph|mcp",
-    "Frameworks (agent-middleware): generic|claude-agents|openai|langgraph|vercel-ai",
+    "Frameworks (agent-middleware): generic|claude-agents|openai|langgraph|vercel-ai|mastra|cloudflare-agents|mcp",
   ].join("\n");
 }
 
@@ -240,6 +271,33 @@ export async function openPaybondFromEnv(options: OpenPaybondFromEnvOptions = {}
 }`;
 }
 
+function agentMiddlewareHeaderComments(framework: AgentMiddlewareFramework): string {
+  const smokeCommands: Record<AgentMiddlewareFramework, string> = {
+    generic:
+      'paybond agent sandbox smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --result-body \'{"reservation":{"status":"confirmed","price_cents":20000}}\'',
+    "claude-agents":
+      "paybond agent demo claude-agents smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+    openai:
+      "paybond agent demo openai smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+    langgraph:
+      "paybond agent demo langgraph smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+    "vercel-ai":
+      "paybond agent demo vercel-ai smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+    mastra:
+      "paybond agent demo mastra smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+    "cloudflare-agents":
+      "paybond agent demo cloudflare-agents smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+    mcp:
+      "paybond agent demo mcp smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+  };
+  return [
+    "// Paybond for paid tools; provider-native limits for LLM token caps only.",
+    "// Policy: ./paybond.policy.yaml (scaffold with paybond policy init).",
+    `// Smoke: ${smokeCommands[framework]}`,
+    "// Production: createWithPolicyBinding after publishing the managed template head — see block below.",
+  ].join("\n");
+}
+
 function agentMiddlewareFrameworkBlock(framework: AgentMiddlewareFramework): string {
   switch (framework) {
     case "claude-agents":
@@ -370,6 +428,66 @@ export async function runGuardedGenerateText(
     prompt,
   });
 }`;
+    case "mastra":
+      return `import { createTool } from "@mastra/core/tools";
+import { z } from "zod";
+import { createPaybondMastraConfig } from "@paybond/kit/mastra";
+import type { PaybondAgentRun } from "@paybond/kit/agent";
+
+/** Wrap Mastra \`createTool()\` definitions with Paybond middleware on \`execute\`. */
+export function createGuardedMastraTools(run: PaybondAgentRun) {
+  const tools = [
+    createTool({
+      id: "travel.book_hotel",
+      description: "Book a hotel room",
+      inputSchema: z.object({
+        city: z.string(),
+        estimatedPriceCents: z.number().int().nonnegative(),
+      }),
+      execute: async (args) => bookHotel(args),
+    }),
+    createTool({
+      id: "search.web",
+      description: "Search the web",
+      inputSchema: z.object({ query: z.string() }),
+      execute: async (args) => searchWeb(args),
+    }),
+  ];
+  return createPaybondMastraConfig(run, tools).tools;
+}`;
+    case "cloudflare-agents":
+      return `import { tool } from "ai";
+import { z } from "zod";
+import { createPaybondCloudflareAgentsConfig } from "@paybond/kit/cloudflare-agents";
+import type { PaybondAgentRun } from "@paybond/kit/agent";
+
+/** Wrap Cloudflare Agents \`getTools()\` AI SDK tool definitions with Paybond middleware on \`execute\`. */
+export function createGuardedCloudflareAgentTools(run: PaybondAgentRun) {
+  const tools = {
+    "travel.book_hotel": tool({
+      description: "Book a hotel room",
+      inputSchema: z.object({
+        city: z.string(),
+        estimatedPriceCents: z.number().int().nonnegative(),
+      }),
+      execute: async (args) => bookHotel(args),
+    }),
+    searchWeb: tool({
+      description: "Search the web",
+      inputSchema: z.object({ query: z.string() }),
+      execute: async (args) => searchWeb(args),
+    }),
+  };
+  return createPaybondCloudflareAgentsConfig(run, tools);
+}`;
+    case "mcp":
+      return `import { createPaybondMcpToolSurface } from "@paybond/kit/mcp";
+import type { PaybondAgentRun } from "@paybond/kit/agent";
+
+/** Stdio MCP host config — bind a run first, then \`paybond mcp install\` for coding-agent hosts. */
+export function createMcpToolSurface(run: PaybondAgentRun) {
+  return createPaybondMcpToolSurface(run, { envFile: ".env.local" });
+}`;
     default:
       return `import { createPaybondGenericAgentConfig } from "@paybond/kit/agent";
 
@@ -403,6 +521,8 @@ import {
 } from "@paybond/kit/agent";
 
 ${envHelpersBlock()}
+
+${agentMiddlewareHeaderComments(framework)}
 
 // Agent middleware preset maps to completion catalog archetype: cost_and_completion (${completionPreset.harbor_template_id}).
 const COMPLETION_PRESET_ID = "cost_and_completion";
@@ -470,6 +590,8 @@ export async function bindAgentRun(
   return paybond.agentRun.bind(bindInput);
 }
 
+${productionPolicyBindingComments(completionPreset.harbor_template_id)}
+
 ${agentMiddlewareFrameworkBlock(framework)}
 `;
 }
@@ -499,11 +621,13 @@ export function buildCompletionEvidence(fields: CompletionEvidence): Record<stri
   return { ...fields };
 }
 
-// Production: use buildSignedCreateIntentBodyWithPolicyBinding from @paybond/kit after publishing ${completionPreset.harbor_template_id}.
 export const policyBindingStub = {
   template_id: HARBOR_TEMPLATE_ID,
   parameters: ${jsonLiteral(completionPreset.parameters, 2)} as const,
+  // version_seq and head_digest are assigned after publishing the managed template head.
 };
+
+${productionPolicyBindingComments(completionPreset.harbor_template_id)}
 
 const DEFAULT_OPERATION = "paid_tool.operation";
 const DEFAULT_REQUESTED_SPEND_CENTS = 500;

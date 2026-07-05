@@ -75,6 +75,18 @@ function makeHost(guard: PaybondRunGuard): PaybondAgentRunHost {
   };
 }
 
+function expectErrorToolMessage(
+  out: unknown,
+  expected: { toolCallId: string; name: string; contentIncludes: string },
+): void {
+  expect(out).toMatchObject({
+    tool_call_id: expected.toolCallId,
+    status: "error",
+    name: expected.name,
+  });
+  expect(String((out as ToolMessage).content)).toContain(expected.contentIncludes);
+}
+
 describe("paybondAwrapToolCall", () => {
   it("allows registered tools, executes, and submits evidence", async () => {
     const guard = makeGuard();
@@ -185,10 +197,11 @@ describe("paybondAwrapToolCall", () => {
       executed,
     );
 
-    expect(out).toBeInstanceOf(ToolMessage);
-    const message = out as ToolMessage;
-    expect(message.status).toBe("error");
-    expect(String(message.content)).toContain("blocked");
+    expectErrorToolMessage(out, {
+      toolCallId: "call-deny",
+      name: "travel.book_hotel",
+      contentIncludes: "blocked",
+    });
     expect(executed).not.toHaveBeenCalled();
   });
 
@@ -225,11 +238,12 @@ describe("paybondAwrapToolCall", () => {
       vi.fn(),
     );
 
-    expect(out).toBeInstanceOf(ToolMessage);
-    const message = out as ToolMessage;
-    expect(message.status).toBe("error");
-    expect(String(message.content)).toContain("decision-hold");
-    expect(String(message.content)).toContain("needs approval");
+    expectErrorToolMessage(out, {
+      toolCallId: "call-hold",
+      name: "travel.book_hotel",
+      contentIncludes: "decision-hold",
+    });
+    expect(String((out as ToolMessage).content)).toContain("needs approval");
   });
 });
 

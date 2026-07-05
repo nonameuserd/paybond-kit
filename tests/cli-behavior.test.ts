@@ -110,12 +110,23 @@ describe("cli behavior parity", () => {
 
   it("intents create JSON redacts capability_token", async () => {
     vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
+    vi.stubEnv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1");
+    vi.stubEnv("APP_AGENT_RECOGNITION_SEED_HEX", "02".repeat(32));
     const cwd = await mkdtemp(join(tmpdir(), "paybond-intents-create-"));
     const bodyPath = join(cwd, "intent.json");
     await writeFile(bodyPath, "{}\n", "utf8");
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse({ intent_id: "intent-1", capability_token: "cap-secret" }),
-    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/v1/auth/principal")) {
+        return jsonResponse({ tenant_id: "tenant-sandbox", environment: "sandbox" });
+      }
+      if (url.includes("/harbor/intents") && init?.method === "POST") {
+        const headers = new Headers(init.headers);
+        expect(headers.get("x-paybond-agent-recognition-proof")).toBeTruthy();
+        return jsonResponse({ intent_id: "intent-1", capability_token: "cap-secret" });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
     const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
     const code = await runCli(["--format", "json", "intents", "create", "--body", bodyPath], {
       cwd,
@@ -132,9 +143,29 @@ describe("cli behavior parity", () => {
 
   it("intents fund JSON redacts capability_token", async () => {
     vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
-    const fetchMock = vi.fn().mockResolvedValue(
-      jsonResponse({ intent_id: "intent-1", capability_token: "cap-secret", state: "funded" }),
-    );
+    vi.stubEnv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1");
+    vi.stubEnv("APP_AGENT_RECOGNITION_SEED_HEX", "02".repeat(32));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/v1/auth/principal")) {
+        return jsonResponse({ tenant_id: "tenant-sandbox", environment: "sandbox" });
+      }
+      if (url.includes("/harbor/intents/intent-1/fund") && init?.method === "POST") {
+        const headers = new Headers(init.headers);
+        expect(headers.get("x-paybond-agent-recognition-proof")).toBeTruthy();
+        return jsonResponse({
+          intent_id: "intent-1",
+          tenant: "tenant-sandbox",
+          capability_token: "cap-secret",
+          state: "funded",
+          settlement_rail: "x402_usdc_base",
+          currency: "USD",
+          amount_cents: 100,
+          funded: true,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
     const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
     const code = await runCli(["--format", "json", "intents", "fund", "intent-1"], {
       fetch: fetchMock,
@@ -144,8 +175,81 @@ describe("cli behavior parity", () => {
     expect(code).toBe(0);
     const output = stdout.chunks.join("");
     const payload = JSON.parse(output);
-    expect(payload.data.capability_token).toBe("[redacted]");
+    expect(payload.data.capabilityToken).toBe("[redacted]");
     expect(output).not.toContain("cap-secret");
+  });
+
+  it("intents fund --body shim maps payment_signature and warns", async () => {
+    vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
+    vi.stubEnv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1");
+    vi.stubEnv("APP_AGENT_RECOGNITION_SEED_HEX", "02".repeat(32));
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-intents-fund-"));
+    const bodyPath = join(cwd, "fund.json");
+    await writeFile(bodyPath, JSON.stringify({ payment_signature: "sig-from-body" }), "utf8");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/v1/auth/principal")) {
+        return jsonResponse({ tenant_id: "tenant-sandbox", environment: "sandbox" });
+      }
+      if (url.includes("/harbor/intents/intent-1/fund") && init?.method === "POST") {
+        const headers = new Headers(init.headers);
+        expect(headers.get("payment-signature")).toBe("sig-from-body");
+        return jsonResponse({
+          intent_id: "intent-1",
+          tenant: "tenant-sandbox",
+          state: "funded",
+          settlement_rail: "x402_usdc_base",
+          currency: "USD",
+          amount_cents: 100,
+          funded: true,
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const code = await runCli(
+      ["--format", "json", "intents", "fund", "intent-1", "--body", bodyPath],
+      { cwd, fetch: fetchMock, stdout },
+    );
+    vi.unstubAllEnvs();
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout.chunks.join(""));
+    expect(payload.warnings).toContain("deprecated: intents fund --body; use --payment-signature");
+  });
+
+  it("intents evidence sends recognition proof via SDK", async () => {
+    vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
+    vi.stubEnv("APP_AGENT_RECOGNITION_KEY_ID", "kid-1");
+    vi.stubEnv("APP_AGENT_RECOGNITION_SEED_HEX", "02".repeat(32));
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-intents-evidence-"));
+    const bodyPath = join(cwd, "evidence.json");
+    await writeFile(bodyPath, JSON.stringify({ status: "ok" }), "utf8");
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/v1/auth/principal")) {
+        return jsonResponse({ tenant_id: "tenant-sandbox", environment: "sandbox" });
+      }
+      if (url.includes("/harbor/intents/intent-1/evidence") && init?.method === "POST") {
+        const headers = new Headers(init.headers);
+        expect(headers.get("x-paybond-agent-recognition-proof")).toBeTruthy();
+        return jsonResponse({
+          intent_id: "intent-1",
+          tenant: "tenant-sandbox",
+          state: "evidence_submitted",
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const code = await runCli(
+      ["--format", "json", "intents", "evidence", "intent-1", "--body", bodyPath],
+      { cwd, fetch: fetchMock, stdout },
+    );
+    vi.unstubAllEnvs();
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout.chunks.join(""));
+    expect(payload.data.intentId).toBe("intent-1");
+    expect(payload.data.state).toBe("evidence_submitted");
   });
 
   it("mcp install writes project config with mode 0o600", async () => {

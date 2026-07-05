@@ -1,0 +1,22 @@
+{
+  "name": "paybond-mastra-travel-agent",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "smoke": "paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation travel.book_hotel --requested-spend-cents 18700 --result-body '{\"status\":\"completed\",\"cost_cents\":18700}' --format json"
+  },
+  "dependencies": {
+    "@paybond/kit": "^0.11.11",
+    "@mastra/core": "^1.49.0",
+    "zod": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

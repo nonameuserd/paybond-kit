@@ -32,6 +32,8 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_get_signed_portfolio_artifact")).toBe(true);
     expect(names.has("paybond_get_fraud_assessment")).toBe(true);
     expect(names.has("paybond_get_fraud_metrics")).toBe(true);
+    expect(names.has("paybond_list_audit_exports")).toBe(true);
+    expect(names.has("paybond_get_audit_export")).toBe(true);
     expect(names.has("paybond_verify_agent_mandate_v1")).toBe(true);
     expect(names.has("paybond_import_agent_mandate_v1")).toBe(true);
     expect(names.has("paybond_get_settlement_receipt_v1")).toBe(true);
@@ -200,6 +202,20 @@ describe("PaybondMCPServer", () => {
   });
 
   it("returns enriched initialize serverInfo while keeping the negotiated protocol", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            tenant_id: "tenant-a",
+            roles: ["operator"],
+            subject: "service-account-1",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
     const server = new PaybondMCPServer({
       gatewayBaseUrl: "https://gateway.test",
       apiKey: apiKey(),
@@ -1041,6 +1057,8 @@ describe("PaybondMCPServer", () => {
     });
     const names = new Set(server.listTools().map((tool) => String(tool.name)));
     expect(names.has("paybond_get_principal")).toBe(true);
+    expect(names.has("paybond_list_audit_exports")).toBe(true);
+    expect(names.has("paybond_get_audit_export")).toBe(true);
     expect(names.has("paybond_create_spend_intent")).toBe(false);
   });
 

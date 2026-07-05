@@ -70,7 +70,7 @@ npx -p @paybond/kit paybond agent sandbox smoke \
   --format json
 ```
 
-With `--policy-file`, Kit sends `completion_preset` from the tool's `evidence_preset` and omits `evidence_schema` and `template_id` (Gateway rejects conflicting bootstrap fields). Requires `@paybond/kit` 0.11.10+.
+With `--policy-file`, Kit sends `completion_preset` from the tool's `evidence_preset` and omits `evidence_schema` and `template_id` (Gateway rejects conflicting bootstrap fields). Requires `@paybond/kit` 0.11.11+.
 
 `agent sandbox smoke` only requires `@paybond/kit`. Framework demo commands (`agent demo vercel-ai smoke`, etc.) load their optional peers on demand.
 
@@ -170,7 +170,7 @@ Core SDK:
 - `Paybond.open(...)` for API-key-only, tenant-derived hosted sessions
 - `HarborClient` for capability verification, intent creation, x402 funding, evidence submission, and ledger reads
 - `paybond.signal` and `paybond.fraud` on `Paybond` sessions opened from one service-account API key
-- `PaybondIntents` helpers for principal-signed intent creation, x402 funding, and payee-signed evidence submission
+- `PaybondIntents` helpers for principal-signed intent creation, x402 funding, payee-signed evidence submission, and settlement confirmation
 - `PaybondSpendGuard`, `authorizeSpend`, and `guardTool` for spend-named wrappers around capability verification
 - Runtime-neutral and framework aliases: `paybondAgentToolSpendGuard`, `paybondRuntimeNeutralToolSpendGuard`, `paybondLangGraphToolSpendGuard`, and `paybondMCPToolSpendGuard`
 - `paybondRuntimeToolCallAdapter` for agent SDKs and custom runtimes that expose a tool-call object plus an application-owned executor

@@ -292,6 +292,30 @@ describe("PaybondIntents", () => {
     });
     expect(create).toHaveBeenCalledTimes(1);
   });
+
+  it("confirmSettlement defaults body to {} and delegates to harbor", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const confirmSettlement = vi
+      .spyOn(harbor, "confirmSettlement")
+      .mockResolvedValue({ intent_id: intentId, state: "released" });
+
+    const intents = new PaybondIntents(harbor);
+    await expect(
+      intents.confirmSettlement({
+        intentId,
+        recognitionProof: { version: 1 },
+        idempotencyKey: "settle-key-1",
+      }),
+    ).resolves.toMatchObject({ intent_id: intentId, state: "released" });
+
+    expect(confirmSettlement).toHaveBeenCalledTimes(1);
+    expect(confirmSettlement).toHaveBeenCalledWith(
+      intentId,
+      {},
+      { idempotencyKey: "settle-key-1", recognitionProof: { version: 1 } },
+    );
+  });
 });
 
 describe("PaybondSpendGuard", () => {

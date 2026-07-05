@@ -84,6 +84,35 @@ describe("completion-resolve", () => {
     );
     expect(resolved.parameters.cost_path).toEqual(["total_cents"]);
   });
+
+  it("resolves x402_saas_api_purchase with subscription_id mapping", () => {
+    const resolved = resolveCompletionPreset("x402_saas_api_purchase");
+    expect(resolved.kind).toBe("vendor_pack");
+    expect(resolved.preset.rail_hints).toEqual(["x402_usdc_base"]);
+    const canonical = mapVendorEvidenceToCanonical(resolved.preset, {
+      subscription_id: "sub_abc",
+      seat_count: 3,
+      http_status: 200,
+      response_digest: "blake3:abc",
+    });
+    expect(canonical.vendor_ref_id).toBe("sub_abc");
+  });
+
+  it("resolves x402_travel_booking with x402 rail hints", () => {
+    const resolved = resolveCompletionPreset("x402_travel_booking");
+    expect(resolved.preset.rail_hints).toEqual(["x402_usdc_base"]);
+    expect(resolved.parameters.cost_path).toEqual(["total_cents"]);
+    expect(resolved.parameters.expected_status).toBe("completed");
+  });
+
+  it("resolves invoice_payment_confirmed with invoice.paid event type", () => {
+    const resolved = resolveCompletionPreset("invoice_payment_confirmed");
+    expect(resolved.archetype.preset_id).toBe("webhook_confirmed");
+    expect(resolved.parameters.expected_event_type).toBe("invoice.paid");
+    expect(resolved.evidenceSchema.required).toEqual(
+      expect.arrayContaining(["invoice_number", "payment_reference", "webhook_event_id"]),
+    );
+  });
 });
 
 describe("phase 5.2 vendor pack catalog", () => {
@@ -95,6 +124,17 @@ describe("phase 5.2 vendor pack catalog", () => {
     expect(achPack?.forbidden_evidence_fields).toContain("payment_intent_id");
     expect(x402Pack?.rail_hints).toEqual(["x402_usdc_base"]);
     expect(x402Pack?.forbidden_evidence_fields).toContain("payment_session_id");
+  });
+
+  it("includes vertical completion presets", () => {
+    const catalog = loadCompletionCatalog();
+    const verticalIds = ["x402_saas_api_purchase", "x402_travel_booking", "invoice_payment_confirmed"];
+    for (const presetId of verticalIds) {
+      const preset = catalog.presets.find((entry) => entry.preset_id === presetId);
+      expect(preset, presetId).toBeDefined();
+      expect(preset?.kind).toBe("vendor_pack");
+      expect(preset?.vendor_contract?.api_version).toBeTruthy();
+    }
   });
 });
 

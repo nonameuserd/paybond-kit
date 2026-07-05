@@ -1182,6 +1182,372 @@
         "schema_digest_hex": "30a152fec1fa2965578938f26b82c805263f15e324db1be345453dc65598cc9c",
         "canonical_schema_digest_hex": "30a152fec1fa2965578938f26b82c805263f15e324db1be345453dc65598cc9c"
       }
+    },
+    {
+      "preset_id": "x402_saas_api_purchase",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "api_response_ok",
+      "title": "x402 SaaS API purchase",
+      "description": "SaaS seat or API subscription purchase behind an x402-funded intent. Maps subscription_id to vendor_ref_id with seat_count metadata.",
+      "harbor_template_id": "api_response_v1",
+      "parameters": {
+        "http_status_path": [
+          "http_status"
+        ],
+        "expected_http_status": 200
+      },
+      "evidence_field_map": {
+        "subscription_id": "vendor_ref_id",
+        "http_status": "http_status",
+        "response_digest": "response_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "subscription_id": {
+            "type": "string",
+            "description": "SaaS subscription or seat purchase reference"
+          },
+          "seat_count": {
+            "type": "integer",
+            "description": "Number of seats or API units purchased"
+          },
+          "http_status": {
+            "type": "integer"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id",
+          "seat_count",
+          "http_status",
+          "response_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "http_status": {
+            "type": "integer"
+          },
+          "vendor_ref_id": {
+            "type": "string"
+          },
+          "response_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "http_status",
+          "vendor_ref_id",
+          "response_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "subscription_id": "sub_9kExample",
+        "seat_count": 5,
+        "http_status": 200,
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_evidence": {
+        "http_status": 200,
+        "vendor_ref_id": "sub_9kExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "sample_failing_evidence": {
+        "http_status": 402,
+        "vendor_ref_id": "sub_9kExample",
+        "response_digest": "blake3:7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"
+      },
+      "human_summary": "Release when HTTP status is 200 with subscription_id mapped to vendor_ref_id, seat_count present, and response_digest bound to the API body.",
+      "recommended_amount_cents": 2500,
+      "spend_hints": {
+        "approval_threshold_cents": 5000,
+        "per_tool_max_cents": 25000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "x402_usdc_base"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_session_id",
+        "authorization_id",
+        "capture_id",
+        "void_id",
+        "x402_payment_session_id",
+        "onchain_transaction_hashes"
+      ],
+      "anti_patterns": [
+        "Do not submit Coinbase payment-session or authorization payloads as tool-completion evidence.",
+        "Do not use Stripe PaymentIntent ids as SaaS purchase proof — bind subscription_id from the vendor API response."
+      ],
+      "vendor_contract": {
+        "provider": "x402",
+        "api_version": "x402_saas_api_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "subscription_id",
+          "seat_count",
+          "response_digest"
+        ],
+        "schema_digest_hex": "7b1f5efa6aa2ffa4aa6029ea7dc025107f7bdbe96d20b9d834fb197ff85f842e",
+        "canonical_schema_digest_hex": "95a6b806adf78cab5fbb4f7bb871d1114268620c0d12cf61cfa8405558ea2577"
+      }
+    },
+    {
+      "preset_id": "x402_travel_booking",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "cost_and_completion",
+      "title": "x402 travel booking",
+      "description": "Travel booking completion on the x402_usdc_base rail with confirmation_number, total_cents budget cap, and fare_class metadata.",
+      "harbor_template_id": "completion_budget_v1",
+      "parameters": {
+        "status_path": [
+          "status"
+        ],
+        "expected_status": "completed",
+        "cost_path": [
+          "total_cents"
+        ]
+      },
+      "evidence_field_map": {
+        "confirmation_number": "confirmation_number",
+        "total_cents": "total_cents",
+        "fare_class": "fare_class",
+        "status": "status"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "confirmation_number": {
+            "type": "string"
+          },
+          "total_cents": {
+            "type": "integer"
+          },
+          "fare_class": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_number",
+          "total_cents",
+          "fare_class",
+          "status"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "confirmation_number": {
+            "type": "string"
+          },
+          "total_cents": {
+            "type": "integer"
+          },
+          "fare_class": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "confirmation_number",
+          "total_cents",
+          "fare_class",
+          "status"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "confirmation_number": "AA-8JZ3QK",
+        "total_cents": 19750,
+        "fare_class": "economy",
+        "status": "completed"
+      },
+      "sample_evidence": {
+        "confirmation_number": "AA-8JZ3QK",
+        "total_cents": 19750,
+        "fare_class": "economy",
+        "status": "completed"
+      },
+      "sample_failing_evidence": {
+        "confirmation_number": "AA-8JZ3QK",
+        "total_cents": 19750,
+        "fare_class": "business",
+        "status": "failed"
+      },
+      "human_summary": "Release when status is completed and total_cents is within the intent budget. confirmation_number and fare_class are schema-validated metadata.",
+      "recommended_amount_cents": 20000,
+      "spend_hints": {
+        "approval_threshold_cents": 10000,
+        "per_tool_max_cents": 50000
+      },
+      "scope": "tool_completion",
+      "rail_hints": [
+        "x402_usdc_base"
+      ],
+      "forbidden_evidence_fields": [
+        "payment_session_id",
+        "authorization_id",
+        "capture_id",
+        "void_id",
+        "x402_payment_session_id",
+        "onchain_transaction_hashes"
+      ],
+      "anti_patterns": [
+        "Do not submit Coinbase authorization or payment-session payloads as tool-completion evidence."
+      ],
+      "vendor_contract": {
+        "provider": "x402",
+        "api_version": "x402_travel_booking_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "confirmation_number",
+          "fare_class",
+          "total_cents"
+        ],
+        "schema_digest_hex": "2fb55ee27008a7d59d2df78f80dc144121e54056c71f53c62c90c5f00200dd91",
+        "canonical_schema_digest_hex": "2fb55ee27008a7d59d2df78f80dc144121e54056c71f53c62c90c5f00200dd91"
+      }
+    },
+    {
+      "preset_id": "invoice_payment_confirmed",
+      "kind": "vendor_pack",
+      "archetype_preset_id": "webhook_confirmed",
+      "title": "Invoice payment confirmed",
+      "description": "Accounts-payable invoice payment confirmed via vendor webhook with invoice_number and payment_reference fields. Rail-agnostic — not payment-rail funding webhooks.",
+      "harbor_template_id": "webhook_confirmation_v1",
+      "parameters": {
+        "event_type_path": [
+          "event_type"
+        ],
+        "expected_event_type": "invoice.paid"
+      },
+      "evidence_field_map": {
+        "invoice_number": "invoice_number",
+        "payment_reference": "payment_reference",
+        "webhook_event_id": "webhook_event_id",
+        "event_type": "event_type",
+        "payload_digest": "payload_digest"
+      },
+      "vendor_evidence_schema": {
+        "type": "object",
+        "properties": {
+          "invoice_number": {
+            "type": "string",
+            "description": "Vendor invoice number (e.g. INV-2026-0042)"
+          },
+          "payment_reference": {
+            "type": "string",
+            "description": "Vendor payment or remittance reference id"
+          },
+          "webhook_event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "invoice_number",
+          "payment_reference",
+          "webhook_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "evidence_schema": {
+        "type": "object",
+        "properties": {
+          "invoice_number": {
+            "type": "string"
+          },
+          "payment_reference": {
+            "type": "string"
+          },
+          "webhook_event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "payload_digest": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "invoice_number",
+          "payment_reference",
+          "webhook_event_id",
+          "event_type",
+          "payload_digest"
+        ]
+      },
+      "vendor_sample_evidence": {
+        "invoice_number": "INV-2026-0042",
+        "payment_reference": "pay_ref_8JZ3QK",
+        "webhook_event_id": "wh_inv_9kExample",
+        "event_type": "invoice.paid",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_evidence": {
+        "invoice_number": "INV-2026-0042",
+        "payment_reference": "pay_ref_8JZ3QK",
+        "webhook_event_id": "wh_inv_9kExample",
+        "event_type": "invoice.paid",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "sample_failing_evidence": {
+        "invoice_number": "INV-2026-0042",
+        "payment_reference": "pay_ref_8JZ3QK",
+        "webhook_event_id": "wh_inv_9kExample",
+        "event_type": "invoice.voided",
+        "payload_digest": "blake3:2c26b46b68ffc68ff99b453c1d3041340e45ee0e6daef0f4c932b8d4b8e8bb2e"
+      },
+      "human_summary": "Release when event_type is invoice.paid with invoice_number, payment_reference, webhook_event_id, and payload_digest present.",
+      "recommended_amount_cents": 50000,
+      "spend_hints": {
+        "approval_threshold_cents": 25000,
+        "per_tool_max_cents": 250000
+      },
+      "scope": "tool_completion",
+      "forbidden_evidence_fields": [
+        "payment_intent_id",
+        "mandate_id",
+        "latest_charge_id",
+        "transfer_id",
+        "refund_id",
+        "stripe_event_id",
+        "payment_session_id",
+        "authorization_id",
+        "x402_payment_session_id",
+        "onchain_transaction_hashes"
+      ],
+      "anti_patterns": [
+        "Do not use Stripe payment_intent.succeeded or Coinbase authorization webhooks as tool-completion evidence.",
+        "Do not submit x402 payment-session ids as invoice payment proof."
+      ],
+      "vendor_contract": {
+        "provider": "generic",
+        "api_version": "invoice_payment_v1",
+        "contract_kind": "json_schema",
+        "quality_fields": [
+          "invoice_number",
+          "payment_reference",
+          "payload_digest"
+        ],
+        "schema_digest_hex": "c185be62f1add3fb051604db007f3649137b8141e43efb5c82811db3dcd7678c",
+        "canonical_schema_digest_hex": "9bc60cfc5ed0a4233d4c6041120ad5af56ace2fb454779563c1e0b01f966ad18"
+      }
     }
   ]
 }

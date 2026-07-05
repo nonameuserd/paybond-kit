@@ -6,7 +6,7 @@ import {
   auditVerifyResult,
   buildManifestCore,
   verifyAuditManifest,
-} from "../../src/cli/audit-export.js";
+} from "../../src/audit/verify.js";
 
 const FIXTURE_PATH = join(
   process.cwd(),

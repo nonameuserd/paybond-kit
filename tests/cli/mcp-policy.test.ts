@@ -13,6 +13,12 @@ describe("mcp policy", () => {
   it("readonly policy allows read-only tools only", () => {
     const config = parseMcpToolPolicy("readonly");
     expect(toolAllowedByPolicy("paybond_get_principal", { readOnlyHint: true }, config)).toBe(true);
+    expect(toolAllowedByPolicy("paybond_list_audit_exports", { readOnlyHint: true }, config)).toBe(
+      true,
+    );
+    expect(toolAllowedByPolicy("paybond_get_audit_export", { readOnlyHint: true }, config)).toBe(
+      true,
+    );
     expect(
       toolAllowedByPolicy("paybond_create_spend_intent", { readOnlyHint: false, destructiveHint: false }, config),
     ).toBe(false);

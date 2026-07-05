@@ -697,6 +697,14 @@ export async function bindSandboxAgentRun() {
     registry: createAgentToolRegistry(),
   });
 }
+
+// Production (signing v7): publish managed template head, then:
+// import { PaybondPolicy } from "@paybond/kit";
+// const policy = await PaybondPolicy.load(POLICY_FILE);
+// const created = await paybond.intents.createWithPolicyBinding(
+//   policy.toIntentCreateInput({ principalDid, principalSigningSeed, payeeDid, payeeSigningSeed, deadlineRfc3339, settlementRail: "stripe_connect", recognitionProof, publishedPolicyHead }),
+// );
+// Attach middleware: instrumented.bind({ intentId, capabilityToken, productionEvidence }) or agentRun.bind({ attach: ... })
 `;
 }
 
