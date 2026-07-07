@@ -1,6 +1,7 @@
 import {
   parseAuditExportJobGet,
   parseAuditExportList,
+  type AuditExportCreateFilter,
   type AuditExportJobGetResponse,
   type AuditExportListPage,
   type AuditVerifyResult,
@@ -10,6 +11,7 @@ import process from "node:process";
 
 export type AuditExportsGateway = {
   getJson(path: string): Promise<Record<string, unknown>>;
+  postJson?(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>>;
   deleteJson?(path: string): Promise<Record<string, unknown>>;
 };
 
@@ -60,23 +62,34 @@ export class GatewayAuditExportsClient implements AuditExportsGateway {
     return this.requestJSON("GET", path);
   }
 
+  async postJson(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    return this.requestJSON("POST", path, body);
+  }
+
   async deleteJson(path: string): Promise<Record<string, unknown>> {
     return this.requestJSON("DELETE", path);
   }
 
-  private async requestJSON(method: "GET" | "DELETE", path: string): Promise<Record<string, unknown>> {
+  private async requestJSON(
+    method: "GET" | "POST" | "DELETE",
+    path: string,
+    body?: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     const url = `${this.base}${path.replace(/^\//, "")}`;
     let lastErr: unknown;
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
       let res: Response;
       try {
-        res = await fetch(url, {
-          method,
-          headers: {
-            accept: "application/json",
-            authorization: `Bearer ${this.bearerToken}`,
-          },
-        });
+        const headers: Record<string, string> = {
+          accept: "application/json",
+          authorization: `Bearer ${this.bearerToken}`,
+        };
+        const init: RequestInit = { method, headers };
+        if (method === "POST") {
+          headers["content-type"] = "application/json";
+          init.body = JSON.stringify(body ?? {});
+        }
+        res = await fetch(url, init);
       } catch (err) {
         lastErr = err;
         if (attempt + 1 >= this.maxRetries) {
@@ -118,6 +131,45 @@ export type PaybondAuditExportsGetParams = {
   issueDownload?: boolean;
 };
 
+export type PaybondAuditExportsCreateParams = {
+  filter: AuditExportCreateFilter;
+  /** Defaults to `standard` when omitted. */
+  disclosureTier?: "standard" | "extended";
+  /** Bundle retention in hours (gateway default 168, max 720). */
+  retentionHours?: number;
+};
+
+function buildAuditExportCreateBody(params: PaybondAuditExportsCreateParams): Record<string, unknown> {
+  const filter: Record<string, unknown> = {};
+  const f = params.filter;
+  if (f.time_start?.trim()) {
+    filter.time_start = f.time_start.trim();
+  }
+  if (f.time_end?.trim()) {
+    filter.time_end = f.time_end.trim();
+  }
+  if (f.intent_id?.trim()) {
+    filter.intent_id = f.intent_id.trim();
+  }
+  if (f.case_id?.trim()) {
+    filter.case_id = f.case_id.trim();
+  }
+  if (f.operator_did?.trim()) {
+    filter.operator_did = f.operator_did.trim();
+  }
+  if (f.includes && f.includes.length > 0) {
+    filter.includes = [...f.includes];
+  }
+  const body: Record<string, unknown> = {
+    filter,
+    disclosure_tier: params.disclosureTier ?? "standard",
+  };
+  if (params.retentionHours != null && params.retentionHours > 0) {
+    body.retention_hours = params.retentionHours;
+  }
+  return body;
+}
+
 /**
  * SDK surface for compliance audit export jobs and local bundle verification.
  */
@@ -153,6 +205,21 @@ export class PaybondAuditExports {
     const query = params?.issueDownload ? "?issue_download=1" : "";
     const body = await this.gateway.getJson(
       `/v1/compliance/audit-exports/${encodeURIComponent(jobId)}${query}`,
+    );
+    return parseAuditExportJobGet(body);
+  }
+
+  /**
+   * Create a compliance audit export job (`POST /v1/compliance/audit-exports`).
+   * Tenant scope comes from the API key — never pass a tenant id.
+   */
+  async create(params: PaybondAuditExportsCreateParams): Promise<AuditExportJobGetResponse> {
+    if (!this.gateway.postJson) {
+      throw new Error("audit export create is not supported by this gateway adapter");
+    }
+    const body = await this.gateway.postJson(
+      "/v1/compliance/audit-exports",
+      buildAuditExportCreateBody(params),
     );
     return parseAuditExportJobGet(body);
   }

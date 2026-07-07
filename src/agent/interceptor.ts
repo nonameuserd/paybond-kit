@@ -8,6 +8,23 @@ import type { PaybondAgentRunHost } from "./run.js";
 import { signHarborEvidenceSubmitRecognitionProof } from "../agent-recognition.js";
 import { signPayeeEvidenceBinding } from "../payee-evidence.js";
 import {
+  AGENT_RECEIPT_KIND_V1,
+  AGENT_RECEIPT_SCHEMA_VERSION,
+  AGENT_RECEIPT_SCOPE_ACTION,
+  AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519,
+  AGENT_RECEIPT_VERSION_V1,
+  actionReceiptId,
+  agentReceiptMessageDigestSha256Hex,
+  valueDigestSha256Hex,
+  type AgentReceiptEvidenceV1,
+  type AgentReceiptMerchantV1,
+  type AgentReceiptV1,
+} from "../agent-receipt.js";
+import {
+  resolveExternalAttestations,
+} from "../agent-receipt-external-attestations.js";
+import type { AgentReceiptExternalAttestationV1 } from "../agent-receipt.js";
+import {
   PaybondAuthorizeToolCallInput,
   PaybondAutoEvidenceSubmitError,
   PaybondInterceptEvidenceResult,
@@ -52,12 +69,16 @@ function mapSandboxEvidenceResult(result: {
   intent_id: string;
   sandbox_lifecycle_status: string;
   predicate_passed?: boolean | null;
+  payload_digest?: string;
+  artifacts_digest?: string;
 }): PaybondInterceptEvidenceResult {
   return {
     submitted: true,
     intentId: result.intent_id,
     predicatePassed: result.predicate_passed ?? undefined,
     sandboxLifecycleStatus: result.sandbox_lifecycle_status,
+    payloadDigestSha256Hex: result.payload_digest?.trim().toLowerCase() || undefined,
+    artifactsDigestSha256Hex: result.artifacts_digest?.trim().toLowerCase() || undefined,
   };
 }
 
@@ -79,6 +100,9 @@ type ResolvedSideEffectingCall = {
     agentSubject?: string;
     approvalToken?: string;
     idempotencyKey?: string;
+    modelFamily?: string;
+    configHashHex?: string;
+    promptHashHex?: string;
   };
 };
 
@@ -314,10 +338,13 @@ export class PaybondToolInterceptor {
 
       const evidencePolicyDigest = cached?.policyDigest ?? pinnedDigest;
       let auth: PaybondRunGuardAuthResult;
+      let authorizedAtMs: number;
       if (cached) {
         auth = cached.auth;
+        authorizedAtMs = cached.cachedAtMs;
       } else {
         auth = await this.binding.guard.assertSpendAuthorized(resolved.authInput);
+        authorizedAtMs = Date.now();
         this.emitTrace({
           type: "spend_authorized",
           runId: this.binding.runId,
@@ -355,6 +382,16 @@ export class PaybondToolInterceptor {
         }
 
         const evidenceId = evidenceIdempotencyKey(this.binding.intentId, toolCallId);
+        const externalAttestations = this.resolveToolExternalAttestations(
+          resolved.entry,
+          toolResult,
+          {
+            toolName,
+            toolCallId,
+            operation: resolved.operation,
+            arguments: input.arguments,
+          },
+        );
         const evidence = await this.submitAutoEvidence({
           entry: resolved.entry,
           toolName,
@@ -376,7 +413,27 @@ export class PaybondToolInterceptor {
           evidencePreset: resolved.entry.evidencePreset,
           sandboxLifecycleStatus: evidence.sandboxLifecycleStatus,
           predicatePassed: evidence.predicatePassed,
+          externalAttestations,
           recordedAt: traceTimestamp(),
+        });
+
+        const receiptDraft = this.buildReceiptDraft({
+          toolName: resolved.toolName,
+          toolCallId: resolved.toolCallId,
+          operation: resolved.operation,
+          arguments: input.arguments,
+          agentSubject: resolved.authInput.agentSubject,
+          requestedSpendCents: resolved.requestedSpendCents,
+          currency: resolved.authInput.currency,
+          vendorId: resolved.authInput.vendorId,
+          entry: resolved.entry,
+          auth,
+          authorizedAtMs,
+          policyDigest: evidencePolicyDigest,
+          executeStartedAt,
+          toolResult,
+          evidence,
+          externalAttestations,
         });
 
         return {
@@ -388,6 +445,7 @@ export class PaybondToolInterceptor {
             policyDigest: evidencePolicyDigest,
           },
           evidence,
+          receiptDraft,
         };
       } catch (err) {
         if (err instanceof PaybondAutoEvidenceSubmitError) {
@@ -438,6 +496,7 @@ export class PaybondToolInterceptor {
     }
     requestedSpendCents ??= 0;
 
+    const agentContext = this.binding.agentContext;
     return {
       toolName,
       toolCallId,
@@ -453,9 +512,12 @@ export class PaybondToolInterceptor {
         taskId: input.taskId,
         workflowId: input.workflowId,
         currency: input.currency,
-        agentSubject: input.agentSubject,
+        agentSubject: input.agentSubject ?? agentContext?.operatorDid,
         approvalToken: input.approvalToken,
         idempotencyKey: input.idempotencyKey,
+        modelFamily: agentContext?.modelFamily,
+        configHashHex: agentContext?.configHashHex,
+        promptHashHex: agentContext?.promptHashHex,
       },
     };
   }
@@ -547,18 +609,185 @@ export class PaybondToolInterceptor {
           : typeof resultRecord.predicatePassed === "boolean"
             ? resultRecord.predicatePassed
             : undefined;
+      const payloadDigestSha256Hex =
+        typeof resultRecord.payload_digest === "string"
+          ? resultRecord.payload_digest.trim().toLowerCase() || undefined
+          : undefined;
+      const artifactsDigestSha256Hex =
+        typeof resultRecord.artifacts_digest === "string"
+          ? resultRecord.artifacts_digest.trim().toLowerCase() || undefined
+          : undefined;
 
       return {
         submitted: true,
         intentId: this.binding.intentId,
         intentState,
         predicatePassed,
+        payloadDigestSha256Hex,
+        artifactsDigestSha256Hex,
       };
     } catch (err) {
       if (err instanceof PaybondAutoEvidenceSubmitError) {
         throw err;
       }
       throw new PaybondAutoEvidenceSubmitError(options.toolResult, err);
+    }
+  }
+
+  /**
+   * Composes an unsigned Agent Receipt Standard draft (Phase 1) after a successful
+   * authorize → execute → evidence cycle. Never signed or persisted here; Phase 2 covers
+   * compose/sign/persist. Best-effort: returns `undefined` instead of throwing whenever
+   * required receipt fields (agent context, principal/operator DID, policy template, pinned
+   * policy digest, or a Harbor decision id) are unavailable on this binding or call.
+   */
+  private buildReceiptDraft(options: {
+    toolName: string;
+    toolCallId: string;
+    operation: string;
+    arguments: unknown;
+    agentSubject?: string;
+    requestedSpendCents: number;
+    currency?: string;
+    vendorId?: string;
+    entry: PaybondSideEffectingToolEntry;
+    auth: PaybondRunGuardAuthResult;
+    authorizedAtMs: number;
+    policyDigest?: string;
+    executeStartedAt: number;
+    toolResult: unknown;
+    evidence: PaybondInterceptEvidenceResult;
+    externalAttestations?: AgentReceiptExternalAttestationV1[];
+  }): AgentReceiptV1 | undefined {
+    try {
+      const agentContext = this.binding.agentContext;
+      if (!agentContext?.operatorDid || !agentContext.principalDid || !agentContext.policyTemplateId) {
+        return undefined;
+      }
+      if (!agentContext.configHashHex || !agentContext.promptHashHex) {
+        return undefined;
+      }
+      if (!options.auth.decisionId || !options.policyDigest) {
+        return undefined;
+      }
+      const actorSubject = options.agentSubject ?? agentContext.operatorDid;
+      const bareDigest = options.policyDigest.startsWith("sha256:")
+        ? options.policyDigest.slice("sha256:".length)
+        : options.policyDigest;
+
+      const completedAtMs = Date.now();
+      const argumentsDigest = valueDigestSha256Hex(options.arguments);
+      let resultDigest: string | undefined;
+      try {
+        resultDigest = valueDigestSha256Hex(options.toolResult);
+      } catch {
+        resultDigest = undefined;
+      }
+
+      const harborState =
+        options.evidence.intentState ?? options.evidence.sandboxLifecycleStatus ?? "evidence_submitted";
+
+      let merchant: AgentReceiptMerchantV1 | undefined;
+      let evidenceBlock: AgentReceiptEvidenceV1 | undefined;
+      const payeeDid = this.binding.productionEvidence?.payeeDid;
+      if (payeeDid && options.evidence.payloadDigestSha256Hex) {
+        merchant = {
+          payee_did: payeeDid,
+          vendor_id: options.vendorId,
+        };
+        evidenceBlock = {
+          completion_preset_id: options.entry.evidencePreset,
+          payload_digest_sha256_hex: options.evidence.payloadDigestSha256Hex,
+          artifacts_digest_sha256_hex: options.evidence.artifactsDigestSha256Hex,
+          predicate_passed: options.evidence.predicatePassed ?? false,
+          payee_did: payeeDid,
+        };
+      }
+
+      const draft: AgentReceiptV1 = {
+        schema_version: AGENT_RECEIPT_SCHEMA_VERSION,
+        kind: AGENT_RECEIPT_KIND_V1,
+        receipt_version: AGENT_RECEIPT_VERSION_V1,
+        scope: AGENT_RECEIPT_SCOPE_ACTION,
+        receipt_id: actionReceiptId(this.binding.intentId, options.toolCallId),
+        issued_at: new Date(completedAtMs).toISOString(),
+        tenant_id: this.binding.tenantId,
+        authorization: {
+          principal_did: agentContext.principalDid,
+          actor_subject: actorSubject,
+          agent: {
+            operator_did: agentContext.operatorDid,
+            model_family: agentContext.modelFamily,
+            model_instance_id: agentContext.modelInstanceId,
+            config_hash_sha256_hex: agentContext.configHashHex,
+            prompt_hash_sha256_hex: agentContext.promptHashHex,
+          },
+          decision_id: options.auth.decisionId,
+          audit_id: options.auth.auditId,
+          policy: {
+            template_id: agentContext.policyTemplateId,
+            content_digest_sha256_hex: bareDigest,
+          },
+          authorized_at: new Date(options.authorizedAtMs).toISOString(),
+          requested_spend_cents: options.requestedSpendCents,
+          currency: options.currency ?? "usd",
+        },
+        execution: {
+          run_id: this.binding.runId,
+          tool_call_id: options.toolCallId,
+          tool_name: options.toolName,
+          operation: options.operation,
+          arguments_digest_sha256_hex: argumentsDigest,
+          result_digest_sha256_hex: resultDigest,
+          outcome: "executed",
+          started_at: new Date(options.executeStartedAt).toISOString(),
+          completed_at: new Date(completedAtMs).toISOString(),
+          duration_ms: completedAtMs - options.executeStartedAt,
+        },
+        merchant,
+        evidence: evidenceBlock,
+        outcome: {
+          harbor_state: harborState,
+          spend_reservation_outcome: "consumed",
+          predicate_passed: options.evidence.predicatePassed ?? undefined,
+        },
+        references: {
+          intent_id: this.binding.intentId,
+          settlement_receipt_id: null,
+        },
+        external_attestations: options.externalAttestations ?? [],
+        signing_algorithm: AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519,
+        message_digest_sha256_hex: "",
+        signing_public_key_ed25519_hex: "",
+        ed25519_signature_hex: "",
+      };
+
+      draft.message_digest_sha256_hex = agentReceiptMessageDigestSha256Hex(draft);
+      return draft;
+    } catch {
+      // Draft composition is always best-effort; never fails tool execution (Phase 1).
+      return undefined;
+    }
+  }
+
+  private resolveToolExternalAttestations(
+    entry: PaybondSideEffectingToolEntry,
+    toolResult: unknown,
+    ctx: PaybondToolCallContext,
+  ): AgentReceiptExternalAttestationV1[] {
+    const mapper = entry.externalAttestationMapper;
+    if (!mapper) {
+      return [];
+    }
+    try {
+      const mapped = mapper(toolResult, ctx);
+      if (!mapped) {
+        return [];
+      }
+      const inputs = Array.isArray(mapped) ? mapped : [mapped];
+      return resolveExternalAttestations(inputs);
+    } catch {
+      return [];
     }
   }
 }

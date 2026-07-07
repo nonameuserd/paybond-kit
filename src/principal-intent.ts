@@ -16,11 +16,12 @@ import {
   encodeVarintI64,
   encodeVarintU32,
 } from "./bincode-wire.js";
+import { validateUsdDenominatedSettlement } from "./mpp-commercial.js";
 
 /** Tenant-configured settlement rail names. Clients may request a rail, not a destination. */
-export type SettlementRail = "stripe_connect" | "stripe_ach_debit" | "x402_usdc_base";
+export type SettlementRail = "stripe_connect" | "stripe_ach_debit" | "stripe_mpp" | "x402_usdc_base";
 
-const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]);
+const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "stripe_ach_debit", "stripe_mpp", "x402_usdc_base"]);
 
 function validateSettlementRail(value: string): SettlementRail {
   if (!SETTLEMENT_RAIL_VALUES.has(value as SettlementRail)) {
@@ -321,6 +322,7 @@ export function buildSignedCreateIntentBodyWithPolicyBinding(
     throw new Error("allowedTools must be non-empty");
   }
   const settlementRail = validateSettlementRail(params.settlementRail);
+  validateUsdDenominatedSettlement(settlementRail, params.currency);
   const predicateRef = params.predicateRef ?? "";
   const head = params.publishedPolicyHead;
   if (head.templateId !== params.policyBinding.templateId || head.versionSeq !== params.policyBinding.versionSeq) {
@@ -420,6 +422,7 @@ export function buildSignedCreateIntentBody(params: BuildSignedCreateIntentParam
     throw new Error("allowedTools must be non-empty");
   }
   const settlementRail = validateSettlementRail(params.settlementRail);
+  validateUsdDenominatedSettlement(settlementRail, params.currency);
   const predicateRef = params.predicateRef ?? "";
   ensureEd25519Sha512Sync();
   const payeePub = getPublicKey(params.payeeSigningSeed);

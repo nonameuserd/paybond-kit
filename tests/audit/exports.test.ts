@@ -76,6 +76,49 @@ describe("PaybondAuditExports", () => {
     expect(verifyAuditManifest(manifest)).toBe(false);
   });
 
+  it("create posts filter and disclosure tier", async () => {
+    const gateway = {
+      getJson: vi.fn(),
+      postJson: vi.fn().mockResolvedValue({
+        job: {
+          id: "job-new",
+          status: "ready",
+          tenant_realm_id: "realm-1",
+          disclosure_tier: "standard",
+          expires_at: "2026-02-01T00:00:00Z",
+          manifest_sha256: "abc",
+          bundle_sha256: "def",
+          bundle_size_bytes: 1024,
+          download_token: "tok",
+          download_token_expires: "2026-01-02T00:00:00Z",
+          download_path: "/v1/compliance/audit-exports/job-new/bundle",
+        },
+      }),
+    };
+    const exports = PaybondAuditExports.fromGateway(gateway);
+    const body = await exports.create({
+      filter: {
+        time_start: "2026-01-01T00:00:00Z",
+        time_end: "2026-01-31T23:59:59Z",
+        includes: ["signal", "disputes"],
+      },
+      disclosureTier: "standard",
+      retentionHours: 168,
+    });
+    expect(body.job.id).toBe("job-new");
+    expect(body.job.bundle_size_bytes).toBe(1024);
+    expect(body.job.download_path).toContain("job-new");
+    expect(gateway.postJson).toHaveBeenCalledWith("/v1/compliance/audit-exports", {
+      filter: {
+        time_start: "2026-01-01T00:00:00Z",
+        time_end: "2026-01-31T23:59:59Z",
+        includes: ["signal", "disputes"],
+      },
+      disclosure_tier: "standard",
+      retention_hours: 168,
+    });
+  });
+
   it("delete delegates to gateway deleteJson", async () => {
     const gateway = {
       getJson: vi.fn(),
@@ -118,5 +161,25 @@ describe("audit export wire parsers", () => {
       expires_at: "2026-02-03T00:00:00Z",
     });
     expect(body.job.id).toBe("job-3");
+  });
+
+  it("parseAuditExportJobGet accepts create response without created_at", () => {
+    const body = parseAuditExportJobGet({
+      job: {
+        id: "job-4",
+        status: "ready",
+        tenant_realm_id: "realm-1",
+        disclosure_tier: "standard",
+        expires_at: "2026-02-03T00:00:00Z",
+        manifest_sha256: "abc",
+        bundle_sha256: "def",
+        bundle_size_bytes: 99,
+        download_token: "tok",
+        download_path: "/v1/compliance/audit-exports/job-4/bundle",
+      },
+    });
+    expect(body.job.id).toBe("job-4");
+    expect(body.job.created_at).toBe("");
+    expect(body.job.bundle_size_bytes).toBe(99);
   });
 });

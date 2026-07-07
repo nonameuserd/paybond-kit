@@ -41,6 +41,12 @@ import {
   type McpPolicyReloadConfig,
 } from "./mcp-policy-reload.js";
 import {
+  agentReceiptResourceTemplateDefinition,
+  agentReceiptResourceUri,
+  MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
+  parseAgentReceiptResourceUri,
+} from "./mcp-receipt-resource.js";
+import {
   DEFAULT_PAYBOND_GATEWAY_BASE_URL,
   GatewayFraudClient,
   GatewaySignalClient,
@@ -62,7 +68,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.11.11";
+const SERVER_VERSION = "0.12.0";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -1233,6 +1239,30 @@ class PaybondMCPRuntime {
     });
   }
 
+  async getAgentReceiptV1(receiptId: string): Promise<Record<string, unknown>> {
+    const normalized = receiptId.trim().toLowerCase();
+    const body = await this.gateway.getJSON(
+      `/protocol/v2/agent-receipts/${encodeURIComponent(normalized)}`,
+      {
+        "x-tenant-id": await this.tenantId(),
+      },
+    );
+    const expectedTenant = await this.tenantId();
+    const echoedTenant = String(body.tenant_id ?? "").trim();
+    if (echoedTenant !== expectedTenant) {
+      throw new Error(
+        `tenant mismatch: expected=${expectedTenant} gateway=${echoedTenant}`,
+      );
+    }
+    const echoedReceipt = String(body.receipt_id ?? "").trim().toLowerCase();
+    if (echoedReceipt !== normalized) {
+      throw new Error(
+        `receipt mismatch: requested=${normalized} gateway=${echoedReceipt}`,
+      );
+    }
+    return body;
+  }
+
   async createHarborIntent(init: {
     body: Record<string, unknown>;
     recognitionProof: Record<string, unknown>;
@@ -1354,6 +1384,24 @@ export class PaybondMCPServer {
     );
   }
 
+  listResourceTemplates(): Array<Record<string, unknown>> {
+    return [agentReceiptResourceTemplateDefinition()];
+  }
+
+  async readResource(uri: string): Promise<{
+    uri: string;
+    mimeType: string;
+    text: string;
+  }> {
+    const receiptId = parseAgentReceiptResourceUri(uri);
+    const receipt = await this.runtime.getAgentReceiptV1(receiptId);
+    return {
+      uri: agentReceiptResourceUri(receiptId),
+      mimeType: MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
+      text: JSON.stringify(receipt, null, 2),
+    };
+  }
+
   listTools(): Array<Record<string, unknown>> {
     return this.tools.map((tool) => ({
       name: tool.name,
@@ -1444,6 +1492,10 @@ export class PaybondMCPServer {
               tools: {
                 listChanged: false,
               },
+              resources: {
+                subscribe: false,
+                listChanged: false,
+              },
             },
             serverInfo: {
               name: SERVER_NAME,
@@ -1475,6 +1527,34 @@ export class PaybondMCPServer {
             tools: this.listTools(),
           },
         };
+      case "resources/list":
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            resources: [],
+          },
+        };
+      case "resources/templates/list":
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            resourceTemplates: this.listResourceTemplates(),
+          },
+        };
+      case "resources/read": {
+        const params = ensureObject(message.params, "resources/read params");
+        const uri = stringArg(params.uri, "uri");
+        const contents = await this.readResource(uri);
+        return {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            contents: [contents],
+          },
+        };
+      }
       case "tools/call": {
         const params = ensureObject(message.params, "tools/call params");
         const name = stringArg(params.name, "name");

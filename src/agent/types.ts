@@ -1,3 +1,5 @@
+import type { AgentReceiptExternalAttestationV1 } from "../agent-receipt.js";
+
 /** Context passed to evidence mappers after a successful side-effecting tool call. */
 export type PaybondToolCallContext = {
   toolName: string;
@@ -15,6 +17,12 @@ export type PaybondEvidenceMapper<TResult = unknown> = (
   ctx: PaybondToolCallContext,
 ) => Record<string, unknown>;
 
+/** Optional partner attestation material for Agent Receipt `external_attestations`. */
+export type PaybondExternalAttestationMapper<TResult = unknown> = (
+  result: TResult,
+  ctx: PaybondToolCallContext,
+) => PaybondExternalAttestationInput | PaybondExternalAttestationInput[] | undefined;
+
 /** Policy for one registered side-effecting tool. */
 export type PaybondSideEffectingToolPolicy<TArgs = unknown, TResult = unknown> = {
   /** Harbor `allowed_tools` operation; defaults to the registry key (tool name). */
@@ -23,6 +31,7 @@ export type PaybondSideEffectingToolPolicy<TArgs = unknown, TResult = unknown> =
   /** Required completion catalog preset id for auto-evidence. */
   evidencePreset: string;
   evidenceMapper?: PaybondEvidenceMapper<TResult>;
+  externalAttestationMapper?: PaybondExternalAttestationMapper<TResult>;
 };
 
 export type PaybondToolRegistryConfig = {
@@ -37,6 +46,7 @@ export type PaybondSideEffectingToolEntry = {
   spendCents?: number | PaybondSpendResolver;
   evidencePreset: string;
   evidenceMapper?: PaybondEvidenceMapper;
+  externalAttestationMapper?: PaybondExternalAttestationMapper;
 };
 
 export type PaybondToolResolution =
@@ -64,6 +74,8 @@ export class PaybondToolRegistryValidationError extends Error {
 import type { PaybondToolRegistry } from "./registry.js";
 import type { PaybondPolicySnapshot } from "../policy/snapshot.js";
 import type { PaybondPolicyReloadBindConfig } from "../policy/reload.js";
+import type { AgentReceiptV1 } from "../agent-receipt.js";
+import type { PaybondExternalAttestationInput } from "../agent-receipt-external-attestations.js";
 
 /** Spend authorization input forwarded to the run-bound guard. */
 export type PaybondRunGuardAuthInput = {
@@ -78,6 +90,57 @@ export type PaybondRunGuardAuthInput = {
   agentSubject?: string;
   approvalToken?: string;
   idempotencyKey?: string;
+  /** Agent Receipt Standard context forwarded to Gateway `/verify` for audit correlation. */
+  modelFamily?: string;
+  configHashHex?: string;
+  promptHashHex?: string;
+};
+
+/**
+ * Materials to auto-compute `config_hash_hex` as `sha256(JCS({ system_prompt, tools_manifest,
+ * policy_snapshot_id }))` per the Agent Receipt Standard spec. `policySnapshotId` defaults to
+ * the bound policy snapshot digest (without the `sha256:` prefix) when omitted.
+ */
+export type PaybondRunConfigHashMaterials = {
+  systemPrompt: string;
+  toolsManifest: unknown;
+  policySnapshotId?: string;
+};
+
+/**
+ * Optional agent identity/config context for {@link PaybondAgentRun.bind}. Threaded onto every
+ * spend verify call and used to compose the unsigned Agent Receipt Standard draft returned from
+ * {@link PaybondToolInterceptor.wrapExecute}. Raw prompts are hashed locally and never retained
+ * or transmitted; only `promptHashHex` is kept on the resolved binding.
+ */
+export type PaybondRunAgentContextInput = {
+  modelFamily: string;
+  modelInstanceId?: string;
+  /** Precomputed sha256 hex digest; mutually exclusive with {@link configHashMaterials}. */
+  configHashHex?: string;
+  /** Auto-computed into `configHashHex` at bind time when `configHashHex` is omitted. */
+  configHashMaterials?: PaybondRunConfigHashMaterials;
+  /** Precomputed sha256 hex digest; mutually exclusive with {@link normalizedUserPrompt}. */
+  promptHashHex?: string;
+  /** Hashed locally at bind time into `promptHashHex`; never stored or transmitted raw. */
+  normalizedUserPrompt?: string;
+  /** Agent receipt `authorization.principal_did`; omitted from receipt drafts when unset. */
+  principalDid?: string;
+  /** Agent receipt `authorization.agent.operator_did`; omitted from receipt drafts when unset. */
+  operatorDid?: string;
+  /** Agent receipt `authorization.policy.template_id`; omitted from receipt drafts when unset. */
+  policyTemplateId?: string;
+};
+
+/** Resolved agent context stored on the run binding after bind-time hash computation. */
+export type PaybondRunAgentContext = {
+  modelFamily: string;
+  modelInstanceId?: string;
+  configHashHex?: string;
+  promptHashHex?: string;
+  principalDid?: string;
+  operatorDid?: string;
+  policyTemplateId?: string;
 };
 
 /** Spend authorization result from Harbor verify. */
@@ -140,6 +203,10 @@ export type PaybondInterceptEvidenceResult = {
   predicatePassed?: boolean | null;
   sandboxLifecycleStatus?: string;
   intentState?: string;
+  /** sha256 hex digest of the submitted evidence payload, when returned by Harbor. */
+  payloadDigestSha256Hex?: string;
+  /** sha256 hex digest of submitted evidence artifacts, when returned by Harbor. */
+  artifactsDigestSha256Hex?: string;
 };
 
 export type PaybondInterceptWrapExecuteResult<TResult> = {
@@ -151,6 +218,12 @@ export type PaybondInterceptWrapExecuteResult<TResult> = {
     policyDigest?: string;
   };
   evidence?: PaybondInterceptEvidenceResult;
+  /**
+   * Unsigned Agent Receipt Standard draft (Phase 1: composed locally, never signed or persisted).
+   * Omitted when required context (agentContext hashes, principal/operator DID, policy template,
+   * decision id) is unavailable — receipt composition is always best-effort and never throws.
+   */
+  receiptDraft?: AgentReceiptV1;
 };
 
 export type PaybondInterceptWrapExecuteInput<TResult> = {
@@ -281,6 +354,7 @@ export type PaybondTraceEvidenceSubmittedEvent = {
   evidencePreset?: string;
   sandboxLifecycleStatus?: string;
   predicatePassed?: boolean | null;
+  externalAttestations?: AgentReceiptExternalAttestationV1[];
   recordedAt: string;
 };
 
@@ -326,6 +400,8 @@ export type PaybondRunBinding = {
   policySnapshot?: PaybondPolicySnapshot;
   /** Optional trace sink for dev observability (see {@link PaybondAgentRunBindInput.traceSink}). */
   onTrace?: PaybondTraceSink;
+  /** Resolved Agent Receipt Standard context, when bound with {@link PaybondAgentRunBindInput.agentContext}. */
+  agentContext?: PaybondRunAgentContext;
 };
 
 export type PaybondAgentRunBindInput = {
@@ -347,6 +423,8 @@ export type PaybondAgentRunBindInput = {
   traceSink?: PaybondTraceSink;
   /** @deprecated Use {@link PaybondAgentRunBindInput.traceSink}. */
   onTrace?: PaybondTraceSink;
+  /** Optional Agent Receipt Standard agent identity/config context (see {@link PaybondRunAgentContextInput}). */
+  agentContext?: PaybondRunAgentContextInput;
 };
 
 export class PaybondAgentRunBindError extends Error {

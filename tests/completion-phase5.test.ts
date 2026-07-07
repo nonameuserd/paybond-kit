@@ -88,7 +88,7 @@ describe("completion-resolve", () => {
   it("resolves x402_saas_api_purchase with subscription_id mapping", () => {
     const resolved = resolveCompletionPreset("x402_saas_api_purchase");
     expect(resolved.kind).toBe("vendor_pack");
-    expect(resolved.preset.rail_hints).toEqual(["x402_usdc_base"]);
+    expect(resolved.preset.rail_hints).toEqual(["x402_usdc_base", "stripe_mpp"]);
     const canonical = mapVendorEvidenceToCanonical(resolved.preset, {
       subscription_id: "sub_abc",
       seat_count: 3,
@@ -100,7 +100,7 @@ describe("completion-resolve", () => {
 
   it("resolves x402_travel_booking with x402 rail hints", () => {
     const resolved = resolveCompletionPreset("x402_travel_booking");
-    expect(resolved.preset.rail_hints).toEqual(["x402_usdc_base"]);
+    expect(resolved.preset.rail_hints).toEqual(["x402_usdc_base", "stripe_mpp"]);
     expect(resolved.parameters.cost_path).toEqual(["total_cents"]);
     expect(resolved.parameters.expected_status).toBe("completed");
   });
@@ -122,7 +122,7 @@ describe("phase 5.2 vendor pack catalog", () => {
     const x402Pack = catalog.presets.find((preset) => preset.preset_id === "x402_paid_api_ok");
     expect(achPack?.rail_hints).toEqual(["stripe_ach_debit"]);
     expect(achPack?.forbidden_evidence_fields).toContain("payment_intent_id");
-    expect(x402Pack?.rail_hints).toEqual(["x402_usdc_base"]);
+    expect(x402Pack?.rail_hints).toEqual(["x402_usdc_base", "stripe_mpp"]);
     expect(x402Pack?.forbidden_evidence_fields).toContain("payment_session_id");
   });
 

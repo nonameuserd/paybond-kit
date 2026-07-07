@@ -298,10 +298,12 @@ export const COMMAND_EXAMPLES: Record<string, string[]> = {
     "paybond signal fraud --did did:example:alice"
   ],
   "receipts get": [
-    "paybond receipts get receipt-123"
+    "paybond receipts get receipt-123",
+    "paybond receipts get sha256:abc... --kind agent --format json"
   ],
   "receipts verify": [
-    "paybond receipts verify receipt-123"
+    "paybond receipts verify receipt-123",
+    "paybond receipts verify sha256:abc... --kind agent --format json"
   ],
   "mandates verify": [
     "paybond mandates verify --body mandate.json"

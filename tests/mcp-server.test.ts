@@ -1089,4 +1089,103 @@ describe("PaybondMCPServer", () => {
       result: { ok: true },
     });
   });
+
+  it("advertises agent receipt resource templates on initialize", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            tenant_id: "tenant-a",
+            roles: ["operator"],
+            subject: "service-account-1",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+
+    const response = await server.handleMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+    });
+
+    expect(response?.result).toMatchObject({
+      capabilities: {
+        resources: {
+          subscribe: false,
+          listChanged: false,
+        },
+      },
+    });
+  });
+
+  it("reads paybond://receipt/{id} via resources/read", async () => {
+    const receiptId = "0ab0f1c2b58543f4753b23fec340f16c931e43d102898606a08acbee37a1e484";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(
+          JSON.stringify({ tenant_id: "tenant-a", roles: ["operator"], subject: "svc" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes(`/protocol/v2/agent-receipts/${receiptId}`)) {
+        return new Response(
+          JSON.stringify({
+            tenant_id: "tenant-a",
+            receipt_id: receiptId,
+            kind: "paybond.agent_receipt_v1",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+    await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "initialize" });
+
+    const templates = await server.handleMessage({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "resources/templates/list",
+    });
+    expect(templates?.result).toMatchObject({
+      resourceTemplates: [
+        expect.objectContaining({
+          uriTemplate: "paybond://receipt/{receipt_id}",
+        }),
+      ],
+    });
+
+    const read = await server.handleMessage({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "resources/read",
+      params: { uri: `paybond://receipt/${receiptId}` },
+    });
+    expect(read?.result).toMatchObject({
+      contents: [
+        expect.objectContaining({
+          uri: `paybond://receipt/${receiptId}`,
+          mimeType: "application/json",
+        }),
+      ],
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining(`/protocol/v2/agent-receipts/${receiptId}`),
+      expect.any(Object),
+    );
+  });
 });

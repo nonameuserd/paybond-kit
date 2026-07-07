@@ -54,6 +54,7 @@ function normalizeSideEffecting(
       spendCents: policy.spendCents,
       evidencePreset,
       evidenceMapper: policy.evidenceMapper,
+      externalAttestationMapper: policy.externalAttestationMapper,
     });
   }
 

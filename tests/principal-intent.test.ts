@@ -113,4 +113,44 @@ describe("buildSignedCreateIntentBody", () => {
       }),
     ).toThrow(/settlementRail must be one of/);
   });
+
+  it("rejects non-USD currency for stripe_mpp", () => {
+    expect(() =>
+      buildSignedCreateIntentBody({
+        tenantId: "tenant-mpp",
+        intentId: "7f2a9b1e-2f66-4f4f-9c6e-8f4b8e85c401",
+        principalDid: "did:principal:1",
+        principalSigningSeed: new Uint8Array(32),
+        payeeDid: "did:payee:1",
+        payeeSigningSeed: new Uint8Array(32),
+        budget: { max: 100 },
+        predicate: { version: 1, root: { op: "true" } },
+        currency: "eur",
+        amountCents: 100,
+        evidenceSchema: { type: "object" },
+        deadlineRfc3339: "2030-01-02T15:04:05Z",
+        allowedTools: ["payments.capture"],
+        settlementRail: "stripe_mpp",
+      }),
+    ).toThrow(/currency must be usd when settlementRail is stripe_mpp/);
+  });
+
+  it("accepts stripe_mpp settlement rail", () => {
+    const body = buildSignedCreateIntentBody({
+      intentId: "7f2a9b1e-2f66-4f4f-9c6e-8f4b8e85c401",
+      principalDid: "did:principal:1",
+      principalSigningSeed: new Uint8Array(32),
+      payeeDid: "did:payee:1",
+      payeeSigningSeed: new Uint8Array(32),
+      budget: { max: 100 },
+      predicate: { version: 1, root: { op: "true" } },
+      currency: "usd",
+      amountCents: 100,
+      evidenceSchema: { type: "object" },
+      deadlineRfc3339: "2030-01-02T15:04:05Z",
+      allowedTools: ["payments.capture"],
+      settlementRail: "stripe_mpp",
+    });
+    expect(body.settlement_rail).toBe("stripe_mpp");
+  });
 });

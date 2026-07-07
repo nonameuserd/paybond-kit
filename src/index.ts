@@ -13,6 +13,8 @@ import {
 import { signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
 import {
   PaybondAgentRunFacade,
+  createPaybondAgentCallable,
+  type PaybondAgentCallable,
   PaybondInstrumentBuilder,
   PaybondInstrumentRuntime,
   PaybondToolRegistry,
@@ -30,8 +32,6 @@ import {
   wrapPaybondTools,
   type CreateGuardedAgentInput,
   type CreateGuardedAgentResult,
-  type PaybondAgentInput,
-  type PaybondAgentResult,
   type PaybondInlinePolicy,
   type PaybondInstrumentAgentOptions,
   type PaybondInstrumentInput,
@@ -49,6 +49,11 @@ import {
 } from "./gateway-retry.js";
 import { PaybondAudit, PaybondAuditExports } from "./audit/index.js";
 import {
+  formatPaymentAuthorizationValue,
+  paymentAuthorizationGatewayHeader,
+  readFundPaymentTransportHeaders,
+} from "./payment-transport.js";
+import {
   parsePolicyRemoteValidateResponse,
   policyValidateQueryString,
   type PolicyRemoteValidateOptions,
@@ -63,13 +68,16 @@ import { paybondSolutionPresets } from "./solutions/api.js";
 import { requireSecureGatewayUrl } from "./gateway-url.js";
 import {
   executeFundWithX402,
-  PaybondX402FundingFailedError,
-  PaybondX402FundingPendingError,
-  buildX402FundRequestEnvelope,
   type FundRequestEnvelope,
   type PaymentRequired,
   type X402FundPollOptions,
 } from "./x402-funding.js";
+import {
+  executeFundWithMppCharge,
+  executeFundWithMppSession,
+  type MppFundPollOptions,
+  type PaymentAuthChallenge,
+} from "./mpp-funding.js";
 
 declare const Buffer: {
   from(input: string, encoding?: string): {
@@ -112,6 +120,13 @@ export type PaybondSpendAuthorizationInput = {
   agentSubject?: string;
   approvalToken?: string;
   idempotencyKey?: string;
+  /**
+   * Agent Receipt Standard context (Phase 1): forwarded to Gateway `/verify` on every call for
+   * audit correlation. See `go/gateway/internal/spendauth/types.go` `VerifyRequest`.
+   */
+  modelFamily?: string;
+  configHashHex?: string;
+  promptHashHex?: string;
 };
 
 function parseVerifyCapabilityBody(
@@ -183,6 +198,9 @@ function verifyCapabilityPayload(
   if (input.agentSubject?.trim()) payload.agent_subject = input.agentSubject.trim();
   if (input.approvalToken?.trim()) payload.approval_token = input.approvalToken.trim();
   if (input.idempotencyKey?.trim()) payload.idempotency_key = input.idempotencyKey.trim();
+  if (input.modelFamily?.trim()) payload.model_family = input.modelFamily.trim();
+  if (input.configHashHex?.trim()) payload.config_hash_hex = input.configHashHex.trim().toLowerCase();
+  if (input.promptHashHex?.trim()) payload.prompt_hash_hex = input.promptHashHex.trim().toLowerCase();
   return payload;
 }
 
@@ -197,6 +215,12 @@ export type IntentFundingResult = {
   settlementRail: SettlementRail;
   harborFundEndpoint?: string;
   status?: string;
+  /** MPP Payment Auth challenge `intent` (`charge` or `session`). */
+  intent?: string;
+  /** MPP Payment Auth challenge `method` (`stripe` or `tempo`). */
+  method?: string;
+  /** MPP Payment Auth challenge id from `WWW-Authenticate: Payment`. */
+  challengeId?: string;
   paymentSessionId?: string;
   paymentUrl?: string;
   stripePaymentIntentId?: string;
@@ -212,6 +236,22 @@ export type IntentFundingResult = {
   bankName?: string;
   asset?: string;
   network?: string;
+  /** MPP settlement asset (e.g. `usdc`). */
+  settlementAsset?: string;
+  /** MPP settlement network (e.g. `tempo`). */
+  settlementNetwork?: string;
+  /** Tempo session channel id (`stripe_mpp` session funding). */
+  channelId?: string;
+  /** Tempo session protocol version (e.g. `v2`). */
+  sessionProtocol?: string;
+  /** Required Tempo deposit in USDC base units. */
+  depositAmountBaseUnits?: string;
+  acceptedCumulativeBaseUnits?: string;
+  pendingCumulativeBaseUnits?: string;
+  descriptorHash?: string;
+  lastVoucherAt?: string;
+  lastSettleTxHash?: string;
+  channelStatus?: string;
   authorizationId?: string;
   captureId?: string;
   voidId?: string;
@@ -238,6 +278,12 @@ export type FundIntentResult = {
   statusCode: 200 | 202 | 402;
   paymentRequired?: string;
   paymentResponse?: string;
+  /** Payment Auth challenges from `WWW-Authenticate` (MPP charge/session). */
+  wwwAuthenticate?: string[];
+  /** Payment Auth receipt from `Payment-Receipt` when Harbor confirms payment progress. */
+  paymentReceipt?: string;
+  /** Cache policy echoed from Harbor (`Cache-Control`). */
+  cacheControl?: string;
   intentId: string;
   tenant: string;
   state: string;
@@ -950,6 +996,8 @@ export type VerifyProtocolReceiptV1Result = {
   receipt: ProtocolAuthorizationReceiptV1 | ProtocolSettlementReceiptV1 | Record<string, unknown>;
 };
 
+export type { VerifyAgentReceiptV1Result } from "./agent/receipt-client.js";
+
 const agentRecognitionProofHeader = "x-paybond-agent-recognition-proof";
 
 export class A2AHttpError extends Error {
@@ -1398,7 +1446,12 @@ export class HarborClient {
     {
       retryBody,
       retryBodyText,
-    }: { retryBody?: unknown; retryBodyText?: string },
+      appendAuthorization,
+    }: {
+      retryBody?: unknown;
+      retryBodyText?: string;
+      appendAuthorization?: string[];
+    } = {},
   ): Promise<Response> {
     let lastErr: unknown;
     for (let attempt = 0; attempt < this.maxRetries; attempt++) {
@@ -1408,6 +1461,9 @@ export class HarborClient {
         const auth = await this.authHeader();
         for (const [k, v] of Object.entries(auth)) {
           headers.set(k, v);
+        }
+        for (const value of appendAuthorization ?? []) {
+          headers.append("authorization", value);
         }
         res = await fetch(url, { ...init, headers });
       } catch (e) {
@@ -1549,7 +1605,11 @@ export class HarborClient {
    */
   async fundIntent(
     intentId: string,
-    options?: { paymentSignature?: string; idempotencyKey?: string },
+    options?: {
+      paymentSignature?: string;
+      paymentAuthorization?: string;
+      idempotencyKey?: string;
+    },
   ): Promise<FundIntentResult> {
     const url = `${this.base}intents/${intentId}/fund`;
     const headers: Record<string, string> = {
@@ -1561,6 +1621,11 @@ export class HarborClient {
     if (options?.paymentSignature?.trim()) {
       headers["payment-signature"] = options.paymentSignature.trim();
     }
+    const appendAuthorization =
+      options?.paymentAuthorization?.trim() !== undefined &&
+      options.paymentAuthorization.trim() !== ""
+        ? [formatPaymentAuthorizationValue(options.paymentAuthorization)]
+        : undefined;
     const res = await this.fetchWithRetries(
       url,
       {
@@ -1568,7 +1633,10 @@ export class HarborClient {
         headers,
         body: "",
       },
-      { retryBodyText: "" },
+      {
+        retryBodyText: "",
+        appendAuthorization,
+      },
     );
     const text = await res.text();
     if (![200, 202, 402].includes(res.status)) {
@@ -1580,6 +1648,7 @@ export class HarborClient {
     }
 
     const body = assertJSONObject(JSON.parse(text));
+    const transport = readFundPaymentTransportHeaders(res.headers);
     const tenant = String(body.tenant ?? "");
     if (tenant !== this.tenantId) {
       throw new Error(`fund tenant mismatch: client=${this.tenantId} harbor=${tenant}`);
@@ -1603,6 +1672,9 @@ export class HarborClient {
       statusCode: res.status as 200 | 202 | 402,
       paymentRequired: res.headers.get("payment-required") ?? undefined,
       paymentResponse: res.headers.get("payment-response") ?? undefined,
+      wwwAuthenticate: transport.wwwAuthenticate,
+      paymentReceipt: transport.paymentReceipt,
+      cacheControl: transport.cacheControl,
       intentId: echoedIntentId,
       tenant,
       state: body.state,
@@ -2074,14 +2146,21 @@ export class GatewayHarborClient {
 
   async fundIntent(
     intentId: string,
-    options: GatewayHarborMutationOptions & { paymentSignature?: string },
+    options: GatewayHarborMutationOptions & {
+      paymentSignature?: string;
+      paymentAuthorization?: string;
+    },
   ): Promise<FundIntentResult> {
+    const paymentHeaders: Record<string, string> = {
+      ...(options.paymentSignature?.trim() ? { "payment-signature": options.paymentSignature.trim() } : {}),
+      ...(options.paymentAuthorization?.trim()
+        ? paymentAuthorizationGatewayHeader(options.paymentAuthorization)
+        : {}),
+    };
     const { res, text, url } = await this.postJSON(
       `/harbor/intents/${encodeURIComponent(intentId)}/fund`,
       {},
-      this.mutationHeaders("fundIntent", options, {
-        ...(options.paymentSignature?.trim() ? { "payment-signature": options.paymentSignature.trim() } : {}),
-      }),
+      this.mutationHeaders("fundIntent", options, paymentHeaders),
     );
     if (![200, 202, 402].includes(res.status)) {
       throw new HarborHttpError(`Gateway Harbor fund intent HTTP ${res.status}: ${text}`, {
@@ -2090,12 +2169,16 @@ export class GatewayHarborClient {
         bodyText: text,
       });
     }
+    const transport = readFundPaymentTransportHeaders(res.headers);
     return parseFundIntentResponse(assertJSONObject(JSON.parse(text)), {
       tenantId: this.tenantId,
       intentId,
       statusCode: res.status as 200 | 202 | 402,
       paymentRequired: res.headers.get("payment-required") ?? undefined,
       paymentResponse: res.headers.get("payment-response") ?? undefined,
+      wwwAuthenticate: transport.wwwAuthenticate,
+      paymentReceipt: transport.paymentReceipt,
+      cacheControl: transport.cacheControl,
       source: "gateway",
     });
   }
@@ -2295,7 +2378,7 @@ type GatewayFraudClientOptions = {
 };
 
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
-const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "stripe_ach_debit", "x402_usdc_base"]);
+const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "stripe_ach_debit", "stripe_mpp", "x402_usdc_base"]);
 const FRAUD_REVIEW_EVENT_TYPES = new Set<string>([
   "review_open_requested",
   "appeal_requested",
@@ -2336,6 +2419,9 @@ function parseFundIntentResponse(
     statusCode: 200 | 202 | 402;
     paymentRequired?: string;
     paymentResponse?: string;
+    wwwAuthenticate?: string[];
+    paymentReceipt?: string;
+    cacheControl?: string;
     source: "harbor" | "gateway";
   },
 ): FundIntentResult {
@@ -2362,6 +2448,9 @@ function parseFundIntentResponse(
     statusCode: init.statusCode,
     paymentRequired: init.paymentRequired,
     paymentResponse: init.paymentResponse,
+    wwwAuthenticate: init.wwwAuthenticate,
+    paymentReceipt: init.paymentReceipt,
+    cacheControl: init.cacheControl,
     intentId: echoedIntentId,
     tenant,
     state: body.state,
@@ -2544,6 +2633,9 @@ function parseIntentFundingResult(value: unknown): IntentFundingResult {
     settlementRail: readSettlementRailValue(body.settlement_rail, "funding.settlement_rail"),
     harborFundEndpoint: readOptionalString("harbor_fund_endpoint"),
     status: readOptionalString("status"),
+    intent: readOptionalString("intent"),
+    method: readOptionalString("method"),
+    challengeId: readOptionalString("challenge_id"),
     paymentSessionId: readOptionalString("payment_session_id"),
     paymentUrl: readOptionalString("payment_url"),
     stripePaymentIntentId: readOptionalString("stripe_payment_intent_id"),
@@ -2559,6 +2651,17 @@ function parseIntentFundingResult(value: unknown): IntentFundingResult {
     bankName: readOptionalString("bank_name"),
     asset: readOptionalString("asset"),
     network: readOptionalString("network"),
+    settlementAsset: readOptionalString("settlement_asset"),
+    settlementNetwork: readOptionalString("settlement_network"),
+    channelId: readOptionalString("channel_id"),
+    sessionProtocol: readOptionalString("session_protocol"),
+    depositAmountBaseUnits: readOptionalString("deposit_amount_base_units"),
+    acceptedCumulativeBaseUnits: readOptionalString("accepted_cumulative_base_units"),
+    pendingCumulativeBaseUnits: readOptionalString("pending_cumulative_base_units"),
+    descriptorHash: readOptionalString("descriptor_hash"),
+    lastVoucherAt: readOptionalString("last_voucher_at"),
+    lastSettleTxHash: readOptionalString("last_settle_tx_hash"),
+    channelStatus: readOptionalString("channel_status"),
     authorizationId: readOptionalString("authorization_id"),
     captureId: readOptionalString("capture_id"),
     voidId: readOptionalString("void_id"),
@@ -3320,6 +3423,88 @@ export class GatewayProtocolClient {
     return assertJSONObject(JSON.parse(text)) as unknown as VerifyProtocolReceiptV1Result;
   }
 
+  async getAgentReceiptV1ByID(receiptId: string): Promise<import("./agent-receipt.js").AgentReceiptV1> {
+    const enc = encodeURIComponent(receiptId);
+    const url = `${this.base}protocol/v2/agent-receipts/${enc}`;
+    const res = await this.fetchWithRetries(url, {
+      method: "GET",
+      headers: this.headers(),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const parsed = parseGatewayErrorEnvelope(text);
+      throw new ProtocolHttpError(protocolHTTPErrorMessage("agent receipt", res.status, text), {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text)) as unknown as import("./agent-receipt.js").AgentReceiptV1;
+    if (String(body.receipt_id ?? "").trim() !== receiptId) {
+      throw new Error(`agent receipt mismatch: requested=${receiptId} gateway=${String(body.receipt_id ?? "")}`);
+    }
+    if (String(body.tenant_id ?? "").trim() !== this.tenantId) {
+      throw new Error(`agent receipt tenant mismatch: client=${this.tenantId} gateway=${String(body.tenant_id ?? "")}`);
+    }
+    return body;
+  }
+
+  async getAgentReceiptV1ByIntentToolCall(init: {
+    intentId: string;
+    toolCallId: string;
+  }): Promise<import("./agent-receipt.js").AgentReceiptV1> {
+    const params = new URLSearchParams({
+      intent_id: init.intentId,
+      tool_call_id: init.toolCallId,
+    });
+    const url = `${this.base}protocol/v2/agent-receipts?${params.toString()}`;
+    const res = await this.fetchWithRetries(url, {
+      method: "GET",
+      headers: this.headers(),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const parsed = parseGatewayErrorEnvelope(text);
+      throw new ProtocolHttpError(protocolHTTPErrorMessage("agent receipt lookup", res.status, text), {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+      });
+    }
+    const body = assertJSONObject(JSON.parse(text)) as unknown as import("./agent-receipt.js").AgentReceiptV1;
+    if (String(body.tenant_id ?? "").trim() !== this.tenantId) {
+      throw new Error(`agent receipt tenant mismatch: client=${this.tenantId} gateway=${String(body.tenant_id ?? "")}`);
+    }
+    return body;
+  }
+
+  async verifyAgentReceiptV1(
+    receipt: import("./agent-receipt.js").AgentReceiptV1 | Record<string, unknown>,
+  ): Promise<import("./agent/receipt-client.js").VerifyAgentReceiptV1Result> {
+    const url = `${this.base}protocol/v2/agent-receipts/verify`;
+    const res = await this.fetchWithRetries(url, {
+      method: "POST",
+      headers: this.headers({ "content-type": "application/json" }),
+      body: JSON.stringify(receipt),
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      const parsed = parseGatewayErrorEnvelope(text);
+      throw new ProtocolHttpError(protocolHTTPErrorMessage("agent receipt verify", res.status, text), {
+        statusCode: res.status,
+        url,
+        bodyText: text,
+        errorCode: parsed.errorCode,
+        errorMessage: parsed.errorMessage,
+      });
+    }
+    return assertJSONObject(JSON.parse(text)) as unknown as import("./agent/receipt-client.js").VerifyAgentReceiptV1Result;
+  }
+
   async createHarborIntent(init: {
     body: Record<string, unknown>;
     recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
@@ -3616,11 +3801,13 @@ export class PaybondIntents {
       intentId: string;
       recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
       paymentSignature?: string;
+      paymentAuthorization?: string;
       idempotencyKey?: string;
     },
   ): Promise<FundIntentResult> {
     return this.harbor.fundIntent(params.intentId, {
       paymentSignature: params.paymentSignature,
+      paymentAuthorization: params.paymentAuthorization,
       idempotencyKey: params.idempotencyKey,
       recognitionProof: params.recognitionProof,
     } as never);
@@ -3654,6 +3841,88 @@ export class PaybondIntents {
           intentId,
           recognitionProof: proof,
           paymentSignature,
+          idempotencyKey,
+        }),
+    });
+  }
+
+  /**
+   * One-shot Stripe MPP charge fund flow: create Payment Auth credentials from 402 challenges,
+   * retry with `paymentAuthorization`, and poll until funded.
+   *
+   * MPP wallet and SPT secrets stay app-owned — pass injectable `createPaymentCredential` and
+   * `issueRecognitionProof` callbacks.
+   */
+  async fundWithMppCharge(params: {
+    intentId: string;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+    createPaymentCredential: (challenge: PaymentAuthChallenge) => Promise<string>;
+    issueRecognitionProof: (
+      envelope: FundRequestEnvelope,
+    ) => Promise<AgentRecognitionProofV1 | Record<string, unknown>>;
+    pollOptions?: MppFundPollOptions;
+    idempotencyKey?: string;
+  }): Promise<FundIntentResult> {
+    const {
+      intentId,
+      recognitionProof,
+      createPaymentCredential,
+      issueRecognitionProof,
+      pollOptions,
+      idempotencyKey,
+    } = params;
+    return executeFundWithMppCharge({
+      intentId,
+      recognitionProof,
+      createPaymentCredential,
+      issueRecognitionProof,
+      pollOptions,
+      fund: ({ recognitionProof: proof, paymentAuthorization }) =>
+        this.fund({
+          intentId,
+          recognitionProof: proof,
+          paymentAuthorization,
+          idempotencyKey,
+        }),
+    });
+  }
+
+  /**
+   * Tempo MPP session fund flow: open a session channel deposit via Payment Auth credentials,
+   * retry with `paymentAuthorization`, and poll until the intent is funded.
+   *
+   * MPP wallet and SPT secrets stay app-owned — pass injectable `createPaymentCredential` and
+   * `issueRecognitionProof` callbacks.
+   */
+  async fundWithMppSession(params: {
+    intentId: string;
+    recognitionProof: AgentRecognitionProofV1 | Record<string, unknown>;
+    createPaymentCredential: (challenge: PaymentAuthChallenge) => Promise<string>;
+    issueRecognitionProof: (
+      envelope: FundRequestEnvelope,
+    ) => Promise<AgentRecognitionProofV1 | Record<string, unknown>>;
+    pollOptions?: MppFundPollOptions;
+    idempotencyKey?: string;
+  }): Promise<FundIntentResult> {
+    const {
+      intentId,
+      recognitionProof,
+      createPaymentCredential,
+      issueRecognitionProof,
+      pollOptions,
+      idempotencyKey,
+    } = params;
+    return executeFundWithMppSession({
+      intentId,
+      recognitionProof,
+      createPaymentCredential,
+      issueRecognitionProof,
+      pollOptions,
+      fund: ({ recognitionProof: proof, paymentAuthorization }) =>
+        this.fund({
+          intentId,
+          recognitionProof: proof,
+          paymentAuthorization,
           idempotencyKey,
         }),
     });
@@ -3704,6 +3973,7 @@ export class Paybond {
   readonly intents: PaybondIntents;
   readonly audit: PaybondAudit;
   readonly agentRun: PaybondAgentRunFacade;
+  readonly agent: PaybondAgentCallable;
 
   private constructor(
     harbor: GatewayHarborClient,
@@ -3723,6 +3993,7 @@ export class Paybond {
     this.intents = new PaybondIntents(harbor);
     this.audit = audit;
     this.agentRun = new PaybondAgentRunFacade(this);
+    this.agent = createPaybondAgentCallable(protocol, (input) => createPaybondAgent(this, input));
   }
 
   /** Open a tenant-bound hosted Paybond session from a service-account API key. */
@@ -3868,14 +4139,6 @@ export class Paybond {
     return instrumentPaybondMCP(this, input);
   }
 
-  /**
-   * Opinionated quickstart: resolve named policy presets (for example `travel`) or file paths,
-   * then instrument tools for the selected framework.
-   */
-  agent<TTools>(input: PaybondAgentInput<TTools>): Promise<PaybondAgentResult<TTools>> {
-    return createPaybondAgent(this, input);
-  }
-
   /** Wrap tools for an existing bound run without reloading policy. */
   wrapTools(
     run: import("./agent/run.js").PaybondAgentRun,
@@ -3946,6 +4209,20 @@ export {
   type X402FundPollOptions,
 } from "./x402-funding.js";
 export {
+  executeFundWithMpp,
+  executeFundWithMppCharge,
+  executeFundWithMppSession,
+  buildMppFundRequestEnvelope,
+  parsePaymentAuthChallenge,
+  selectMppChargeChallenge,
+  selectMppSessionChallenge,
+  PaybondMppFundingFailedError,
+  PaybondMppFundingPendingError,
+  type MppFundPollOptions,
+  type ParsedPaymentAuthChallenge,
+  type PaymentAuthChallenge,
+} from "./mpp-funding.js";
+export {
   validateCompletionEvidence,
   type CompletionEvidenceValidationReport,
 } from "./completion-validate-evidence.js";
@@ -4013,6 +4290,7 @@ export {
   type PaybondAgentRunBindInput,
   type PaybondAuthorizeToolCallInput,
   type PaybondEvidenceMapper,
+  type PaybondExternalAttestationMapper,
   type PaybondGenericAgentConfig,
   type PaybondGenericToolCall,
   type PaybondGenericToolDefinition,
@@ -4086,3 +4364,48 @@ export {
   type SolutionManifest,
   type SolutionSmokeDefaults,
 } from "./solutions/index.js";
+export {
+  appendDirectHarborPaymentAuthorization,
+  formatPaymentAuthorizationValue,
+  PAYBOND_PAYMENT_AUTHORIZATION_HEADER,
+  PAYMENT_TRANSPORT_RESPONSE_HEADERS,
+  paymentAuthorizationGatewayHeader,
+  readFundPaymentTransportHeaders,
+  type FundPaymentTransportHeaders,
+} from "./payment-transport.js";
+export {
+  AGENT_RECEIPT_KIND_V1,
+  AGENT_RECEIPT_SCHEMA_VERSION,
+  AGENT_RECEIPT_SCOPE_ACTION,
+  AGENT_RECEIPT_SCOPE_INTENT_TERMINAL,
+  AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519,
+  AGENT_RECEIPT_VERSION_V1,
+  AGENT_RECEIPT_WELL_KNOWN_PATH,
+  actionReceiptId,
+  canonicalAgentReceiptBytes,
+  configHashSha256Hex,
+  promptHashSha256Hex,
+  valueDigestSha256Hex,
+  verifyAgentReceiptV1,
+  type AgentReceiptAgentV1,
+  type AgentReceiptAuthorizationV1,
+  type AgentReceiptEvidenceV1,
+  type AgentReceiptExecutionV1,
+  type AgentReceiptExternalAttestationV1,
+  type AgentReceiptMerchantV1,
+  type AgentReceiptOutcomeV1,
+  type AgentReceiptPaymentV1,
+  type AgentReceiptPolicyV1,
+  type AgentReceiptReferencesV1,
+  type AgentReceiptV1,
+  type ConfigHashInput,
+} from "./agent-receipt.js";
+export {
+  AGENT_RECEIPT_EXTERNAL_SOURCE_SEP2828,
+  AGENT_RECEIPT_EXTERNAL_SOURCE_X402,
+  partnerRecordDigestSha256Hex,
+  resolveExternalAttestations,
+  sep2828RecordsToExternalAttestations,
+  x402ReceiptToExternalAttestations,
+  type PaybondExternalAttestationInput,
+} from "./agent-receipt-external-attestations.js";

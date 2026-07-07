@@ -17,6 +17,15 @@ export type AuditExportListPage = Readonly<{
   next_cursor?: string;
 }>;
 
+export type AuditExportCreateFilter = Readonly<{
+  time_start?: string;
+  time_end?: string;
+  intent_id?: string;
+  case_id?: string;
+  operator_did?: string;
+  includes?: ReadonlyArray<string>;
+}>;
+
 export type AuditExportJobDetail = Readonly<{
   id: string;
   status: string;
@@ -28,6 +37,10 @@ export type AuditExportJobDetail = Readonly<{
   manifest_sha256: string;
   bundle_sha256: string;
   download_token?: string;
+  /** Present on `POST /v1/compliance/audit-exports` create responses. */
+  bundle_size_bytes?: number;
+  download_token_expires?: string;
+  download_path?: string;
 }>;
 
 export type AuditExportJobGetResponse = Readonly<{
@@ -100,18 +113,33 @@ export function parseAuditExportJobGet(json: unknown): AuditExportJobGetResponse
   assertJsonObject(json);
   const jobRaw = json.job ?? json;
   assertJsonObject(jobRaw);
+  const bundleSize =
+    typeof jobRaw.bundle_size_bytes === "number" && Number.isFinite(jobRaw.bundle_size_bytes)
+      ? jobRaw.bundle_size_bytes
+      : undefined;
+  const downloadTokenExpires =
+    typeof jobRaw.download_token_expires === "string" && jobRaw.download_token_expires
+      ? jobRaw.download_token_expires
+      : typeof jobRaw.download_token_expires_at === "string" && jobRaw.download_token_expires_at
+        ? jobRaw.download_token_expires_at
+        : undefined;
+  const downloadPath =
+    typeof jobRaw.download_path === "string" && jobRaw.download_path ? jobRaw.download_path : undefined;
   const job: AuditExportJobDetail = {
     id: readString(jobRaw.id ?? jobRaw.job_id, "job.id"),
     status: readString(jobRaw.status, "job.status"),
     tenant_realm_id: readString(jobRaw.tenant_realm_id, "job.tenant_realm_id"),
     disclosure_tier: readString(jobRaw.disclosure_tier, "job.disclosure_tier"),
-    created_at: readString(jobRaw.created_at, "job.created_at"),
+    created_at: typeof jobRaw.created_at === "string" ? jobRaw.created_at : "",
     expires_at: readString(jobRaw.expires_at, "job.expires_at"),
     error: typeof jobRaw.error === "string" ? jobRaw.error : "",
     manifest_sha256: typeof jobRaw.manifest_sha256 === "string" ? jobRaw.manifest_sha256 : "",
     bundle_sha256: typeof jobRaw.bundle_sha256 === "string" ? jobRaw.bundle_sha256 : "",
     download_token:
       typeof jobRaw.download_token === "string" && jobRaw.download_token ? jobRaw.download_token : undefined,
+    bundle_size_bytes: bundleSize,
+    download_token_expires: downloadTokenExpires,
+    download_path: downloadPath,
   };
   return { job };
 }

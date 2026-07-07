@@ -7,9 +7,12 @@ import {
   PaybondAgentRunBindInput,
   PaybondRunBindingSandboxBootstrapInput,
   PaybondRunGuard,
+  PaybondRunAgentContext,
+  PaybondRunAgentContextInput,
   PaybondRunProductionEvidenceCredentials,
 } from "./types.js";
 import type { PaybondPolicySnapshot } from "../policy/snapshot.js";
+import { configHashSha256Hex, promptHashSha256Hex } from "../agent-receipt.js";
 import {
   reloadPolicyOnRun,
   type PaybondPolicyReloadFailedEvent,
@@ -34,6 +37,8 @@ type SandboxGuardrailEvidenceResult = {
   intent_id: string;
   sandbox_lifecycle_status: string;
   predicate_passed?: boolean | null;
+  payload_digest?: string;
+  artifacts_digest?: string;
 };
 
 export type PaybondSubmitProductionEvidenceInput = {
@@ -150,6 +155,66 @@ function normalizeProductionEvidence(
     payeeSigningSeed: raw.payeeSigningSeed,
     agentRecognitionKeyId,
     agentRecognitionSigningSeed: raw.agentRecognitionSigningSeed,
+  };
+}
+
+/** Strips the leading `sha256:` scheme from a policy snapshot digest, if present. */
+function bareDigestHex(digest: string | undefined): string | undefined {
+  if (!digest) {
+    return undefined;
+  }
+  const trimmed = digest.trim();
+  return trimmed.startsWith("sha256:") ? trimmed.slice("sha256:".length) : trimmed;
+}
+
+/**
+ * Resolves optional Agent Receipt Standard agent context at bind time: auto-computes
+ * `config_hash_hex` from {@link PaybondRunAgentContextInput.configHashMaterials} (per spec,
+ * `sha256(JCS({ system_prompt, tools_manifest, policy_snapshot_id }))`) and `prompt_hash_hex`
+ * from {@link PaybondRunAgentContextInput.normalizedUserPrompt} when precomputed hashes are not
+ * supplied directly. Raw prompt text is hashed here and discarded; only the digest is retained.
+ */
+function resolveAgentContext(
+  input: PaybondRunAgentContextInput | undefined,
+  snapshot: PaybondPolicySnapshot | undefined,
+): PaybondRunAgentContext | undefined {
+  if (!input) {
+    return undefined;
+  }
+  const modelFamily = input.modelFamily.trim();
+  if (!modelFamily) {
+    throw new PaybondAgentRunBindError("agentContext.modelFamily must be non-empty");
+  }
+
+  let configHashHex = input.configHashHex?.trim().toLowerCase();
+  if (!configHashHex && input.configHashMaterials) {
+    const policySnapshotId =
+      input.configHashMaterials.policySnapshotId?.trim() || bareDigestHex(snapshot?.digest);
+    if (!policySnapshotId) {
+      throw new PaybondAgentRunBindError(
+        "agentContext.configHashMaterials.policySnapshotId is required when no policySnapshot is bound",
+      );
+    }
+    configHashHex = configHashSha256Hex({
+      system_prompt: input.configHashMaterials.systemPrompt,
+      tools_manifest: input.configHashMaterials.toolsManifest,
+      policy_snapshot_id: policySnapshotId,
+    });
+  }
+
+  let promptHashHex = input.promptHashHex?.trim().toLowerCase();
+  if (!promptHashHex && input.normalizedUserPrompt !== undefined) {
+    promptHashHex = promptHashSha256Hex(input.normalizedUserPrompt);
+  }
+
+  return {
+    modelFamily,
+    modelInstanceId: input.modelInstanceId?.trim() || undefined,
+    configHashHex,
+    promptHashHex,
+    principalDid: input.principalDid?.trim() || undefined,
+    operatorDid: input.operatorDid?.trim() || undefined,
+    policyTemplateId: input.policyTemplateId?.trim() || undefined,
   };
 }
 
@@ -450,6 +515,7 @@ export class PaybondAgentRun {
     registry.validateForBind(allowedTools);
 
     const guard = paybond.spendGuard(intentId, capabilityToken);
+    const agentContext = resolveAgentContext(input.agentContext, snapshot);
     const binding: PaybondRunBinding = {
       runId,
       tenantId,
@@ -462,6 +528,7 @@ export class PaybondAgentRun {
       productionEvidence,
       policySnapshot: snapshot,
       onTrace: input.traceSink ?? input.onTrace ?? resolveDevTraceSink(),
+      agentContext,
     };
 
     const policyFilePath = input.policyFile?.trim();

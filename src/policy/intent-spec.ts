@@ -7,6 +7,7 @@ import type {
   PublishedPolicyHead,
   SettlementRail,
 } from "../principal-intent.js";
+import { validateUsdDenominatedSettlement } from "../mpp-commercial.js";
 import { policyToToolRegistry } from "./registry.js";
 import { type PaybondPolicyDocumentV1 } from "./schema.js";
 
@@ -267,6 +268,7 @@ export function policyToIntentCreateInput(
     overrides.policyBinding,
   );
   const { budget, currency, amountCents } = resolveBudgetFields(document, overrides);
+  validateUsdDenominatedSettlement(overrides.settlementRail, currency);
 
   const completionPresetId =
     overrides.completionPresetId ??

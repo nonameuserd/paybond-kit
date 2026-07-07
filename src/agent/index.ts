@@ -1,4 +1,10 @@
 export {
+  PaybondAgentFacade,
+  createPaybondAgentCallable,
+  type GetAgentReceiptInput,
+  type PaybondAgentCallable,
+} from "./receipt-client.js";
+export {
   createGuardedAgent,
   createGuardedAgentRunner,
   type CreateGuardedAgentInput,
@@ -109,6 +115,7 @@ export {
   type PaybondAgentRunBindInput,
   type PaybondAuthorizeToolCallInput,
   type PaybondEvidenceMapper,
+  type PaybondExternalAttestationMapper,
   type PaybondInterceptEvidenceResult,
   type PaybondInterceptWrapExecuteInput,
   type PaybondInterceptWrapExecuteResult,

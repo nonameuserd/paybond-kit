@@ -13,10 +13,8 @@ import { CliError, type CommandResult } from "../types.js";
 
 export async function handleSignal(ctx: CliContext, subcommand: string, argv: string[]): Promise<CommandResult> {
   return withGateway(ctx, async (gateway) => {
-    const principal = await gateway.getJson("/v1/auth/principal");
-    const tenantId = String(principal.tenant_id ?? "");
     if (subcommand === "portfolio") {
-      const body = await gateway.getJson(`/signal/v1/tenants/${encodeURIComponent(tenantId)}/portfolio/summary`);
+      const body = await gateway.getJson("/signal/v1/portfolio/summary");
       return { data: body };
     }
     const didFlag = consumeFlag(argv, "--did");
@@ -24,14 +22,12 @@ export async function handleSignal(ctx: CliContext, subcommand: string, argv: st
       throw new CliError(`signal ${subcommand} requires --did`, { category: "usage", code: "cli.usage.missing_did" });
     }
     if (subcommand === "reputation") {
-      const body = await gateway.getJson(
-        `/signal/v1/tenants/${encodeURIComponent(tenantId)}/reputation/${encodeURIComponent(didFlag.value)}`,
-      );
+      const body = await gateway.getJson(`/reputation/${encodeURIComponent(didFlag.value)}`);
       return { data: body };
     }
     if (subcommand === "fraud") {
       const body = await gateway.getJson(
-        `/fraud/v1/tenants/${encodeURIComponent(tenantId)}/assessments/${encodeURIComponent(didFlag.value)}`,
+        `/signal/v1/operators/${encodeURIComponent(didFlag.value)}/review-status`,
       );
       return { data: body };
     }
@@ -41,9 +37,22 @@ export async function handleSignal(ctx: CliContext, subcommand: string, argv: st
 
 export async function handleReceipts(ctx: CliContext, subcommand: string, argv: string[]): Promise<CommandResult> {
   return withGateway(ctx, async (gateway) => {
+    const kindFlag = consumeFlag(argv, "--kind");
+    const kind = (kindFlag.value ?? "protocol").trim().toLowerCase();
     const receiptId = argv[0];
     if (!receiptId) {
       throw new CliError(`receipts ${subcommand} requires <receipt_id>`, { category: "usage", code: "cli.usage.missing_receipt_id" });
+    }
+    if (kind === "agent") {
+      if (subcommand === "get") {
+        const body = await gateway.getJson(`/protocol/v2/agent-receipts/${encodeURIComponent(receiptId)}`);
+        return { data: body };
+      }
+      if (subcommand === "verify") {
+        const fetched = await gateway.getJson(`/protocol/v2/agent-receipts/${encodeURIComponent(receiptId)}`);
+        const body = await gateway.postJson("/protocol/v2/agent-receipts/verify", fetched);
+        return { data: body };
+      }
     }
     if (subcommand === "get") {
       const body = await gateway.getJson(`/protocol/v2/receipts/${encodeURIComponent(receiptId)}`);
@@ -67,7 +76,7 @@ export async function handleMandates(ctx: CliContext, subcommand: string, argv: 
       return { data: body };
     }
     if (subcommand === "import") {
-      const body = await gateway.postJson("/protocol/v2/mandates/import", payload);
+      const body = await gateway.postJson("/protocol/v2/mandates", payload);
       return { data: body };
     }
     throw new CliError(`unknown mandates subcommand: ${subcommand}`, { category: "usage", code: "cli.usage.unknown_command" });

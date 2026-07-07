@@ -4,6 +4,7 @@ export {
   PaybondAuditExports,
   type AuditExportsGateway,
   type GatewayAuditExportsClientOptions,
+  type PaybondAuditExportsCreateParams,
   type PaybondAuditExportsGetParams,
   type PaybondAuditExportsListParams,
 } from "./exports.js";
@@ -19,6 +20,7 @@ export {
 export {
   parseAuditExportJobGet,
   parseAuditExportList,
+  type AuditExportCreateFilter,
   type AuditExportJobDetail,
   type AuditExportJobGetResponse,
   type AuditExportJobSummary,

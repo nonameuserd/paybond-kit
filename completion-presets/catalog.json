@@ -950,7 +950,8 @@
       },
       "scope": "tool_completion",
       "rail_hints": [
-        "x402_usdc_base"
+        "x402_usdc_base",
+        "stripe_mpp"
       ],
       "forbidden_evidence_fields": [
         "payment_session_id",
@@ -1063,7 +1064,8 @@
       },
       "scope": "tool_completion",
       "rail_hints": [
-        "x402_usdc_base"
+        "x402_usdc_base",
+        "stripe_mpp"
       ],
       "forbidden_evidence_fields": [
         "payment_session_id",
@@ -1158,7 +1160,8 @@
       },
       "scope": "tool_completion",
       "rail_hints": [
-        "x402_usdc_base"
+        "x402_usdc_base",
+        "stripe_mpp"
       ],
       "forbidden_evidence_fields": [
         "payment_session_id",
@@ -1269,7 +1272,8 @@
       },
       "scope": "tool_completion",
       "rail_hints": [
-        "x402_usdc_base"
+        "x402_usdc_base",
+        "stripe_mpp"
       ],
       "forbidden_evidence_fields": [
         "payment_session_id",
@@ -1390,7 +1394,8 @@
       },
       "scope": "tool_completion",
       "rail_hints": [
-        "x402_usdc_base"
+        "x402_usdc_base",
+        "stripe_mpp"
       ],
       "forbidden_evidence_fields": [
         "payment_session_id",
