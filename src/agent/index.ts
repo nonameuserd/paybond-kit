@@ -85,7 +85,11 @@ export {
   type PaybondGenericWrappedToolDefinition,
   type PaybondToolInputGuardAdapter,
 } from "./adapter.js";
-export { buildAutoEvidencePayload, type BuiltAutoEvidence } from "./evidence.js";
+export {
+  assertToolResultNotFundingWebhook,
+  buildAutoEvidencePayload,
+  type BuiltAutoEvidence,
+} from "./evidence.js";
 export { PaybondToolInterceptor } from "./interceptor.js";
 export {
   PaybondToolRegistry,

@@ -26,6 +26,7 @@ import { CliError, type CommandResult } from "../types.js";
 import { handleAgentSandboxSmoke } from "./agent.js";
 import { handleLogin } from "./setup.js";
 import { handlePolicyInit, handlePolicyValidateTools } from "./policy.js";
+import { buildShopifyNextStepsBanner } from "./shopify.js";
 import { scheduleCliCommandTelemetry } from "../telemetry.js";
 
 function devCliError(
@@ -290,6 +291,10 @@ export async function handleDevLoop(ctx: CliContext, argv: string[]): Promise<Co
   rest = offlineFlag.rest;
   const policyFlag = consumeFlag(rest, "--policy-file");
   rest = policyFlag.rest;
+  const presetFlag = consumeFlag(rest, "--preset");
+  rest = presetFlag.rest;
+  const shopifyFlag = consumeBooleanFlag(rest, "--shopify");
+  rest = shopifyFlag.rest;
   const noLoginFlag = consumeBooleanFlag(rest, "--no-login");
   rest = noLoginFlag.rest;
   if (rest.length > 0) {
@@ -299,6 +304,7 @@ export async function handleDevLoop(ctx: CliContext, argv: string[]): Promise<Co
     });
   }
 
+  const preset = presetFlag.value?.trim() || DEV_DEFAULT_PRESET;
   const policyFile = policyFlag.value?.trim() || DEV_DEFAULT_POLICY_FILE;
   const steps: Array<Record<string, unknown>> = [];
   const bannerLines = buildDevStartupBannerLines();
@@ -346,7 +352,7 @@ export async function handleDevLoop(ctx: CliContext, argv: string[]): Promise<Co
 
     const initResult = await handlePolicyInit(activeCtx, [
       "--preset",
-      DEV_DEFAULT_PRESET,
+      preset,
       "--out",
       policyFile,
       "--force",
@@ -372,7 +378,7 @@ export async function handleDevLoop(ctx: CliContext, argv: string[]): Promise<Co
       });
     }
 
-    const smokeResult = await runDevSmokeCore(activeCtx, DEV_DEFAULT_PRESET, offlineFlag.present);
+    const smokeResult = await runDevSmokeCore(activeCtx, preset, offlineFlag.present);
     steps.push({ name: "smoke", ok: true, data: smokeResult.data });
 
     const traceUrl = String(smokeResult.data.trace_url ?? devTraceUrl());
@@ -380,6 +386,7 @@ export async function handleDevLoop(ctx: CliContext, argv: string[]): Promise<Co
     const smokeChecklist = Array.isArray(smokeResult.data.checklist_lines)
       ? (smokeResult.data.checklist_lines as string[])
       : [];
+    const shopifyBanner = shopifyFlag.present ? buildShopifyNextStepsBanner() : [];
     scheduleCliCommandTelemetry(activeCtx, {
       commandPath: "dev loop",
       offline: offlineFlag.present,
@@ -391,7 +398,7 @@ export async function handleDevLoop(ctx: CliContext, argv: string[]): Promise<Co
         smoke: smokeResult.data,
         trace_url: traceUrl,
         audit_log: auditLog,
-        banner_lines: bannerLines,
+        banner_lines: [...bannerLines, ...shopifyBanner],
         checklist_lines: appendDevLoopTraceLine(smokeChecklist, traceUrl, ctx.globals),
       },
       warnings: smokeResult.warnings,

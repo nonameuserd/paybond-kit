@@ -12,7 +12,11 @@ import {
   PaybondRunProductionEvidenceCredentials,
 } from "./types.js";
 import type { PaybondPolicySnapshot } from "../policy/snapshot.js";
-import { configHashSha256Hex, promptHashSha256Hex } from "../agent-receipt.js";
+import {
+  configHashSha256Hex,
+  promptHashSha256Hex,
+  type AgentReceiptExternalAttestationV1,
+} from "../agent-receipt.js";
 import {
   reloadPolicyOnRun,
   type PaybondPolicyReloadFailedEvent,
@@ -59,6 +63,8 @@ type AgentRunHarbor = {
     options: {
       idempotencyKey?: string;
       recognitionProof: Record<string, unknown>;
+      agentReceiptAttestations?: AgentReceiptExternalAttestationV1[];
+      agentReceiptSourceRunId?: string;
     },
   ): Promise<Record<string, unknown>>;
 };

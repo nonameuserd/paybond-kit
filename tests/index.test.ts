@@ -529,6 +529,7 @@ describe("Paybond", () => {
       expectedEnvironment: "sandbox",
     });
     expect(paybond.harbor.tenantId).toBe("realm-z");
+    expect(paybond.environment).toBe("sandbox");
     await expect(
       paybond.harbor.verifyCapability({
         intentId: intent,

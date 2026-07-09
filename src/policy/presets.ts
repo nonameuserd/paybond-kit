@@ -23,6 +23,7 @@ const KNOWN_POLICY_PRESET_IDS = [
   "shopping",
   "saas",
   "aws",
+  "stripe-commerce",
   "read-only",
   "strict",
 ] as const;

@@ -94,7 +94,7 @@ export async function loadPaybondEnvFile(envFile = ".env.local"): Promise<void> 
     const { readFile } = await import("node:fs/promises");
     body = await readFile(envFile, "utf8");
   } catch (err) {
-    if ((err).code === "ENOENT") return;
+    if ((err as { code?: string }).code === "ENOENT") return;
     throw err;
   }
   const apiKey = readEnvValue(body, "PAYBOND_API_KEY");
@@ -583,6 +583,10 @@ async function refreshTemplatePackageLock(dir, consumerPackageJson) {
 }
 
 async function writeTemplate(entry) {
+  if (entry.id === "stripe-agent-demo") {
+    console.log(`skip ${entry.repo} (hand-maintained stripe-commerce template)`);
+    return;
+  }
   const dir = join(TEMPLATES_DIR, entry.repo);
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });

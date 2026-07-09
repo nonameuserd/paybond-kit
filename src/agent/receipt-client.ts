@@ -2,6 +2,7 @@ import {
   verifyAgentReceiptV1,
   type AgentReceiptV1,
 } from "../agent-receipt.js";
+import type { PaybondGenericWrappedToolDefinition } from "./adapter.js";
 import type { PaybondAgentInput, PaybondAgentResult } from "./facade.js";
 
 export type VerifyAgentReceiptV1Result = {
@@ -25,9 +26,21 @@ export type GetAgentReceiptInput =
   | { receiptId: string; intentId?: never; toolCallId?: never }
   | { intentId: string; toolCallId: string; receiptId?: never };
 
-export type PaybondAgentCallable = ((
-  input: PaybondAgentInput,
-) => Promise<PaybondAgentResult>) & {
+/**
+ * Callable `paybond.agent({...})` surface with receipt helpers attached.
+ *
+ * The generic framework (the default when `framework` is omitted or `"generic"`)
+ * normalizes a `{ name: execute }` record or `{ name, execute }[]` into
+ * middleware-wrapped tools, so `result.tools` is a
+ * {@link PaybondGenericWrappedToolDefinition} array regardless of the input shape.
+ * Framework-native paths (`vercel-ai`, `openai-agents`, `langgraph`, ...) preserve
+ * the caller's tool shape, so `result.tools` matches the input tools type.
+ */
+export type PaybondAgentCallable = {
+  <TTools = unknown>(
+    input: PaybondAgentInput<TTools> & { framework?: "generic" },
+  ): Promise<PaybondAgentResult<PaybondGenericWrappedToolDefinition[]>>;
+  <TTools>(input: PaybondAgentInput<TTools>): Promise<PaybondAgentResult<TTools>>;
   getReceipt(input: GetAgentReceiptInput): Promise<AgentReceiptV1>;
   verifyReceipt(
     receipt: AgentReceiptV1,

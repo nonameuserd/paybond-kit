@@ -40,6 +40,7 @@ import {
   parseMcpPolicyReloadConfig,
   type McpPolicyReloadConfig,
 } from "./mcp-policy-reload.js";
+import { verifyAgentReceiptV1FromJSON } from "./agent-receipt.js";
 import {
   agentReceiptResourceTemplateDefinition,
   agentReceiptResourceUri,
@@ -68,7 +69,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.0";
+const SERVER_VERSION = "0.12.1";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -1392,13 +1393,28 @@ export class PaybondMCPServer {
     uri: string;
     mimeType: string;
     text: string;
+    _meta?: Record<string, unknown>;
   }> {
     const receiptId = parseAgentReceiptResourceUri(uri);
     const receipt = await this.runtime.getAgentReceiptV1(receiptId);
+    let verified;
+    try {
+      verified = await verifyAgentReceiptV1FromJSON(receipt);
+    } catch (err) {
+      throw new Error(
+        `agent receipt verification failed for ${receiptId}: ${formatError(err)}`,
+      );
+    }
     return {
       uri: agentReceiptResourceUri(receiptId),
       mimeType: MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
       text: JSON.stringify(receipt, null, 2),
+      _meta: {
+        verification: {
+          valid: true,
+          message_digest: verified.message_digest_sha256_hex,
+        },
+      },
     };
   }
 
@@ -1546,14 +1562,18 @@ export class PaybondMCPServer {
       case "resources/read": {
         const params = ensureObject(message.params, "resources/read params");
         const uri = stringArg(params.uri, "uri");
-        const contents = await this.readResource(uri);
-        return {
-          jsonrpc: "2.0",
-          id: message.id,
-          result: {
-            contents: [contents],
-          },
-        };
+        try {
+          const contents = await this.readResource(uri);
+          return {
+            jsonrpc: "2.0",
+            id: message.id,
+            result: {
+              contents: [contents],
+            },
+          };
+        } catch (err) {
+          return responseError(message.id, -32000, formatError(err));
+        }
       }
       case "tools/call": {
         const params = ensureObject(message.params, "tools/call params");

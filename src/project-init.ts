@@ -13,7 +13,7 @@ import {
 } from "./solutions/catalog.js";
 
 export type ProjectInitSolution = SolutionId | "mcp-server";
-export type ProjectInitFramework = "openai" | "langgraph" | "mcp" | "generic";
+export type ProjectInitFramework = "openai" | "langgraph" | "mcp" | "generic" | "shopify";
 export type ProjectInitLanguage = "typescript" | "python";
 
 export type ProjectInitOptions = {
@@ -81,6 +81,7 @@ const FRAMEWORK_ALIASES: Record<string, ProjectInitFramework> = {
   langgraph: "langgraph",
   mcp: "mcp",
   generic: "generic",
+  shopify: "shopify",
 };
 
 function usage(): string {

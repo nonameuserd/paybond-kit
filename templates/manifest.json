@@ -11,7 +11,10 @@
       "primary_operation": "travel.book_hotel",
       "requested_spend_cents": 18700,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 18700 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 18700
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11",
         "@langchain/core": "^1.2.1",
@@ -31,7 +34,10 @@
       "primary_operation": "commerce.checkout",
       "requested_spend_cents": 4500,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 4500 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 4500
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11",
         "ai": "^5.0.0",
@@ -50,7 +56,10 @@
       "primary_operation": "saas.provision_seat",
       "requested_spend_cents": 2900,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 2900 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 2900
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11",
         "@openai/agents": "^0.4.0",
@@ -69,7 +78,10 @@
       "primary_operation": "commerce.checkout",
       "requested_spend_cents": 4500,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 4500 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 4500
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11",
         "@openai/agents": "^0.4.0",
@@ -88,7 +100,10 @@
       "primary_operation": "travel.book_hotel",
       "requested_spend_cents": 18700,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 18700 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 18700
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11",
         "@anthropic-ai/claude-agent-sdk": "^0.2.100",
@@ -107,7 +122,10 @@
       "primary_operation": "travel.book_hotel",
       "requested_spend_cents": 18700,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 18700 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 18700
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11",
         "@mastra/core": "^1.49.0",
@@ -127,7 +145,10 @@
       "primary_operation": "deploy.preview",
       "requested_spend_cents": 500,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 500 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 500
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11"
       },
@@ -144,7 +165,10 @@
       "primary_operation": "procurement.submit_po",
       "requested_spend_cents": 12000,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 12000 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 12000
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11"
       },
@@ -160,9 +184,54 @@
       "primary_operation": "aws.ec2.start_instance",
       "requested_spend_cents": 12500,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 12500 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 12500
+      },
       "dependencies": {
         "@paybond/kit": "^0.11.11"
+      },
+      "demo_mode": "generic"
+    },
+    {
+      "id": "stripe-agent-demo",
+      "repo": "paybond-stripe-agent-demo",
+      "title": "Stripe commerce agent (generic TypeScript)",
+      "language": "typescript",
+      "framework": "generic",
+      "preset": "stripe-commerce",
+      "primary_operation": "payments.charge_customer",
+      "requested_spend_cents": 2500,
+      "evidence_preset": "stripe_charge",
+      "smoke_result_body": {
+        "payment_intent_id": "pi_smoke",
+        "charge_id": "ch_smoke",
+        "cost_cents": 2500,
+        "status": "succeeded"
+      },
+      "dependencies": {
+        "@paybond/kit": "^0.12.1"
+      },
+      "demo_mode": "generic"
+    },
+    {
+      "id": "shopify-shopping-agent",
+      "repo": "paybond-shopify-shopping-agent",
+      "title": "Shopify shopping agent (UCP + Kit binding)",
+      "language": "typescript",
+      "framework": "generic",
+      "preset": "shopping",
+      "primary_operation": "commerce.checkout",
+      "requested_spend_cents": 4500,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 4500,
+        "order_id": "gid://shopify/Order/123",
+        "shop": "paybond-agent-commerce-dev.myshopify.com"
+      },
+      "dependencies": {
+        "@paybond/kit": "^0.12.1"
       },
       "demo_mode": "generic"
     },
@@ -176,7 +245,10 @@
       "primary_operation": "saas.provision_seat",
       "requested_spend_cents": 2900,
       "evidence_preset": "cost_and_completion",
-      "smoke_result_body": { "status": "completed", "cost_cents": 2900 },
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 2900
+      },
       "python_dependencies": {
         "paybond-kit": ">=0.11.11",
         "langgraph": ">=1.2.0"

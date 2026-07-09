@@ -15,7 +15,9 @@ export type TemplateId =
   | "mcp-coding-agent"
   | "procurement-agent"
   | "invoice-agent"
-  | "aws-operator";
+  | "aws-operator"
+  | "stripe-agent-demo"
+  | "shopify-shopping-agent";
 
 export type TemplateManifestEntry = {
   id: TemplateId;
@@ -90,6 +92,10 @@ const TEMPLATE_ALIASES: Record<string, TemplateId> = {
   "paybond-invoice-agent": "invoice-agent",
   "aws-operator": "aws-operator",
   "paybond-aws-operator": "aws-operator",
+  "stripe-agent-demo": "stripe-agent-demo",
+  "paybond-stripe-agent-demo": "stripe-agent-demo",
+  "shopify-shopping-agent": "shopify-shopping-agent",
+  "paybond-shopify-shopping-agent": "shopify-shopping-agent",
 };
 
 function moduleDir(): string {
@@ -279,7 +285,8 @@ export function templateInitUsage(): string {
     "",
     "Templates:",
     "  travel-agent, mastra-travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
-    "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, aws-operator",
+    "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, aws-operator, stripe-agent-demo,",
+    "  shopify-shopping-agent",
     "",
     "Frameworks (with --template): generic|langgraph|vercel-ai|openai|openai-agents|claude-agents|mcp|mastra",
     "",

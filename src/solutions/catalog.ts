@@ -29,7 +29,7 @@ export type SolutionSmokeDefaults = {
   resultBody: Record<string, unknown>;
 };
 
-const KNOWN_SOLUTION_IDS = ["travel", "shopping", "saas", "aws"] as const;
+const KNOWN_SOLUTION_IDS = ["travel", "shopping", "saas", "aws", "stripe-commerce"] as const;
 
 export type SolutionId = (typeof KNOWN_SOLUTION_IDS)[number];
 

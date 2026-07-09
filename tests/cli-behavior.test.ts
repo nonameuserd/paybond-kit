@@ -7,6 +7,12 @@ import { describe, expect, it, vi } from "vitest";
 import { verifyAuditManifest } from "../src/cli/audit-export.js";
 import { listConfigEntries } from "../src/cli/config.js";
 import { runCli } from "../src/cli/router.js";
+import {
+  buildShopifyWebhookTriggerCommand,
+  resolveShopifyWebhookAddress,
+  setShopifyCommandHooks,
+} from "../src/cli/commands/shopify.js";
+import { createAgentGatewayFetch, SANDBOX_RAW_KEY } from "./cli/agent-gateway-mock.js";
 
 const CONTRACT_PATH = join(process.cwd(), "..", "cli-parity", "contract.json");
 const FIXTURE_PATH = join(process.cwd(), "..", "cli-parity", "fixtures", "signed_audit_manifest.json");
@@ -279,5 +285,101 @@ describe("cli behavior parity", () => {
     const manifest = JSON.parse(readFileSync(fixturePath, "utf8")) as Record<string, unknown>;
     expect(manifest.kind).toBe("paybond.audit_export_manifest_v1");
     expect(verifyAuditManifest(manifest)).toBe(true);
+  });
+
+  it("shopify doctor reports missing shopify CLI on PATH", async () => {
+    setShopifyCommandHooks({
+      whichExecutable: async (name) => (name === "shopify" ? null : `/usr/bin/${name}`),
+      runCommand: async () => ({ code: 0, stdout: "ucp 1.0.0", stderr: "" }),
+    });
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-shopify-doctor-"));
+    await writeFile(join(cwd, "shopify.app.toml"), 'client_id = "test-client"\n', "utf8");
+    vi.stubEnv("SHOPIFY_DEV_STORE", "paybond-agent-commerce-dev.myshopify.com");
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const code = await runCli(["shopify", "doctor"], { cwd, stdout });
+    setShopifyCommandHooks({});
+    vi.unstubAllEnvs();
+    expect(code).toBe(0);
+    const output = stdout.chunks.join("");
+    expect(output).toContain("shopify_cli");
+    expect(output).toContain("not on PATH");
+    expect(output).toContain("shopify doctor: fail");
+  });
+
+  it("shopify payments doctor reports missing payments app toml by default", async () => {
+    setShopifyCommandHooks({
+      whichExecutable: async (name) => (name === "shopify" ? "/usr/bin/shopify" : null),
+      runCommand: async () => ({ code: 0, stdout: "3.0.0", stderr: "" }),
+    });
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-shopify-payments-doctor-"));
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const code = await runCli(["--format", "json", "shopify", "payments", "doctor"], { cwd, stdout });
+    setShopifyCommandHooks({});
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout.chunks.join(""));
+    expect(payload.data.summary).toBe("fail");
+    expect(payload.data.checks.some((check: { name: string }) => check.name === "payments_app_toml")).toBe(true);
+  });
+
+  it("shopify payments smoke includes payment session checklist", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-shopify-payments-smoke-"));
+    vi.stubEnv("PAYBOND_API_KEY", SANDBOX_RAW_KEY);
+    const fetch = createAgentGatewayFetch();
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const code = await runCli(
+      ["--format", "json", "shopify", "payments", "smoke", "--shop", "dev.myshopify.com"],
+      { cwd, stdout, fetch: fetch as typeof fetch },
+    );
+    vi.unstubAllEnvs();
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout.chunks.join(""));
+    expect(payload.data.payment_session_id).toBe("paybond-smoke-payment-session");
+    expect(payload.data.shop).toBe("dev.myshopify.com");
+    expect(payload.data.checklist_lines.join(" ")).toContain("shopify payments smoke");
+  });
+
+  it("shopify webhook trigger --dry-run resolves sandbox webhook address", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-shopify-webhook-"));
+    await writeFile(join(cwd, "shopify.app.toml"), 'client_id = "cli-test-123"\n', "utf8");
+    setShopifyCommandHooks({
+      whichExecutable: async () => "/usr/bin/shopify",
+    });
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const code = await runCli(
+      [
+        "--format",
+        "json",
+        "shopify",
+        "webhook",
+        "trigger",
+        "--topic",
+        "orders/paid",
+        "--gateway",
+        "https://api.paybond.ai",
+        "--dry-run",
+      ],
+      { cwd, stdout },
+    );
+    setShopifyCommandHooks({});
+    expect(code).toBe(0);
+    const payload = JSON.parse(stdout.chunks.join(""));
+    expect(payload.data.address).toBe("https://api.paybond.ai/webhooks/sandbox/shopify");
+    expect(payload.data.command).toContain("shopify app webhook trigger");
+    expect(payload.data.command).toContain("--client-id=cli-test-123");
+    expect(resolveShopifyWebhookAddress("https://api.paybond.ai")).toBe(
+      "https://api.paybond.ai/webhooks/sandbox/shopify",
+    );
+    expect(buildShopifyWebhookTriggerCommand({
+      topic: "orders/paid",
+      address: "https://api.paybond.ai/webhooks/sandbox/shopify",
+      clientId: "abc",
+    })).toEqual([
+      "app",
+      "webhook",
+      "trigger",
+      "--topic=orders/paid",
+      "--address=https://api.paybond.ai/webhooks/sandbox/shopify",
+      "--client-id=abc",
+    ]);
   });
 });

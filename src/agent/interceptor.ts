@@ -402,6 +402,7 @@ export class PaybondToolInterceptor {
           toolResult,
           auth,
           evidenceId,
+          externalAttestations,
         });
         this.emitTrace({
           type: "evidence_submitted",
@@ -532,6 +533,7 @@ export class PaybondToolInterceptor {
     toolResult: unknown;
     auth: { decisionId?: string; auditId: string };
     evidenceId: string;
+    externalAttestations?: AgentReceiptExternalAttestationV1[];
   }): Promise<PaybondInterceptEvidenceResult> {
     const ctx: PaybondToolCallContext = {
       toolName: options.toolName,
@@ -561,6 +563,7 @@ export class PaybondToolInterceptor {
             tool_call_id: options.toolCallId,
             evidence_preset: options.entry.evidencePreset,
             decision_id: options.auth.decisionId,
+            external_attestations: options.externalAttestations ?? [],
           },
           idempotencyKey,
         });
@@ -594,6 +597,8 @@ export class PaybondToolInterceptor {
       const result = await this.host.harbor.submitEvidence(this.binding.intentId, wire, {
         idempotencyKey,
         recognitionProof,
+        agentReceiptAttestations: options.externalAttestations ?? [],
+        agentReceiptSourceRunId: this.binding.runId,
       });
 
       const resultRecord = result as Record<string, unknown>;

@@ -100,6 +100,31 @@ describe("paybond init --template", () => {
     expect(packageJson.dependencies["@mastra/core"]).toMatch(/^\^/);
   });
 
+  it("copies stripe-agent-demo template into an empty directory", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-template-stripe-"));
+    const result = await copyTemplateToDirectory({
+      cwd,
+      templateId: "stripe-agent-demo",
+    });
+
+    expect(result.template_id).toBe("stripe-agent-demo");
+    expect(result.repo).toBe("paybond-stripe-agent-demo");
+    expect(result.preset).toBe("stripe-commerce");
+    expect(result.smoke_command).toContain("payments.charge_customer");
+    expect(result.smoke_command).toContain("stripe_charge");
+
+    await access(join(cwd, "paybond.policy.yaml"), constants.F_OK);
+    await access(join(cwd, "src/charge-customer.ts"), constants.F_OK);
+
+    const indexSource = await readFile(join(cwd, "src/index.ts"), "utf8");
+    expect(indexSource).toContain("mapChargeEvidence");
+
+    const packageJson = JSON.parse(await readFile(join(cwd, "package.json"), "utf8")) as {
+      scripts: { smoke: string };
+    };
+    expect(packageJson.scripts.smoke).toContain("payments.charge_customer");
+  });
+
   it("CLI init --template writes scaffold files", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-template-cli-"));
     const stdout = {

@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -97,5 +97,56 @@ export const completionTemplateParameters = ${jsonLiteral(resolveCompletionPrese
     const packStale = checks.find((check) => check.name === "completion_pack_stale");
     expect(packStale?.message).toContain("warn:");
     expect(packStale?.message).toContain("legacy_epoch");
+  });
+
+  it("includes Stripe tool metadata binding checklist item", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-doctor-meta-"));
+    const checks = await runCompletionCatalogDoctorChecks({ cwd });
+    const binding = checks.find((check) => check.name === "stripe_tool_metadata_binding");
+    expect(binding?.ok).toBe(true);
+    expect(binding?.message).toMatch(/Stripe tool metadata binding/i);
+  });
+
+  it("warns when Stripe-wrapping sources omit metadata helpers", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-doctor-meta-missing-"));
+    await mkdir(join(cwd, "src"), { recursive: true });
+    await writeFile(
+      join(cwd, "src", "charge.ts"),
+      `
+export async function charge(stripe: { paymentIntents: { create: Function } }) {
+  return stripe.paymentIntents.create({ amount: 100, currency: "usd" });
+}
+`,
+      "utf8",
+    );
+
+    const checks = await runCompletionCatalogDoctorChecks({ cwd });
+    const binding = checks.find((check) => check.name === "stripe_tool_metadata_binding");
+    expect(binding?.ok).toBe(true);
+    expect(binding?.message).toContain("warn:");
+    expect(binding?.message).toContain("buildPaybondStripeMetadata");
+    expect(binding?.details?.missing_helper_files).toContain("src/charge.ts");
+  });
+
+  it("passes Stripe metadata binding when helpers are used", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-doctor-meta-ok-"));
+    await mkdir(join(cwd, "src"), { recursive: true });
+    await writeFile(
+      join(cwd, "src", "charge.ts"),
+      `
+import { buildPaybondStripeMetadata } from "@paybond/kit";
+export async function charge(stripe: { paymentIntents: { create: Function } }, tenantId: string, intentId: string) {
+  const metadata = buildPaybondStripeMetadata({ tenantId, intentId });
+  return stripe.paymentIntents.create({ amount: 100, currency: "usd", metadata });
+}
+`,
+      "utf8",
+    );
+
+    const checks = await runCompletionCatalogDoctorChecks({ cwd });
+    const binding = checks.find((check) => check.name === "stripe_tool_metadata_binding");
+    expect(binding?.ok).toBe(true);
+    expect(binding?.message).not.toContain("warn:");
+    expect(binding?.message).toContain("reference Paybond metadata helpers");
   });
 });

@@ -1,0 +1,22 @@
+# Reference implementation — edit freely. Regenerate with:
+# paybond policy init --preset stripe-commerce --out paybond.policy.yaml
+
+version: 1
+name: stripe-commerce-agent-v1
+default_deny: true
+
+tools:
+  payments.charge_customer:
+    side_effecting: true
+    max_spend_cents: 50000
+    evidence_preset: stripe_charge
+
+  payments.list_invoices:
+    side_effecting: false
+
+intent:
+  allowed_tools:
+    - payments.charge_customer
+  budget:
+    currency: usd
+    max_spend_usd: 500

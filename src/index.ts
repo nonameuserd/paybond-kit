@@ -11,6 +11,11 @@ import {
   type SettlementRail,
 } from "./principal-intent.js";
 import { signPayeeEvidenceBinding, type SignPayeeEvidenceParams } from "./payee-evidence.js";
+import type { AgentReceiptExternalAttestationV1 } from "./agent-receipt.js";
+import {
+  PAYBOND_AGENT_RECEIPT_ATTESTATIONS_HEADER,
+  PAYBOND_AGENT_RECEIPT_SOURCE_RUN_HEADER,
+} from "./agent-receipt.js";
 import {
   PaybondAgentRunFacade,
   createPaybondAgentCallable,
@@ -1875,6 +1880,10 @@ type GatewayHarborClientOptions = {
 type GatewayHarborMutationOptions = {
   idempotencyKey?: string;
   recognitionProof?: AgentRecognitionProofV1 | Record<string, unknown>;
+  /** Kit-verified external attestation digests forwarded for Gateway compose (evidence submit only). */
+  agentReceiptAttestations?: AgentReceiptExternalAttestationV1[];
+  /** Agent run id matching the attestation header for server-side audit. */
+  agentReceiptSourceRunId?: string;
 };
 
 /**
@@ -2020,6 +2029,16 @@ export class GatewayHarborClient {
     return gatewayMutationHeaders(proof, {
       ...(headers ?? {}),
       ...(options?.idempotencyKey?.trim() ? { "idempotency-key": options.idempotencyKey.trim() } : {}),
+      ...(options?.agentReceiptAttestations !== undefined
+        ? {
+            [PAYBOND_AGENT_RECEIPT_ATTESTATIONS_HEADER]: JSON.stringify(
+              options.agentReceiptAttestations,
+            ),
+          }
+        : {}),
+      ...(options?.agentReceiptSourceRunId?.trim()
+        ? { [PAYBOND_AGENT_RECEIPT_SOURCE_RUN_HEADER]: options.agentReceiptSourceRunId.trim() }
+        : {}),
     });
   }
 
@@ -3586,13 +3605,28 @@ export type ServiceAccountSignalSessionInit = {
 
 export type ServiceAccountFraudSessionInit = ServiceAccountSignalSessionInit;
 
-async function resolveGatewayTenantId(
+/** Server-derived principal identity: tenant plus the deployment environment the API key is bound to. */
+export type ResolvedGatewayPrincipal = {
+  tenantId: string;
+  /** `"live"` or `"sandbox"` as reported by the gateway principal, or `null` when the field is absent. */
+  environment: PaybondEnvironment | null;
+};
+
+function readPrincipalEnvironment(actualRaw: unknown): PaybondEnvironment | null {
+  const actual = typeof actualRaw === "string" ? actualRaw.trim() : "";
+  if (actual === "live" || actual === "sandbox") {
+    return actual;
+  }
+  return null;
+}
+
+async function resolveGatewayPrincipal(
   gatewayBaseUrl: string,
   apiKey: string,
   principalPath: string,
   maxRetries: number,
   expectedEnvironment?: PaybondEnvironment,
-): Promise<string> {
+): Promise<ResolvedGatewayPrincipal> {
   const base = normalizeBase(gatewayBaseUrl);
   const path = principalPath.startsWith("/") ? principalPath : `/${principalPath}`;
   const url = `${base}${path}`;
@@ -3637,9 +3671,26 @@ async function resolveGatewayTenantId(
       });
     }
     assertExpectedEnvironment("gateway principal", body.environment, expected, text);
-    return tenant;
+    return { tenantId: tenant, environment: readPrincipalEnvironment(body.environment) };
   }
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
+async function resolveGatewayTenantId(
+  gatewayBaseUrl: string,
+  apiKey: string,
+  principalPath: string,
+  maxRetries: number,
+  expectedEnvironment?: PaybondEnvironment,
+): Promise<string> {
+  const principal = await resolveGatewayPrincipal(
+    gatewayBaseUrl,
+    apiKey,
+    principalPath,
+    maxRetries,
+    expectedEnvironment,
+  );
+  return principal.tenantId;
 }
 
 /**
@@ -3974,6 +4025,13 @@ export class Paybond {
   readonly audit: PaybondAudit;
   readonly agentRun: PaybondAgentRunFacade;
   readonly agent: PaybondAgentCallable;
+  /**
+   * Deployment environment this session is bound to, as reported by the gateway principal
+   * (`"live"` or `"sandbox"`), or `null` when the gateway did not report one. Server-derived —
+   * prefer this over the client-supplied `expectedEnvironment` hint when gating environment-sensitive
+   * behavior (for example, refusing live Stripe secrets in a sandbox-only demo).
+   */
+  readonly environment: PaybondEnvironment | null;
 
   private constructor(
     harbor: GatewayHarborClient,
@@ -3983,6 +4041,7 @@ export class Paybond {
     a2a: GatewayA2AClient,
     protocol: GatewayProtocolClient,
     audit: PaybondAudit,
+    environment: PaybondEnvironment | null,
   ) {
     this.harbor = harbor;
     this.guardrails = guardrails;
@@ -3994,19 +4053,21 @@ export class Paybond {
     this.audit = audit;
     this.agentRun = new PaybondAgentRunFacade(this);
     this.agent = createPaybondAgentCallable(protocol, (input) => createPaybondAgent(this, input));
+    this.environment = environment;
   }
 
   /** Open a tenant-bound hosted Paybond session from a service-account API key. */
   static async open(init: PaybondOpenOptions): Promise<Paybond> {
     const gatewayBaseUrl = defaultGatewayBaseUrl(init.gatewayBaseUrl);
     const maxRetries = Math.max(1, init.maxRetries ?? 3);
-    const tenantId = await resolveGatewayTenantId(
+    const principal = await resolveGatewayPrincipal(
       gatewayBaseUrl,
       init.apiKey,
       init.principalPath ?? DEFAULT_PRINCIPAL_PATH,
       maxRetries,
       init.expectedEnvironment,
     );
+    const tenantId = principal.tenantId;
     const harbor = new GatewayHarborClient(gatewayBaseUrl, tenantId, {
       staticGatewayBearerToken: init.apiKey,
       maxRetries,
@@ -4037,7 +4098,7 @@ export class Paybond {
         maxRetries,
       }),
     );
-    return new Paybond(harbor, guardrails, signal, fraud, a2a, protocol, audit);
+    return new Paybond(harbor, guardrails, signal, fraud, a2a, protocol, audit, principal.environment);
   }
 
   /** Reserved for future HTTP client cleanup; safe to call after work completes. */
@@ -4223,6 +4284,64 @@ export {
   type PaymentAuthChallenge,
 } from "./mpp-funding.js";
 export {
+  buildPaybondStripeMetadata,
+  assertNotStripeFundingWebhook,
+  mapStripeToolResultToEvidence,
+  STRIPE_COMMERCE_MAPPER_VERSION,
+  PAYBOND_STRIPE_METADATA_TENANT_ID_KEY,
+  PAYBOND_STRIPE_METADATA_INTENT_ID_KEY,
+  PAYBOND_STRIPE_METADATA_RAIL_KEY,
+  type BuildPaybondStripeMetadataParams,
+  type CostAndCompletionEvidence,
+  type MapStripeToolResultToEvidenceOptions,
+  type PaybondStripeMetadata,
+  type PaybondStripeSettlementRail,
+  type StripeChargeVendorEvidence,
+  type StripeCommerceEvidencePreset,
+  type StripeToolResultInput,
+} from "./stripe-commerce/index.js";
+export {
+  PAYBOND_UCP_AGENT_PROFILE_URL,
+  PAYBOND_SHOPIFY_UCP_VERSION,
+  SHOPIFY_COMMERCE_MAPPER_VERSION,
+  assertNotShopifyFundingWebhook,
+  createCheckoutWithBinding,
+  createGuardedShopifyCheckoutHandler,
+  getOrder,
+  instrumentShopifyCheckout,
+  mapShopifyToolResultToEvidence,
+  mergeBindingIntoCheckoutPayload,
+  toUcpCheckoutLineItems,
+  type CreateCheckoutWithBindingParams,
+  type CreateGuardedShopifyCheckoutHandlerOptions,
+  type GetShopifyOrderParams,
+  type InstrumentShopifyCheckoutInput,
+  type MapShopifyToolResultToEvidenceOptions,
+  type ShopifyCheckoutCreatePayload,
+  type ShopifyCheckoutExecuteInput,
+  type ShopifyCheckoutExecutor,
+  type ShopifyCheckoutLineItemInput,
+  type ShopifyCheckoutSessionBinding,
+  type ShopifyCheckoutToolArgs,
+  type ShopifyCheckoutToolResult,
+  type ShopifyCommerceEvidencePreset,
+  type ShopifyOrderSummary,
+  type ShopifyUcpCheckoutLineItem,
+  type ShopifyUcpFetch,
+} from "./shopify/index.js";
+export {
+  normalizeCommerceBinding,
+  encodeCommerceBindingToStripeMetadata,
+  decodeCommerceBindingFromStripeMetadata,
+  encodeCommerceBindingToShopifyNoteAttributes,
+  decodeCommerceBindingFromShopifyNoteAttributes,
+  PAYBOND_COMMERCE_BINDING_TENANT_ID_KEY,
+  PAYBOND_COMMERCE_BINDING_INTENT_ID_KEY,
+  type CommerceBinding,
+  type ShopifyNoteAttribute,
+  type StripeMetadata,
+} from "./commerce-binding.js";
+export {
   validateCompletionEvidence,
   type CompletionEvidenceValidationReport,
 } from "./completion-validate-evidence.js";
@@ -4380,32 +4499,94 @@ export {
   AGENT_RECEIPT_SCOPE_INTENT_TERMINAL,
   AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519,
   AGENT_RECEIPT_VERSION_V1,
+  AGENT_RECEIPT_SIGNING_KEYS_WELL_KNOWN_PATH,
   AGENT_RECEIPT_WELL_KNOWN_PATH,
+  PAYBOND_AGENT_RECEIPT_ATTESTATIONS_HEADER,
+  PAYBOND_AGENT_RECEIPT_SOURCE_RUN_HEADER,
   actionReceiptId,
+  attachOperatorAttestationV1,
   canonicalAgentReceiptBytes,
   configHashSha256Hex,
   promptHashSha256Hex,
   valueDigestSha256Hex,
   verifyAgentReceiptV1,
+  verifyAgentReceiptV1FromJSON,
   type AgentReceiptAgentV1,
   type AgentReceiptAuthorizationV1,
   type AgentReceiptEvidenceV1,
   type AgentReceiptExecutionV1,
   type AgentReceiptExternalAttestationV1,
   type AgentReceiptMerchantV1,
+  type AgentReceiptOperatorAttestationV1,
   type AgentReceiptOutcomeV1,
   type AgentReceiptPaymentV1,
   type AgentReceiptPolicyV1,
   type AgentReceiptReferencesV1,
   type AgentReceiptV1,
   type ConfigHashInput,
+  type VerifyAgentReceiptV1Options,
 } from "./agent-receipt.js";
 export {
+  FORBIDDEN_AGENT_RECEIPT_FIELDS,
+  parseAgentReceiptJSON,
+  validateAgentReceiptJSON,
+} from "./agent-receipt-prevalidate.js";
+export {
+  AGENT_RECEIPT_EXTERNAL_SOURCE_AP2,
   AGENT_RECEIPT_EXTERNAL_SOURCE_SEP2828,
   AGENT_RECEIPT_EXTERNAL_SOURCE_X402,
   partnerRecordDigestSha256Hex,
+  protocolAuthorizationReceiptToExternalAttestations,
+  protocolSettlementReceiptToExternalAttestations,
   resolveExternalAttestations,
   sep2828RecordsToExternalAttestations,
+  signedMandateToExternalAttestations,
   x402ReceiptToExternalAttestations,
   type PaybondExternalAttestationInput,
 } from "./agent-receipt-external-attestations.js";
+export {
+  AGENT_RECEIPT_PDF_EXPORT_DERIVED_VIEW_LABEL,
+  AGENT_RECEIPT_PDF_EXPORT_MANIFEST_KIND,
+  AGENT_RECEIPT_PDF_EXPORT_MANIFEST_SCHEMA_VERSION,
+  FORBIDDEN_PDF_EXPORT_MANIFEST_FIELDS,
+  gateAgentReceiptPDFExport,
+  parseAgentReceiptPDFExportManifestJSON,
+  validateAgentReceiptPDFExportManifestJSON,
+  type AgentReceiptPDFExportFooterStamp,
+  type AgentReceiptPDFExportManifest,
+  type AgentReceiptPDFExportSourceKind,
+  type GateAgentReceiptPDFExportInput,
+} from "./agent-receipt-pdf-export.js";
+export {
+  AGENT_AUTHORIZATION_KIND_PRINCIPAL,
+  AGENT_AUTHORIZATION_KIND_TENANT,
+  AGENT_MANDATE_KIND_V1,
+  AGENT_MANDATE_SCHEMA_VERSION,
+  AGENT_MANDATE_SIGNING_ALGORITHM_ED25519_SHA256,
+  CONSTRAINT_REFERENCE_KIND_POLICY,
+  CONSTRAINT_REFERENCE_KIND_PREDICATE,
+  HUMAN_PRESENCE_MODE_HUMAN_NOT_PRESENT,
+  HUMAN_PRESENCE_MODE_HUMAN_PRESENT,
+  agentMandateDigestSha256Hex,
+  canonicalAgentMandateJsonBytes,
+  normalizeAgentMandateV1,
+  signAgentMandateV1,
+  verifySignedAgentMandateV1,
+} from "./agent-mandate.js";
+export {
+  PROTOCOL_AUTHORIZATION_RECEIPT_KIND_V1,
+  PROTOCOL_RECEIPT_SCHEMA_VERSION,
+  PROTOCOL_RECEIPT_SIGNING_ALGORITHM_ED25519_SHA256,
+  PROTOCOL_RECEIPT_STATUS_AUTHORIZED,
+  PROTOCOL_RECEIPT_VERSION_V1,
+  PROTOCOL_SETTLEMENT_RECEIPT_KIND_V1,
+  PROTOCOL_SOURCE_ACP,
+  PROTOCOL_SOURCE_AP2,
+  PROTOCOL_SOURCE_UCP,
+  normalizeProtocolAuthorizationReceiptV1,
+  normalizeProtocolSettlementReceiptV1,
+  signProtocolAuthorizationReceiptV1,
+  signProtocolSettlementReceiptV1,
+  verifyProtocolAuthorizationReceiptV1,
+  verifyProtocolSettlementReceiptV1,
+} from "./protocol-receipt.js";

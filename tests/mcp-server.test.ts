@@ -1,9 +1,17 @@
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { AgentReceiptV1 } from "../src/agent-receipt.js";
 import { PaybondMCPServer, formatMcpStdioFrame, settingsFromEnv } from "../src/mcp-server.js";
+
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const CONFORMANCE_RECEIPT_PATH = join(
+  MODULE_DIR,
+  "../../agent-receipt/conformance/signed-action-receipt-v1.json",
+);
 
 const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
   version: string;
@@ -1126,25 +1134,28 @@ describe("PaybondMCPServer", () => {
     });
   });
 
-  it("reads paybond://receipt/{id} via resources/read", async () => {
-    const receiptId = "0ab0f1c2b58543f4753b23fec340f16c931e43d102898606a08acbee37a1e484";
+  it("reads paybond://receipt/{id} via resources/read after local verification", async () => {
+    const conformanceReceipt = JSON.parse(
+      readFileSync(CONFORMANCE_RECEIPT_PATH, "utf8"),
+    ) as AgentReceiptV1;
+    const receiptId = conformanceReceipt.receipt_id;
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.endsWith("/v1/auth/principal")) {
         return new Response(
-          JSON.stringify({ tenant_id: "tenant-a", roles: ["operator"], subject: "svc" }),
+          JSON.stringify({
+            tenant_id: conformanceReceipt.tenant_id,
+            roles: ["operator"],
+            subject: "svc",
+          }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
       if (url.includes(`/protocol/v2/agent-receipts/${receiptId}`)) {
-        return new Response(
-          JSON.stringify({
-            tenant_id: "tenant-a",
-            receipt_id: receiptId,
-            kind: "paybond.agent_receipt_v1",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return new Response(JSON.stringify(conformanceReceipt), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -1180,12 +1191,70 @@ describe("PaybondMCPServer", () => {
         expect.objectContaining({
           uri: `paybond://receipt/${receiptId}`,
           mimeType: "application/json",
+          _meta: {
+            verification: {
+              valid: true,
+              message_digest: conformanceReceipt.message_digest_sha256_hex,
+            },
+          },
         }),
       ],
     });
+    const text = (read?.result as { contents?: Array<{ text?: string }> })?.contents?.[0]?.text;
+    expect(JSON.parse(text ?? "{}")).toEqual(conformanceReceipt);
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining(`/protocol/v2/agent-receipts/${receiptId}`),
       expect.any(Object),
     );
+  });
+
+  it("rejects tampered paybond://receipt/{id} resources before MCP handoff", async () => {
+    const conformanceReceipt = JSON.parse(
+      readFileSync(CONFORMANCE_RECEIPT_PATH, "utf8"),
+    ) as AgentReceiptV1;
+    const receiptId = conformanceReceipt.receipt_id;
+    const tampered = structuredClone(conformanceReceipt);
+    tampered.outcome.harbor_state = "released";
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(
+          JSON.stringify({
+            tenant_id: conformanceReceipt.tenant_id,
+            roles: ["operator"],
+            subject: "svc",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes(`/protocol/v2/agent-receipts/${receiptId}`)) {
+        return new Response(JSON.stringify(tampered), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+    await server.handleMessage({ jsonrpc: "2.0", id: 1, method: "initialize" });
+
+    const read = await server.handleMessage({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "resources/read",
+      params: { uri: `paybond://receipt/${receiptId}` },
+    });
+    expect(read?.error).toMatchObject({
+      code: -32000,
+      message: expect.stringContaining("agent receipt verification failed"),
+    });
+    expect(read?.error?.message).toMatch(/message digest mismatch/);
+    expect(read?.result).toBeUndefined();
   });
 });

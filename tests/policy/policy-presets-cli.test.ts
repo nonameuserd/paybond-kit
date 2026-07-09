@@ -26,7 +26,13 @@ describe("policy presets catalog", () => {
   it("lists domains, guardrails, solutions, and presets", () => {
     const catalog = listPolicyPresetsCatalog();
     expect(catalog.domains.map((entry) => entry.id)).toEqual(["travel", "shopping", "saas", "aws"]);
-    expect(catalog.solutions.map((entry) => entry.id)).toEqual(["travel", "shopping", "saas", "aws"]);
+    expect(catalog.solutions.map((entry) => entry.id)).toEqual([
+      "travel",
+      "shopping",
+      "saas",
+      "aws",
+      "stripe-commerce",
+    ]);
     expect(catalog.presets.some((entry) => entry.id === "read-only")).toBe(true);
     expect(catalog.guardrails.some((entry) => entry.id === "max-spend:<usd>")).toBe(true);
   });
@@ -73,7 +79,7 @@ describe("policy presets CLI", () => {
     expect(code).toBe(0);
     const payload = JSON.parse(stdout.chunks.join(""));
     expect(payload.data.domains).toHaveLength(4);
-    expect(payload.data.solutions).toHaveLength(4);
+    expect(payload.data.solutions).toHaveLength(5);
   });
 
   it("policy presets show travel prints composed yaml", async () => {

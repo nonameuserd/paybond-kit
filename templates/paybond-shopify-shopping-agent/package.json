@@ -1,0 +1,21 @@
+{
+  "name": "paybond-shopify-shopping-agent",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "smoke": "paybond shopify checkout smoke --policy-file paybond.policy.yaml --shop $SHOPIFY_DEV_STORE",
+    "doctor": "paybond shopify doctor",
+  },
+  "dependencies": {
+    "@paybond/kit": "^0.12.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

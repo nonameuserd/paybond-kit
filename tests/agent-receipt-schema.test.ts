@@ -18,4 +18,18 @@ describe("agent receipt schema", () => {
     const valid = validate(receipt);
     expect(valid, JSON.stringify(validate.errors, null, 2)).toBe(true);
   });
+
+  it("validates signed intent_terminal conformance vector against schema.json", () => {
+    const ajv = new Ajv2020({ allErrors: true, strict: false });
+    const schema = JSON.parse(readFileSync(join(AGENT_RECEIPT_DIR, "schema.json"), "utf8"));
+    const receipt = JSON.parse(
+      readFileSync(
+        join(AGENT_RECEIPT_DIR, "conformance/signed-intent-terminal-receipt-v1.json"),
+        "utf8",
+      ),
+    );
+    const validate = ajv.compile(schema);
+    const valid = validate(receipt);
+    expect(valid, JSON.stringify(validate.errors, null, 2)).toBe(true);
+  });
 });

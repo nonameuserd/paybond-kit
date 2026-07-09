@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import { loadCompletionCatalog } from "./completion-catalog.js";
@@ -14,6 +14,45 @@ export const STRIPE_FUNDING_WEBHOOK_EVENT_TYPES = [
   "payment_intent.succeeded",
   "charge.succeeded",
 ] as const;
+
+/** Helper identifiers that satisfy the Stripe metadata-binding doctor check. */
+export const STRIPE_METADATA_HELPER_MARKERS = [
+  "buildPaybondStripeMetadata",
+  "build_paybond_stripe_metadata",
+] as const;
+
+/**
+ * Heuristic markers that a source file wraps Stripe payment / PaymentIntent APIs
+ * and therefore should bind Paybond metadata from an authenticated session.
+ */
+export const STRIPE_WRAPPING_SOURCE_MARKERS = [
+  "paymentIntents.create",
+  "payment_intents.create",
+  "PaymentIntent.create",
+  "stripe.PaymentIntent",
+  "stripe.paymentIntents",
+  "charges.create",
+  "Charge.create",
+  "payments.charge_customer",
+] as const;
+
+const SOURCE_FILE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"]);
+const SKIP_DIR_NAMES = new Set([
+  ".git",
+  ".hg",
+  ".svn",
+  ".paybond",
+  "node_modules",
+  "dist",
+  "build",
+  "coverage",
+  "__pycache__",
+  ".venv",
+  "venv",
+  "target",
+  ".next",
+  ".turbo",
+]);
 
 export type CompletionDoctorCheck = {
   name: string;
@@ -101,6 +140,131 @@ export function isStripeFundingWebhookEventType(eventType: unknown): boolean {
     typeof eventType === "string" &&
     (STRIPE_FUNDING_WEBHOOK_EVENT_TYPES as readonly string[]).includes(eventType)
   );
+}
+
+/** True when source text appears to wrap Stripe charge / PaymentIntent APIs. */
+export function sourceLooksLikeStripeWrapping(body: string): boolean {
+  return (STRIPE_WRAPPING_SOURCE_MARKERS as readonly string[]).some((marker) => body.includes(marker));
+}
+
+/** True when source text references Paybond Stripe metadata helpers. */
+export function sourceUsesStripeMetadataHelper(body: string): boolean {
+  return (STRIPE_METADATA_HELPER_MARKERS as readonly string[]).some((marker) => body.includes(marker));
+}
+
+async function collectSourceFiles(root: string, maxFiles = 400): Promise<string[]> {
+  const files: string[] = [];
+  const queue: string[] = [root];
+  while (queue.length > 0 && files.length < maxFiles) {
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+    let entries;
+    try {
+      entries = await readdir(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (files.length >= maxFiles) {
+        break;
+      }
+      if (entry.isDirectory()) {
+        if (SKIP_DIR_NAMES.has(entry.name) || entry.name.startsWith(".")) {
+          continue;
+        }
+        queue.push(path.join(current, entry.name));
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+      const ext = path.extname(entry.name).toLowerCase();
+      if (!SOURCE_FILE_EXTENSIONS.has(ext)) {
+        continue;
+      }
+      files.push(path.join(current, entry.name));
+    }
+  }
+  return files;
+}
+
+/**
+ * Scan project sources for Stripe-wrapping tools that omit metadata helpers.
+ * Warns (ok: true) when helpers appear missing; never hard-fails.
+ */
+export async function runStripeToolMetadataBindingDoctorCheck(cwd: string): Promise<CompletionDoctorCheck> {
+  let rootStat;
+  try {
+    rootStat = await stat(cwd);
+  } catch {
+    return {
+      name: "stripe_tool_metadata_binding",
+      ok: true,
+      message: "skipped Stripe tool metadata binding scan (cwd unreadable)",
+    };
+  }
+  if (!rootStat.isDirectory()) {
+    return {
+      name: "stripe_tool_metadata_binding",
+      ok: true,
+      message: "skipped Stripe tool metadata binding scan (cwd is not a directory)",
+    };
+  }
+
+  const sourceFiles = await collectSourceFiles(cwd);
+  const missingHelperFiles: string[] = [];
+  let stripeWrappingFiles = 0;
+
+  for (const filePath of sourceFiles) {
+    let body: string;
+    try {
+      body = await readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    if (!sourceLooksLikeStripeWrapping(body)) {
+      continue;
+    }
+    stripeWrappingFiles += 1;
+    if (!sourceUsesStripeMetadataHelper(body)) {
+      missingHelperFiles.push(path.relative(cwd, filePath) || path.basename(filePath));
+    }
+  }
+
+  if (stripeWrappingFiles === 0) {
+    return {
+      name: "stripe_tool_metadata_binding",
+      ok: true,
+      message:
+        "Stripe tool metadata binding: no Stripe-wrapping sources detected (use buildPaybondStripeMetadata with tenant_id from Paybond session)",
+      details: { checked_files: sourceFiles.length, stripe_wrapping_files: 0 },
+    };
+  }
+
+  if (missingHelperFiles.length > 0) {
+    return {
+      name: "stripe_tool_metadata_binding",
+      ok: true,
+      message: `warn: Stripe-wrapping tool(s) may lack Paybond metadata helpers (${missingHelperFiles.slice(0, 5).join(", ")}${missingHelperFiles.length > 5 ? ", …" : ""}); use buildPaybondStripeMetadata / build_paybond_stripe_metadata with tenant_id from authenticated Paybond session credentials — never client input`,
+      details: {
+        checked_files: sourceFiles.length,
+        stripe_wrapping_files: stripeWrappingFiles,
+        missing_helper_files: missingHelperFiles,
+      },
+    };
+  }
+
+  return {
+    name: "stripe_tool_metadata_binding",
+    ok: true,
+    message: `Stripe tool metadata binding: ${stripeWrappingFiles} Stripe-wrapping source(s) reference Paybond metadata helpers`,
+    details: {
+      checked_files: sourceFiles.length,
+      stripe_wrapping_files: stripeWrappingFiles,
+    },
+  };
 }
 
 function extractTemplateParametersFromScaffold(body: string): Record<string, unknown> | undefined {
@@ -381,6 +545,7 @@ export async function runCompletionCatalogDoctorChecks(options: {
       message: "skipped policy head check (no gateway credentials)",
     });
     pushFundingEventMisuseCheck(checks, fundingEventWarnings, scaffoldPaths.length);
+    checks.push(await runStripeToolMetadataBindingDoctorCheck(options.cwd));
     return checks;
   }
 
@@ -445,6 +610,7 @@ export async function runCompletionCatalogDoctorChecks(options: {
   }
 
   pushFundingEventMisuseCheck(checks, fundingEventWarnings, scaffoldPaths.length);
+  checks.push(await runStripeToolMetadataBindingDoctorCheck(options.cwd));
   return checks;
 }
 

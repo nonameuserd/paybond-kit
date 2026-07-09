@@ -37,6 +37,7 @@ import {
 import { parseArgs as parseLoginArgs, runLogin, type LoginOptions, type LoginResult } from "../../login.js";
 import { main as runMcpServerMain } from "../../mcp-server.js";
 import { PaybondMCPServer } from "../../mcp-server.js";
+import { runShopifyDoctorChecks } from "./shopify.js";
 
 declare const process: {
   stdin: NodeJS.ReadableStream;
@@ -138,6 +139,19 @@ export async function handleInitWizard(ctx: CliContext, argv: string[]): Promise
         cwd: ctx.cwd,
         templateId: normalizeTemplateId(parsed.template),
         framework: parsed.framework,
+        force: parsed.force,
+        writeStdout(line) {
+          if (ctx.globals.format !== "json") {
+            ctx.stdout.write(`${line}\n`);
+          }
+        },
+      });
+      return { data: result };
+    }
+    if (parsed.solution === "shopping" && parsed.framework === "shopify") {
+      const result = await copyTemplateToDirectory({
+        cwd: ctx.cwd,
+        templateId: normalizeTemplateId("shopify-shopping-agent"),
         force: parsed.force,
         writeStdout(line) {
           if (ctx.globals.format !== "json") {
@@ -397,7 +411,8 @@ export async function handleMcpVerifyConfig(ctx: CliContext, argv: string[]): Pr
 
 export async function handleDoctor(ctx: CliContext, argv: string[]): Promise<CommandResult> {
   const agentFlag = consumeBooleanFlag(argv, "--agent");
-  const hostFlag = consumeFlag(agentFlag.rest, "--host");
+  const shopifyFlag = consumeBooleanFlag(agentFlag.rest, "--shopify");
+  const hostFlag = consumeFlag(shopifyFlag.rest, "--host");
   const checks: Array<{ name: string; ok: boolean; message: string; details?: Record<string, unknown> }> = [];
   const defaults = resolvedDefaultsForDoctor(ctx.globals);
   checks.push({
@@ -478,6 +493,10 @@ export async function handleDoctor(ctx: CliContext, argv: string[]): Promise<Com
         message: "skipped (missing API key)",
       });
     }
+  }
+
+  if (shopifyFlag.present) {
+    checks.push(...(await runShopifyDoctorChecks(ctx)));
   }
 
   const completionChecks = await runCompletionCatalogDoctorChecks({

@@ -1,0 +1,24 @@
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration
+
+name = "paybond-agent-spend"
+client_id = "env:SHOPIFY_FLAG_CLIENT_ID"
+application_url = "https://paybond.ai"
+embedded = false
+
+[access_scopes]
+scopes = "read_orders,write_orders,read_products"
+
+[auth]
+redirect_urls = [
+  "https://paybond.ai/api/settlement/shopify/link/callback",
+]
+
+[webhooks]
+api_version = "2025-01"
+
+  [[webhooks.subscriptions]]
+  topics = ["orders/create", "orders/paid", "orders/updated", "app/uninstalled"]
+  uri = "/webhooks/sandbox/shopify"
+
+[build]
+automatically_update_urls_on_dev = true

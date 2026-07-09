@@ -28,7 +28,7 @@ export async function loadPaybondEnvFile(envFile = ".env.local"): Promise<void> 
     const { readFile } = await import("node:fs/promises");
     body = await readFile(envFile, "utf8");
   } catch (err) {
-    if ((err).code === "ENOENT") return;
+    if ((err as { code?: string }).code === "ENOENT") return;
     throw err;
   }
   const apiKey = readEnvValue(body, "PAYBOND_API_KEY");

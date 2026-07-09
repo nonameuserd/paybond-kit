@@ -1,0 +1,19 @@
+{
+  "id": "stripe-commerce",
+  "title": "Stripe commerce agent",
+  "policy_default": {
+    "domain": "stripe-commerce",
+    "guardrails": ["default_deny", "max_spend_usd_500"]
+  },
+  "primary_operation": "payments.charge_customer",
+  "completion_preset": "stripe_charge",
+  "smoke": {
+    "result_body": {
+      "payment_intent_id": "pi_smoke",
+      "charge_id": "ch_smoke",
+      "cost_cents": 2500,
+      "status": "succeeded"
+    },
+    "evidence_preset": "stripe_charge"
+  }
+}

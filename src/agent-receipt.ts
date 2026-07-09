@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { verify } from "@noble/ed25519";
 
 import { ensureEd25519Sha512Sync } from "./ed25519-sync.js";
+import { parseAgentReceiptJSON, validateAgentReceiptJSON } from "./agent-receipt-prevalidate.js";
 
 export const AGENT_RECEIPT_SCHEMA_VERSION = 1;
 export const AGENT_RECEIPT_KIND_V1 = "paybond.agent_receipt_v1";
@@ -11,6 +12,12 @@ export const AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519 = "ed25519-sha256-json-v1";
 export const AGENT_RECEIPT_SCOPE_ACTION = "action";
 export const AGENT_RECEIPT_SCOPE_INTENT_TERMINAL = "intent_terminal";
 export const AGENT_RECEIPT_WELL_KNOWN_PATH = "/.well-known/agent-receipt-v1.json";
+export const AGENT_RECEIPT_SIGNING_KEYS_WELL_KNOWN_PATH =
+  "/.well-known/agent-receipt-signing-keys.json";
+/** Gateway evidence proxy header carrying Kit-verified external attestation digests. */
+export const PAYBOND_AGENT_RECEIPT_ATTESTATIONS_HEADER = "x-paybond-agent-receipt-attestations";
+/** Optional agent run id bound to the attestation header for server-side audit. */
+export const PAYBOND_AGENT_RECEIPT_SOURCE_RUN_HEADER = "x-paybond-agent-run-id";
 
 const SCOPE_TOKEN_RE = /^[a-z0-9][a-z0-9._:/-]{0,127}$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
@@ -293,6 +300,9 @@ function normalizeReceipt(receipt: AgentReceiptV1): AgentReceiptV1 {
     outcome,
     references,
     external_attestations: externalAttestations,
+    operator_attestation: receipt.operator_attestation
+      ? normalizeOperatorAttestation(receipt.operator_attestation)
+      : undefined,
     signing_algorithm:
       receipt.signing_algorithm.trim().toLowerCase() || AGENT_RECEIPT_SIGNING_ALGORITHM_ED25519,
     message_digest_sha256_hex: receipt.message_digest_sha256_hex.trim().toLowerCase(),
@@ -302,6 +312,21 @@ function normalizeReceipt(receipt: AgentReceiptV1): AgentReceiptV1 {
 
   verifyReceiptId(normalized);
   return normalized;
+}
+
+function normalizeOperatorAttestation(
+  attestation: AgentReceiptOperatorAttestationV1,
+): AgentReceiptOperatorAttestationV1 {
+  const operatorDid = attestation.operator_did.trim();
+  if (!operatorDid) {
+    throw new Error("agent receipt: operator_attestation.operator_did is required");
+  }
+  return {
+    operator_did: operatorDid,
+    signing_public_key_ed25519_hex: attestation.signing_public_key_ed25519_hex.trim().toLowerCase(),
+    message_digest_sha256_hex: attestation.message_digest_sha256_hex.trim().toLowerCase(),
+    ed25519_signature_hex: attestation.ed25519_signature_hex.trim().toLowerCase(),
+  };
 }
 
 function normalizeAuthorization(authorization: AgentReceiptAuthorizationV1): AgentReceiptAuthorizationV1 {
@@ -669,10 +694,54 @@ export function agentReceiptMessageDigestSha256Hex(receipt: AgentReceiptV1): str
   return sha256Hex(canonicalAgentReceiptBytes(receipt));
 }
 
+/** Optional trust-anchor checks during agent receipt verification. */
+export type VerifyAgentReceiptV1Options = {
+  /** Lowercase signing_public_key_ed25519_hex values accepted when non-empty. */
+  expectedSigningPublicKeys?: readonly string[];
+  /**
+   * When true, require any operator_attestation signing key to appear in
+   * trustedOperatorPublicKeys (e.g. tenant middleware attach recognition keys). The
+   * operator_did binding to authorization.agent.operator_did is always enforced.
+   */
+  verifyOperatorAgainstRegistry?: boolean;
+  /** Lowercase operator signing pubkeys accepted when the registry check is enabled. */
+  trustedOperatorPublicKeys?: readonly string[];
+};
+
+function allowsSigningPublicKeyHex(
+  signingPublicKeyHex: string,
+  expectedSigningPublicKeys: readonly string[] | undefined,
+): boolean {
+  if (!expectedSigningPublicKeys || expectedSigningPublicKeys.length === 0) {
+    return true;
+  }
+  const normalized = signingPublicKeyHex.trim().toLowerCase();
+  return expectedSigningPublicKeys.some((value) => value.trim().toLowerCase() === normalized);
+}
+
+function allowsOperatorPublicKeyHex(
+  operatorPublicKeyHex: string,
+  trustedOperatorPublicKeys: readonly string[] | undefined,
+): boolean {
+  if (!trustedOperatorPublicKeys || trustedOperatorPublicKeys.length === 0) {
+    return false;
+  }
+  const normalized = operatorPublicKeyHex.trim().toLowerCase();
+  return trustedOperatorPublicKeys.some((value) => value.trim().toLowerCase() === normalized);
+}
+
 /** Validates structure, receipt_id derivation, digest, and detached Ed25519 signature. */
-export async function verifyAgentReceiptV1(receipt: AgentReceiptV1): Promise<AgentReceiptV1> {
+export async function verifyAgentReceiptV1(
+  receipt: AgentReceiptV1,
+  options: VerifyAgentReceiptV1Options = {},
+): Promise<AgentReceiptV1> {
   ensureEd25519Sha512Sync();
   const normalized = normalizeReceipt(receipt);
+  if (!allowsSigningPublicKeyHex(normalized.signing_public_key_ed25519_hex, options.expectedSigningPublicKeys)) {
+    throw new Error(
+      "agent receipt: signing_public_key_ed25519_hex is not in the configured trusted key set",
+    );
+  }
   const canonical = marshalCanonicalAgentReceipt(normalized);
   const digest = createHash("sha256").update(canonical).digest();
   const digestHex = sha256Hex(canonical);
@@ -696,13 +765,26 @@ export async function verifyAgentReceiptV1(receipt: AgentReceiptV1): Promise<Age
   if (!valid) {
     throw new Error("agent receipt: ed25519 signature verification failed");
   }
-  await verifyOperatorAttestation(normalized, digest);
+  await verifyOperatorAttestation(normalized, digest, options);
   return normalized;
+}
+
+/** Validate raw JSON (schema + forbidden fields) then verify signature. */
+export async function verifyAgentReceiptV1FromJSON(
+  raw: string | Uint8Array | Record<string, unknown>,
+  options: VerifyAgentReceiptV1Options = {},
+): Promise<AgentReceiptV1> {
+  const receipt =
+    typeof raw === "object" && !(raw instanceof Uint8Array) && !Array.isArray(raw)
+      ? validateAgentReceiptJSON(raw)
+      : parseAgentReceiptJSON(raw as string | Uint8Array);
+  return verifyAgentReceiptV1(receipt, options);
 }
 
 async function verifyOperatorAttestation(
   receipt: AgentReceiptV1,
   gatewayDigest: Uint8Array,
+  options: VerifyAgentReceiptV1Options = {},
 ): Promise<void> {
   const attestation = receipt.operator_attestation;
   if (!attestation) {
@@ -712,10 +794,26 @@ async function verifyOperatorAttestation(
   if (!operatorDid) {
     throw new Error("agent receipt: operator_attestation.operator_did is required");
   }
+  if (operatorDid !== receipt.authorization.agent.operator_did.trim()) {
+    throw new Error(
+      "agent receipt: operator_attestation.operator_did must match authorization.agent.operator_did",
+    );
+  }
   requireHex64(attestation.message_digest_sha256_hex, "operator_attestation.message_digest_sha256_hex");
   if (attestation.message_digest_sha256_hex !== receipt.message_digest_sha256_hex) {
     throw new Error(
       "agent receipt: operator_attestation message_digest_sha256_hex must match gateway digest",
+    );
+  }
+  if (
+    options.verifyOperatorAgainstRegistry &&
+    !allowsOperatorPublicKeyHex(
+      attestation.signing_public_key_ed25519_hex,
+      options.trustedOperatorPublicKeys,
+    )
+  ) {
+    throw new Error(
+      "agent receipt: operator_attestation signing key is not in the configured tenant operator registry",
     );
   }
   const publicKey = hexToBytes(attestation.signing_public_key_ed25519_hex);
@@ -737,6 +835,15 @@ export async function attachOperatorAttestationV1(
 ): Promise<AgentReceiptV1> {
   ensureEd25519Sha512Sync();
   const verified = await verifyAgentReceiptV1(receipt);
+  const normalizedOperatorDid = operatorDid.trim();
+  if (!normalizedOperatorDid) {
+    throw new Error("agent receipt: operator_did is required");
+  }
+  if (normalizedOperatorDid !== verified.authorization.agent.operator_did.trim()) {
+    throw new Error(
+      "agent receipt: operator_did must match authorization.agent.operator_did",
+    );
+  }
   const digest = hexToBytes(verified.message_digest_sha256_hex);
   const privateKey = hexToBytes(operatorPrivateKeyHex);
   if (privateKey.length !== 64 && privateKey.length !== 32) {
@@ -749,7 +856,7 @@ export async function attachOperatorAttestationV1(
   return {
     ...verified,
     operator_attestation: {
-      operator_did: operatorDid.trim(),
+      operator_did: normalizedOperatorDid,
       signing_public_key_ed25519_hex: Buffer.from(publicKey).toString("hex"),
       message_digest_sha256_hex: verified.message_digest_sha256_hex,
       ed25519_signature_hex: Buffer.from(signature).toString("hex"),

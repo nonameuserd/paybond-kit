@@ -39,6 +39,7 @@ import {
 } from "./commands/policy.js";
 import { handleAgent } from "./commands/agent.js";
 import { handleDev } from "./commands/dev.js";
+import { handleShopify } from "./commands/shopify.js";
 import {
   handleGuardrails,
   handleIntents,
@@ -262,6 +263,12 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "doctor") {
       canonical = "doctor";
       result = await handleDoctor(ctx, command.slice(1));
+    } else if (head === "shopify" && second) {
+      const isPaymentsSessionShow = second === "payments" && third === "session";
+      const fourth = isPaymentsSessionShow ? command[3] : undefined;
+      canonical = commandPath(["shopify", second, third, fourth].filter(Boolean) as string[]);
+      const argvStart = isPaymentsSessionShow ? 4 : third ? 3 : 2;
+      result = await handleShopify(ctx, second, third, fourth, command.slice(argvStart));
     } else if (head === "dev" && second) {
       canonical = commandPath(["dev", second]);
       result = await handleDev(ctx, second, tail);
@@ -384,7 +391,13 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
         }
       }
     } else if (
-      (canonical === "dev smoke" || canonical === "dev loop") &&
+      (canonical === "dev smoke" ||
+        canonical === "dev loop" ||
+        canonical === "shopify doctor" ||
+        canonical === "shopify checkout smoke" ||
+        canonical === "shopify capture ready" ||
+        canonical === "shopify dev" ||
+        canonical === "shopify link") &&
       Array.isArray(result.data.checklist_lines)
     ) {
       if (canonical === "dev loop" && Array.isArray(result.data.banner_lines)) {
