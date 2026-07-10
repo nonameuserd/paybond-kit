@@ -274,18 +274,15 @@ describe("PaybondMCPServer", () => {
     });
   });
 
-  it("preloads principal on initialize before tool calls", async () => {
+  it("returns initialize without waiting on Gateway principal preload", async () => {
+    let resolvePrincipal: ((value: Response) => void) | undefined;
+    const principalPending = new Promise<Response>((resolve) => {
+      resolvePrincipal = resolve;
+    });
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.endsWith("/v1/auth/principal")) {
-        return new Response(
-          JSON.stringify({
-            tenant_id: "tenant-a",
-            roles: ["operator"],
-            subject: "service-account-1",
-          }),
-          { status: 200, headers: { "content-type": "application/json" } },
-        );
+        return principalPending;
       }
       throw new Error(`unexpected fetch: ${url}`);
     });
@@ -304,6 +301,17 @@ describe("PaybondMCPServer", () => {
     expect(initResponse?.result).toBeDefined();
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
+    resolvePrincipal?.(
+      new Response(
+        JSON.stringify({
+          tenant_id: "tenant-a",
+          roles: ["operator"],
+          subject: "service-account-1",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+
     const result = await server.callTool("paybond_get_principal");
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent).toMatchObject({
@@ -311,6 +319,33 @@ describe("PaybondMCPServer", () => {
       roles: ["operator"],
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns initialize even when principal preload fails", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("gateway unreachable");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+      maxRetries: 1,
+    });
+    const initResponse = await server.handleMessage({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "initialize",
+      params: {},
+    });
+    expect(initResponse?.result).toMatchObject({
+      protocolVersion: "2025-11-25",
+      serverInfo: { name: "Paybond MCP" },
+    });
+
+    await vi.waitFor(() => {
+      expect(fetchMock).toHaveBeenCalled();
+    });
   });
 
   it("returns gateway principal through the MCP tool", async () => {

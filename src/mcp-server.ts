@@ -69,7 +69,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.1";
+const SERVER_VERSION = "0.12.2";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -887,7 +887,10 @@ class PaybondMCPRuntime {
     this.evidenceGate.requirePass(input);
   }
 
-  /** Resolve and cache the gateway principal during MCP server startup. */
+  /**
+   * Best-effort principal warm-up. Callers must not await this on the MCP
+   * initialize path; principal resolves lazily on first tool use.
+   */
   async preloadPrincipal(): Promise<void> {
     await this.principal();
   }
@@ -1498,7 +1501,12 @@ export class PaybondMCPServer {
 
     switch (method) {
       case "initialize":
-        await this.runtime.preloadPrincipal();
+        // Do not block the MCP handshake on Gateway principal preload. Registry
+        // hosts time out initialize if egress is slow or blocked; principal is
+        // resolved lazily on the first tool that needs it.
+        void this.runtime.preloadPrincipal().catch(() => {
+          // Best-effort warm cache; failures surface on subsequent tool calls.
+        });
         return {
           jsonrpc: "2.0",
           id: message.id,
