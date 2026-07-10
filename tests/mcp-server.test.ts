@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AgentReceiptV1 } from "../src/agent-receipt.js";
-import { PaybondMCPServer, formatMcpStdioFrame, settingsFromEnv } from "../src/mcp-server.js";
+import { PaybondMCPServer, formatMcpNdjsonFrame, formatMcpStdioFrame, settingsFromEnv } from "../src/mcp-server.js";
 
 const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
 const CONFORMANCE_RECEIPT_PATH = join(
@@ -1127,6 +1127,21 @@ describe("PaybondMCPServer", () => {
     expect(frame).not.toMatch(/^Starting /m);
     const body = frame.split("\r\n\r\n", 2)[1];
     expect(JSON.parse(body ?? "{}")).toEqual({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { ok: true },
+    });
+  });
+
+  it("stdio responses can use newline-delimited JSON framing", () => {
+    const frame = formatMcpNdjsonFrame({
+      jsonrpc: "2.0",
+      id: 1,
+      result: { ok: true },
+    });
+    expect(frame.endsWith("\n")).toBe(true);
+    expect(frame.startsWith("Content-Length:")).toBe(false);
+    expect(JSON.parse(frame.trim())).toEqual({
       jsonrpc: "2.0",
       id: 1,
       result: { ok: true },

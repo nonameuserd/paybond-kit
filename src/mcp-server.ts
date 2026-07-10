@@ -69,7 +69,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.2";
+const SERVER_VERSION = "0.12.3";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -1369,11 +1369,20 @@ export function formatMcpStdioFrame(response: JSONRPCResponse): string {
   return `Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`;
 }
 
+/** Newline-delimited JSON-RPC frame used by mcp-proxy and recent MCP SDKs. */
+export function formatMcpNdjsonFrame(response: JSONRPCResponse): string {
+  return `${JSON.stringify(response)}\n`;
+}
+
+type McpStdioFraming = "content-length" | "ndjson";
+
 export class PaybondMCPServer {
   private readonly runtime: PaybondMCPRuntime;
   private readonly tools: MCPToolDefinition[];
   private readonly toolPolicy: McpToolPolicyConfig;
   private initialized = false;
+  /** Framing negotiated from the first successfully parsed stdin message. */
+  private stdioFraming: McpStdioFraming = "content-length";
 
   constructor(settings: PaybondMCPSettings) {
     if (!settings.apiKey.trim()) {
@@ -1604,7 +1613,11 @@ export class PaybondMCPServer {
   runStdio(): void {
     let buffer = Buffer.alloc(0);
     process.stdin.on("data", (chunk: string | Buffer) => {
-      buffer = Buffer.concat([buffer, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8")]);
+      buffer = Buffer.concat([
+        buffer,
+        Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk, "utf8"),
+      ]);
+      // Prefer Content-Length frames when present (LSP-style MCP hosts).
       while (true) {
         const headerEnd = buffer.indexOf("\r\n\r\n");
         if (headerEnd < 0) {
@@ -1629,7 +1642,37 @@ export class PaybondMCPServer {
         }
         const body = buffer.subarray(bodyStart, frameEnd).toString("utf8");
         buffer = buffer.subarray(frameEnd);
+        this.stdioFraming = "content-length";
         void this.handleLine(body);
+      }
+
+      // Do not let NDJSON parsing consume an in-progress Content-Length frame.
+      const preview = buffer
+        .subarray(0, Math.min(buffer.length, 64))
+        .toString("utf8")
+        .trimStart()
+        .toLowerCase();
+      if (preview.startsWith("content-length:")) {
+        return;
+      }
+
+      // Newline-delimited JSON-RPC (mcp-proxy / recent MCP SDKs).
+      while (true) {
+        const newline = buffer.indexOf("\n");
+        if (newline < 0) {
+          break;
+        }
+        const rawLine = buffer
+          .subarray(0, newline)
+          .toString("utf8")
+          .replace(/\r$/, "");
+        buffer = buffer.subarray(newline + 1);
+        const line = rawLine.trim();
+        if (!line.startsWith("{")) {
+          continue;
+        }
+        this.stdioFraming = "ndjson";
+        void this.handleLine(line);
       }
     });
     process.stdin.on("end", () => {
@@ -1656,7 +1699,11 @@ export class PaybondMCPServer {
   }
 
   private writeResponse(response: JSONRPCResponse): void {
-    process.stdout.write(formatMcpStdioFrame(response));
+    const frame =
+      this.stdioFraming === "ndjson"
+        ? formatMcpNdjsonFrame(response)
+        : formatMcpStdioFrame(response);
+    process.stdout.write(frame);
   }
 
   private buildTools(settings: PaybondMCPSettings): MCPToolDefinition[] {
