@@ -1,28 +1,29 @@
-# Paybond Shopify shopping agent
+# paybond-shopify-shopping-agent
 
-Guard-first Shopify checkout demo using `instrumentShopifyCheckout` from `@paybond/kit`.
+Shopify shopping agent (UCP + Kit binding). Clone, log in to Paybond sandbox, and run smoke in under a minute.
 
-## Quick start
+## Quickstart (60 seconds)
 
 ```bash
+git clone https://github.com/nonameuserd/paybond-shopify-shopping-agent.git
+cd paybond-shopify-shopping-agent
+cp .env.example .env.local
 paybond login
 npm install
-npm run build
+npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation commerce.checkout --requested-spend-cents 4500 --result-body '{"status":"completed","cost_cents":4500,"order_id":"gid://shopify/Order/123","shop":"paybond-agent-commerce-dev.myshopify.com"}' --format json
+```
+
+## Run the demo
+
+```bash
 npm start
 ```
 
-## Smoke (no Shopify credentials)
+## Policy
 
-```bash
-npm run smoke
-```
+Local `paybond.policy.yaml` is yours to edit. Bundled preset: **shopping**.
 
-## UCP profile
+## Docs
 
-Register Paybond's agent profile in the Shopify Developer Dashboard:
-
-`https://paybond.ai/.well-known/ucp/profile.json`
-
-## Binding contract
-
-`instrumentShopifyCheckout` injects `paybond_intent_id` and `tenant_id` into `note_attributes` on every checkout call. Tenant scope comes from the Paybond session after bind — never from client input.
+- [Agent quickstart](https://docs.paybond.ai/kit/quickstart-agent)
+- [Agent middleware](https://docs.paybond.ai/kit/agent-middleware)
