@@ -69,7 +69,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.3";
+const SERVER_VERSION = "0.12.4";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -122,6 +122,46 @@ type MCPToolSelectionMetadata = {
   annotations: MCPToolAnnotations;
 };
 
+const AUTHORIZE_SPEND_OUTPUT_PROPERTIES: Record<string, unknown> = {
+  allow: {
+    type: "boolean",
+    description: "Whether the requested operation is allowed.",
+  },
+  tenant: {
+    type: "string",
+    description: "Tenant echoed by the gateway.",
+  },
+  intent_id: {
+    type: "string",
+    description: "Verified Harbor intent UUID.",
+  },
+  audit_id: {
+    type: "string",
+    description: "Gateway audit identifier when available.",
+  },
+  remaining_cents: {
+    type: "integer",
+    description: "Remaining spend budget in cents for the evaluated scope, when available.",
+  },
+  reason_codes: {
+    type: "array",
+    items: { type: "string" },
+    description: "Stable spend-policy reason codes from the authorization decision.",
+  },
+  message: {
+    type: "string",
+    description: "Human-readable decision message when present.",
+  },
+  decision_id: {
+    type: "string",
+    description: "Persisted spend decision identifier when authorization creates one.",
+  },
+  approval_request_id: {
+    type: "string",
+    description: "Approval request identifier when human approval is required.",
+  },
+};
+
 const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
   paybond_get_principal: {
     title: "Get Paybond Principal",
@@ -143,22 +183,7 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     annotations: additiveMutationToolAnnotations("Verify Paybond Capability"),
     outputSchema: outputObjectSchema(
       {
-        allow: {
-          type: "boolean",
-          description: "Whether the requested operation is allowed.",
-        },
-        tenant: {
-          type: "string",
-          description: "Tenant echoed by the gateway.",
-        },
-        intent_id: {
-          type: "string",
-          description: "Verified Harbor intent UUID.",
-        },
-        audit_id: {
-          type: "string",
-          description: "Gateway audit identifier when available.",
-        },
+        ...AUTHORIZE_SPEND_OUTPUT_PROPERTIES,
       },
       ["tenant", "intent_id"],
     ),
@@ -171,24 +196,68 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
     annotations: additiveMutationToolAnnotations("Authorize Agent Spend"),
     outputSchema: outputObjectSchema(
       {
-        allow: {
-          type: "boolean",
-          description: "Whether the requested operation is allowed.",
-        },
-        tenant: {
-          type: "string",
-          description: "Tenant echoed by the gateway.",
-        },
-        intent_id: {
-          type: "string",
-          description: "Verified Harbor intent UUID.",
-        },
-        audit_id: {
-          type: "string",
-          description: "Gateway audit identifier when available.",
-        },
+        ...AUTHORIZE_SPEND_OUTPUT_PROPERTIES,
       },
       ["tenant", "intent_id"],
+    ),
+  },
+  paybond_get_budget_remaining: {
+    title: "Get Budget Remaining",
+    description:
+      "Use this when you need a read-only dry-run of remaining spend budget for a tenant-bound intent before authorizing a paid tool. " +
+      "Do not use this to authorize spend or create decisions; call paybond_authorize_agent_spend when you are ready to gate a side-effecting tool.",
+    annotations: readOnlyToolAnnotations("Get Budget Remaining"),
+    outputSchema: outputObjectSchema(
+      {
+        remaining_cents: {
+          type: "integer",
+          description: "Remaining spend budget in cents for the evaluated scope, when available.",
+        },
+        spend_scope: {
+          type: "object",
+          description: "Spend scope used for the budget evaluation (scope_type and scope_key).",
+          additionalProperties: true,
+        },
+        policy_version: {
+          type: "integer",
+          description: "Active spend-control policy version when a policy is configured.",
+        },
+      },
+      [],
+    ),
+  },
+  paybond_explain_policy: {
+    title: "Explain Spend Policy",
+    description:
+      "Use this when you need a read-only explanation of whether a proposed spend would allow, require approval, or deny under the tenant spend-control policy. " +
+      "Do not use this to authorize spend or create approval requests; call paybond_authorize_agent_spend to persist a decision.",
+    annotations: readOnlyToolAnnotations("Explain Spend Policy"),
+    outputSchema: outputObjectSchema(
+      {
+        outcome: {
+          type: "string",
+          description: "Normalized policy outcome: allow, approval_required, or deny.",
+        },
+        reason_codes: {
+          type: "array",
+          items: { type: "string" },
+          description: "Stable policy reason codes from the dry-run evaluation.",
+        },
+        explanation: {
+          type: "string",
+          description: "Human-readable explanation derived from reason codes.",
+        },
+        remaining_cents: {
+          type: "integer",
+          description: "Remaining spend budget in cents for the evaluated scope, when available.",
+        },
+        approval_threshold_exceeded: {
+          type: "boolean",
+          description:
+            "True when the dry-run indicates the request is at or above the approval threshold.",
+        },
+      },
+      ["outcome", "explanation"],
     ),
   },
   paybond_bootstrap_sandbox_guardrail: {
@@ -306,22 +375,94 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
   },
   paybond_get_reputation_receipt: {
     title: "Get Reputation Receipt",
+    description:
+      "Use this when you need the signed Signal reputation receipt for one known tenant-scoped operator DID " +
+      "(score, metrics, reason codes, and Ed25519 signing material under receipt). " +
+      "Requires PAYBOND_API_KEY with Signal analytics read access. " +
+      "Do not use this for tenant-wide aggregates—call paybond_get_portfolio_summary—or a portable signed operator list—call " +
+      "paybond_get_signed_portfolio_artifact—or one operator's fraud review posture—call paybond_get_fraud_assessment. " +
+      "Idempotent read with no side effects; returns null when no receipt exists for that operator and score_version.",
     annotations: readOnlyToolAnnotations("Get Reputation Receipt"),
     outputSchema: outputObjectSchema({
-      tenant_id: { type: "string" },
-      operator_did: { type: "string" },
-      signature_hex: { type: "string" },
+      schema_version: {
+        type: "integer",
+        description: "Reputation receipt envelope schema version.",
+      },
+      updated_at: {
+        type: "string",
+        description: "RFC3339 timestamp when the stored receipt row was last updated.",
+      },
+      receipt: {
+        type: "object",
+        additionalProperties: true,
+        description:
+          "Signed Signal receipt for the operator (tenant_id, operator_did, score_version, score, metrics, reason_codes, signing_algorithm, message_digest_hex, signing_public_key_hex, signature_hex).",
+        examples: [
+          {
+            tenant_id: "tenant-a",
+            operator_did: "did:web:vendor.example#booker-agent",
+            score_version: "1.0",
+            score: 812,
+            signature_hex: "ab".repeat(32),
+          },
+        ],
+      },
     }),
   },
   paybond_get_portfolio_summary: {
     title: "Get Portfolio Summary",
+    description:
+      "Use this when you need a read-only, tenant-scoped Signal portfolio aggregate for the authenticated API key " +
+      "(operator_count, average_score, total_terminal_intents, total_receipted_volume_cents, operators_under_review, " +
+      "and checkpoint_last_ledger_seq). Requires PAYBOND_API_KEY with Signal analytics read access and the private-dashboards feature. " +
+      "Do not use this when you need a portable signed operator list for partner or verifier sharing—call " +
+      "paybond_get_signed_portfolio_artifact instead—or for one operator's signed receipt—call paybond_get_reputation_receipt. " +
+      "Idempotent read with no side effects; auth, RBAC, feature, or gateway failures surface as tool errors.",
     annotations: readOnlyToolAnnotations("Get Portfolio Summary"),
     outputSchema: outputObjectSchema({
-      tenant_id: { type: "string" },
-      score_model_version: { type: "string" },
-      operators: {
-        type: "array",
-        items: { type: "object", additionalProperties: true },
+      schema_version: {
+        type: "integer",
+        description: "Portfolio summary schema version (currently 1).",
+      },
+      tenant_id: {
+        type: "string",
+        description:
+          "Tenant echoed by the gateway for the authenticated API key (example: tenant-a).",
+        examples: ["tenant-a"],
+      },
+      score_model_version: {
+        type: "string",
+        description:
+          "Score model version used for the aggregate (echoes the requested score_version or the gateway default 1.0).",
+        examples: ["1.0"],
+      },
+      scoring_model: {
+        type: "string",
+        description: "Scoring model identifier used by Signal for this summary.",
+      },
+      checkpoint_last_ledger_seq: {
+        type: "integer",
+        description: "Last ledger sequence included in the tenant Signal checkpoint.",
+      },
+      operator_count: {
+        type: "integer",
+        description: "Number of operators with reputation data for this score model version.",
+      },
+      average_score: {
+        type: "number",
+        description: "Average operator score across the tenant portfolio for this score model version.",
+      },
+      total_terminal_intents: {
+        type: "integer",
+        description: "Aggregate terminal Harbor intents across operators in the portfolio.",
+      },
+      total_receipted_volume_cents: {
+        type: "integer",
+        description: "Aggregate receipted settlement volume in cents across the portfolio.",
+      },
+      operators_under_review: {
+        type: "integer",
+        description: "Count of operators currently under Signal review for this score model version.",
       },
     }),
   },
@@ -337,21 +478,113 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
   },
   paybond_get_fraud_assessment: {
     title: "Get Fraud Assessment",
+    description:
+      "Use this when you need the read-only fraud assessment and review posture for one known tenant-scoped operator DID (review state, fraud signals, and compact fraud_assessment). " +
+      "Example: look up operator_did=did:web:vendor.example#booker-agent (optionally score_version=1.0) before deciding whether to continue a spend workflow for that operator. " +
+      "Do not use this for tenant-wide fraud backtesting metrics—call paybond_get_fraud_metrics instead—or for Harbor intent escrow detail—call paybond_get_intent. " +
+      "Idempotent read; returns null when no assessment exists for that operator.",
     annotations: readOnlyToolAnnotations("Get Fraud Assessment"),
     outputSchema: outputObjectSchema({
-      tenant_id: { type: "string" },
-      operator_did: { type: "string" },
-      fraud_assessment: { type: "object", additionalProperties: true },
+      tenant_id: {
+        type: "string",
+        description:
+          "Tenant echoed by the gateway for the authenticated API key (example: tenant-a).",
+        examples: ["tenant-a"],
+      },
+      operator_did: {
+        type: "string",
+        description:
+          "Operator DID echoed from the assessment response (example: did:web:vendor.example#booker-agent).",
+        examples: ["did:web:vendor.example#booker-agent"],
+      },
+      fraud_assessment: {
+        type: "object",
+        additionalProperties: true,
+        description:
+          "Compact fraud assessment for the operator (level, severity, signal counts, summary). Example shape: {\"level\":\"high\",\"highest_severity\":\"high\",\"signal_count\":1,\"summary\":\"level=high\"}.",
+        examples: [
+          {
+            level: "high",
+            highest_severity: "high",
+            signal_count: 1,
+            summary: "level=high",
+          },
+        ],
+      },
     }),
   },
   paybond_get_fraud_metrics: {
     title: "Get Fraud Metrics",
+    description:
+      "Use this when you need tenant-wide Signal fraud backtesting and monitoring metrics over a rolling window " +
+      "(flagged operators, severity counts, review outcomes, precision/false-positive rates, and backtest_summary). " +
+      "Requires PAYBOND_API_KEY with Signal analytics read access and the private-dashboards feature. " +
+      "Do not use this for one operator's fraud posture—call paybond_get_fraud_assessment instead—or for Harbor intent escrow detail—call paybond_get_intent. " +
+      "Idempotent read with no side effects; omit window to default to 24h; unsupported windows fail with HTTP 400 " +
+      "(\"window must be one of 24h, 7d, or 30d\").",
     annotations: readOnlyToolAnnotations("Get Fraud Metrics"),
     outputSchema: outputObjectSchema({
-      tenant_id: { type: "string" },
-      window: { type: "string" },
-      flagged_operator_count: { type: "integer" },
-      critical_signal_count: { type: "integer" },
+      tenant_id: {
+        type: "string",
+        description:
+          "Tenant echoed by the gateway for the authenticated API key (example: tenant-a).",
+        examples: ["tenant-a"],
+      },
+      score_model_version: {
+        type: "string",
+        description:
+          "Score model version used for the metrics (echoes the requested score_version or the gateway default 1.0).",
+        examples: ["1.0"],
+      },
+      window: {
+        type: "string",
+        description: "Active metrics window label: 24h, 7d, or 30d.",
+        examples: ["24h", "7d", "30d"],
+      },
+      window_started_at: {
+        type: "string",
+        description: "RFC3339 start of the evaluated rolling window.",
+      },
+      window_ended_at: {
+        type: "string",
+        description: "RFC3339 end of the evaluated rolling window.",
+      },
+      flagged_operator_count: {
+        type: "integer",
+        description: "Operators with at least one fraud signal in the window.",
+      },
+      critical_signal_count: {
+        type: "integer",
+        description: "Count of critical-severity fraud signals in the window.",
+      },
+      high_signal_count: {
+        type: "integer",
+        description: "Count of high-severity fraud signals in the window.",
+      },
+      elevated_signal_count: {
+        type: "integer",
+        description: "Count of elevated-severity fraud signals in the window.",
+      },
+      review_open_count: {
+        type: "integer",
+        description: "Operators currently in an open review state.",
+      },
+      labeled_outcome_count: {
+        type: "integer",
+        description: "Review outcomes labeled in the window (confirmed risk, false positive, or needs more evidence).",
+      },
+      confirmed_risk_count: {
+        type: "integer",
+        description: "Labeled confirmed-risk outcomes in the window.",
+      },
+      false_positive_count: {
+        type: "integer",
+        description: "Labeled false-positive outcomes in the window.",
+      },
+      backtest_summary: {
+        type: "string",
+        description: "Human-readable backtest summary derived from the window metrics.",
+      },
     }),
   },
   paybond_get_a2a_agent_card: {
@@ -425,10 +658,44 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
   },
   paybond_verify_protocol_receipt_v1: {
     title: "Verify Protocol Receipt",
+    description:
+      "Use this when you already have a signed protocol-v2 authorization or settlement receipt JSON object and need offline Ed25519 verification (structure, message digest, and signature) through the gateway. " +
+      "Do not use this to verify AgentMandateV1 envelopes—call paybond_verify_agent_mandate_v1—or to check a Harbor capability token before spend—call paybond_verify_capability or paybond_authorize_agent_spend. " +
+      "To load a settlement receipt by intent UUID first, call paybond_get_settlement_receipt_v1 then pass its body here. " +
+      "Read-only and side-effect free: success returns valid=true with kind, receipt_id, tenant_id, and the normalized receipt; unsupported kind, malformed JSON, digest mismatch, or bad signature fail with a gateway error (typically HTTP 400).",
     annotations: readOnlyToolAnnotations("Verify Protocol Receipt"),
     outputSchema: outputObjectSchema({
-      valid: { type: "boolean" },
-      receipt_id: { type: "string" },
+      valid: {
+        type: "boolean",
+        description:
+          "True when the gateway accepted the receipt structure and Ed25519 signature. Example: true.",
+        examples: [true],
+      },
+      kind: {
+        type: "string",
+        description:
+          "Verified receipt kind echoed from the normalized receipt. One of paybond.protocol_authorization_receipt_v1 or paybond.protocol_settlement_receipt_v1.",
+        examples: [
+          "paybond.protocol_authorization_receipt_v1",
+          "paybond.protocol_settlement_receipt_v1",
+        ],
+      },
+      receipt_id: {
+        type: "string",
+        description: "Canonical receipt identifier from the verified receipt.",
+        examples: ["550e8400-e29b-41d4-a716-446655440000"],
+      },
+      tenant_id: {
+        type: "string",
+        description: "Tenant id embedded in the verified receipt (not invented by the caller).",
+        examples: ["acme-pilot"],
+      },
+      receipt: {
+        type: "object",
+        additionalProperties: true,
+        description:
+          "Normalized verified receipt object matching the input kind (authorization or settlement fields plus signing material).",
+      },
     }),
   },
   paybond_create_intent: {
@@ -1048,6 +1315,116 @@ class PaybondMCPRuntime {
       );
     }
     return body;
+  }
+
+  /**
+   * Side-effect-free spend policy dry-run via `POST /v1/spend/preflight`.
+   * Tenant scope comes from the authenticated API key only.
+   */
+  async spendPreflight(init: {
+    intentId: string;
+    operation?: string;
+    requestedSpendCents?: number;
+    vendorId?: string;
+    toolName?: string;
+    taskId?: string;
+    workflowId?: string;
+    toolCallId?: string;
+    currency?: string;
+    agentSubject?: string;
+    approvalToken?: string;
+  }): Promise<Record<string, unknown>> {
+    const payload: Record<string, unknown> = {
+      intent_id: init.intentId,
+      operation: init.operation?.trim() || "*",
+      requested_spend_cents: init.requestedSpendCents ?? 0,
+    };
+    if (init.vendorId?.trim()) {
+      payload.vendor_id = init.vendorId.trim();
+    }
+    if (init.toolName?.trim()) {
+      payload.tool_name = init.toolName.trim();
+    }
+    if (init.taskId?.trim()) {
+      payload.task_id = init.taskId.trim();
+    }
+    if (init.workflowId?.trim()) {
+      payload.workflow_id = init.workflowId.trim();
+    }
+    if (init.toolCallId?.trim()) {
+      payload.tool_call_id = init.toolCallId.trim();
+    }
+    if (init.currency?.trim()) {
+      payload.currency = init.currency.trim();
+    }
+    if (init.agentSubject?.trim()) {
+      payload.agent_subject = init.agentSubject.trim();
+    }
+    if (init.approvalToken?.trim()) {
+      payload.approval_token = init.approvalToken.trim();
+    }
+    return this.gateway.postJSON("/v1/spend/preflight", payload, {
+      "x-tenant-id": await this.tenantId(),
+    });
+  }
+
+  async getBudgetRemaining(init: {
+    intentId: string;
+    operation?: string;
+    requestedSpendCents?: number;
+    vendorId?: string;
+    toolName?: string;
+    taskId?: string;
+    workflowId?: string;
+    toolCallId?: string;
+    currency?: string;
+    agentSubject?: string;
+    approvalToken?: string;
+  }): Promise<Record<string, unknown>> {
+    const body = await this.spendPreflight(init);
+    return {
+      remaining_cents: body.remaining_cents ?? null,
+      spend_scope: body.spend_scope ?? null,
+      policy_version: body.policy_version ?? null,
+    };
+  }
+
+  async explainPolicy(init: {
+    intentId: string;
+    operation?: string;
+    requestedSpendCents?: number;
+    vendorId?: string;
+    toolName?: string;
+    taskId?: string;
+    workflowId?: string;
+    toolCallId?: string;
+    currency?: string;
+    agentSubject?: string;
+    approvalToken?: string;
+  }): Promise<Record<string, unknown>> {
+    const body = await this.spendPreflight(init);
+    const reasonCodes = Array.isArray(body.reason_codes)
+      ? body.reason_codes.map((code) => String(code))
+      : [];
+    const outcome = normalizeExplainPolicyOutcome(
+      String(body.outcome ?? ""),
+      String(body.classification ?? ""),
+    );
+    const result: Record<string, unknown> = {
+      outcome,
+      reason_codes: reasonCodes,
+      explanation: String(body.explanation ?? ""),
+      remaining_cents: body.remaining_cents ?? null,
+    };
+    if (
+      reasonCodes.includes("approval_threshold_exceeded") ||
+      outcome === "approval_required"
+    ) {
+      result.approval_threshold_exceeded = reasonCodes.includes(
+        "approval_threshold_exceeded",
+      );
+    }
+    return result;
   }
 
   async bootstrapSandboxGuardrail(init: {
@@ -1804,6 +2181,22 @@ export class PaybondMCPServer {
         },
       },
       {
+        name: "paybond_get_budget_remaining",
+        description:
+          "Read-only dry-run of remaining spend budget for a tenant-bound intent via gateway spend preflight.",
+        inputSchema: spendPreflightInputSchema(),
+        call: async (args) =>
+          this.runtime.getBudgetRemaining(parseSpendPreflightArgs(args)),
+      },
+      {
+        name: "paybond_explain_policy",
+        description:
+          "Read-only dry-run explanation of whether proposed spend would allow, require approval, or deny under tenant spend policy.",
+        inputSchema: spendPreflightInputSchema(),
+        call: async (args) =>
+          this.runtime.explainPolicy(parseSpendPreflightArgs(args)),
+      },
+      {
         name: "paybond_bootstrap_sandbox_guardrail",
         description:
           "Bootstrap a sandbox-only Paybond guardrail intent for a first paid-tool integration. Tenant scope is derived from the configured service-account API key and the route never touches live settlement rails.",
@@ -2006,8 +2399,21 @@ export class PaybondMCPServer {
         description: "Fetch the signed Signal receipt for one operator DID.",
         inputSchema: objectSchema(
           {
-            operator_did: { type: "string" },
-            score_version: { type: "string" },
+            operator_did: {
+              type: "string",
+              description:
+                "Tenant-scoped operator DID whose signed Signal reputation receipt to fetch. Must belong to the authenticated tenant; do not invent tenant identifiers. Examples: did:web:vendor.example#booker-agent, did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK.",
+              examples: [
+                "did:web:vendor.example#booker-agent",
+                "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+              ],
+            },
+            score_version: {
+              type: "string",
+              description:
+                "Optional Signal score model version to query. Omit to use the gateway default current model (1.0). Example: 1.0.",
+              examples: ["1.0"],
+            },
           },
           ["operator_did"],
         ),
@@ -2021,7 +2427,12 @@ export class PaybondMCPServer {
         name: "paybond_get_portfolio_summary",
         description: "Fetch the tenant-scoped Signal portfolio summary.",
         inputSchema: objectSchema({
-          score_version: { type: "string" },
+          score_version: {
+            type: "string",
+            description:
+              "Optional Signal score model version to query. Omit to use the gateway default current model (1.0). Example: 1.0.",
+            examples: ["1.0"],
+          },
         }),
         call: async (args) =>
           (await this.runtime.signal()).getPortfolioSummary(
@@ -2046,8 +2457,21 @@ export class PaybondMCPServer {
           "Fetch the read-only fraud assessment for one tenant-scoped operator DID.",
         inputSchema: objectSchema(
           {
-            operator_did: { type: "string" },
-            score_version: { type: "string" },
+            operator_did: {
+              type: "string",
+              description:
+                "Tenant-scoped operator DID to assess. Must belong to the authenticated tenant; do not invent tenant identifiers. Examples: did:web:vendor.example#booker-agent, did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK.",
+              examples: [
+                "did:web:vendor.example#booker-agent",
+                "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK",
+              ],
+            },
+            score_version: {
+              type: "string",
+              description:
+                "Optional Signal score model version to query. Omit to use the gateway default current model. Example: 1.0.",
+              examples: ["1.0"],
+            },
           },
           ["operator_did"],
         ),
@@ -2062,8 +2486,19 @@ export class PaybondMCPServer {
         description:
           "Fetch tenant-scoped read-only fraud backtesting and monitoring metrics for a supported active window.",
         inputSchema: objectSchema({
-          window: { type: "string", enum: ["24h", "7d", "30d"] },
-          score_version: { type: "string" },
+          window: {
+            type: "string",
+            enum: ["24h", "7d", "30d"],
+            description:
+              "Rolling metrics window. Allowed values: 24h, 7d, 30d. Omit to use the gateway default 24h. Unsupported values fail with HTTP 400.",
+            examples: ["24h", "7d", "30d"],
+          },
+          score_version: {
+            type: "string",
+            description:
+              "Optional Signal score model version to query. Omit to use the gateway default current model (1.0). Example: 1.0.",
+            examples: ["1.0"],
+          },
         }),
         call: async (args) =>
           (await this.runtime.fraud()).getFraudMetrics({
@@ -2186,10 +2621,18 @@ export class PaybondMCPServer {
       {
         name: "paybond_verify_protocol_receipt_v1",
         description:
-          "Verify a protocol-v2 authorization or settlement receipt through the gateway.",
+          "Verify a signed protocol-v2 authorization or settlement receipt through the gateway.",
         inputSchema: objectSchema(
           {
-            receipt: { type: "object", additionalProperties: true },
+            receipt: {
+              type: "object",
+              additionalProperties: true,
+              description:
+                "Complete signed protocol receipt object posted as the verify request body (not a receipt_id string). " +
+                "Discriminate on kind: paybond.protocol_authorization_receipt_v1 requires schema_version=1, receipt_version=\"1\", receipt_id, issued_at, status (authorized), intent_id, tenant_id, verifier_id, transport_binding, mandate_digest_sha256_hex, imported_mandate_signing_public_key_ed25519_hex, authorization, agent, allowed_actions, allowed_tools, spend_ceiling, settlement, constraint, expires_at, nonce, human_presence_mode, plus signing_algorithm=ed25519-sha256-json-v1, message_digest_sha256_hex, signing_public_key_ed25519_hex, and ed25519_signature_hex. " +
+                "paybond.protocol_settlement_receipt_v1 requires schema_version=1, receipt_version=\"1\", receipt_id, issued_at, intent_id, tenant_id, verifier_id, transport_binding, authorization_receipt_id, mandate_digest_sha256_hex, harbor_state, settlement_rail, settlement_mode, principal_did, payee_did, currency, amount_cents, terminal_observed_at, optional predicate_passed, and the same Ed25519 signing fields. " +
+                "Obtain receipts from mandate import, paybond_get_settlement_receipt_v1, audit export, or partner handoff—do not invent digests or signatures.",
+            },
           },
           ["receipt"],
         ),
@@ -2445,6 +2888,119 @@ function stringArg(value: unknown, field: string): string {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function spendPreflightInputSchema(): Record<string, unknown> {
+  return objectSchema(
+    {
+      intent_id: {
+        type: "string",
+        description: "Canonical Harbor intent UUID.",
+      },
+      operation: {
+        type: "string",
+        description:
+          "Optional delegated operation or tool name. Defaults to * when omitted.",
+      },
+      requested_spend_cents: {
+        type: "integer",
+        description: "Optional proposed spend in cents for the dry-run evaluation.",
+      },
+      vendor_id: {
+        type: "string",
+        description: "Optional vendor scope hint for policy evaluation.",
+      },
+      tool_name: {
+        type: "string",
+        description: "Optional tool name scope hint for policy evaluation.",
+      },
+      task_id: {
+        type: "string",
+        description: "Optional task scope hint for policy evaluation.",
+      },
+      workflow_id: {
+        type: "string",
+        description: "Optional workflow scope hint for policy evaluation.",
+      },
+      tool_call_id: {
+        type: "string",
+        description: "Optional tool-call correlation id for policy evaluation.",
+      },
+      currency: {
+        type: "string",
+        description: "Optional ISO currency code for the proposed spend.",
+      },
+      agent_subject: {
+        type: "string",
+        description: "Optional agent subject for agent-scoped caps.",
+      },
+      approval_token: {
+        type: "string",
+        description:
+          "Optional approval token to evaluate against pending approval state (not consumed).",
+      },
+    },
+    ["intent_id"],
+  );
+}
+
+function parseSpendPreflightArgs(args: Record<string, unknown>): {
+  intentId: string;
+  operation?: string;
+  requestedSpendCents?: number;
+  vendorId?: string;
+  toolName?: string;
+  taskId?: string;
+  workflowId?: string;
+  toolCallId?: string;
+  currency?: string;
+  agentSubject?: string;
+  approvalToken?: string;
+} {
+  return {
+    intentId: uuidArg(args.intent_id, "intent_id"),
+    operation: optionalString(args.operation),
+    requestedSpendCents:
+      args.requested_spend_cents === undefined
+        ? undefined
+        : intArg(args.requested_spend_cents, "requested_spend_cents"),
+    vendorId: optionalString(args.vendor_id),
+    toolName: optionalString(args.tool_name),
+    taskId: optionalString(args.task_id),
+    workflowId: optionalString(args.workflow_id),
+    toolCallId: optionalString(args.tool_call_id),
+    currency: optionalString(args.currency),
+    agentSubject: optionalString(args.agent_subject),
+    approvalToken: optionalString(args.approval_token),
+  };
+}
+
+/** Normalize gateway preflight outcomes to the agent-facing explain-policy set. */
+function normalizeExplainPolicyOutcome(
+  outcome: string,
+  classification: string,
+): "allow" | "approval_required" | "deny" {
+  const normalized = outcome.trim().toLowerCase();
+  if (normalized === "allow" || normalized === "anomaly_observe") {
+    return "allow";
+  }
+  if (
+    normalized === "approval_required" ||
+    normalized === "anomaly_escalate"
+  ) {
+    return "approval_required";
+  }
+  if (normalized === "deny") {
+    return "deny";
+  }
+  const classNorm = classification.trim().toLowerCase();
+  if (classNorm === "allow") {
+    return "allow";
+  }
+  if (classNorm === "hold") {
+    return "approval_required";
+  }
+  return "deny";
 }
 
 function intArg(value: unknown, field: string): number {

@@ -89,6 +89,68 @@ describe("cli behavior parity", () => {
     expect(stderr.chunks.join("")).toMatch(/invalid --requested-spend-cents/);
   });
 
+  it("spend budget-remaining and explain-policy call preflight", async () => {
+    vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const fetchMock = vi.fn(async () =>
+      jsonResponse({
+        classification: "allow",
+        outcome: "allow",
+        reason_codes: [],
+        remaining_cents: 25000,
+        spend_scope: { scope_type: "tenant", scope_key: "" },
+        policy_version: 3,
+        explanation: "Spend is allowed under the current policy.",
+      }),
+    );
+    const stdout = { chunks: [] as string[], write(chunk: string): boolean { this.chunks.push(chunk); return true; } };
+    const budgetCode = await runCli(
+      [
+        "--format",
+        "json",
+        "spend",
+        "budget-remaining",
+        "--intent-id",
+        intentId,
+        "--operation",
+        "paid-tool",
+        "--requested-spend-cents",
+        "100",
+      ],
+      { fetch: fetchMock, stdout },
+    );
+    expect(budgetCode).toBe(0);
+    const budgetPayload = JSON.parse(stdout.chunks.join(""));
+    expect(budgetPayload.data.remaining_cents).toBe(25000);
+    expect(budgetPayload.data.policy_version).toBe(3);
+
+    stdout.chunks = [];
+    const explainCode = await runCli(
+      [
+        "--format",
+        "json",
+        "spend",
+        "explain-policy",
+        "--intent-id",
+        intentId,
+        "--operation",
+        "paid-tool",
+        "--requested-spend-cents",
+        "100",
+      ],
+      { fetch: fetchMock, stdout },
+    );
+    vi.unstubAllEnvs();
+    expect(explainCode).toBe(0);
+    const explainPayload = JSON.parse(stdout.chunks.join(""));
+    expect(explainPayload.data.outcome).toBe("allow");
+    expect(explainPayload.data.explanation).toMatch(/allowed/i);
+    const preflightCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/v1/spend/preflight"),
+    );
+    expect(preflightCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it("guardrails bootstrap JSON redacts capability_token", async () => {
     vi.stubEnv("PAYBOND_API_KEY", RAW_KEY);
     const fetchMock = vi.fn().mockResolvedValue(

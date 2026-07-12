@@ -45,6 +45,8 @@ import {
   handleIntents,
   handleKeys,
   handleSpendAuthorize,
+  handleSpendBudgetRemaining,
+  handleSpendExplainPolicy,
 } from "./commands/workflows.js";
 import { failureEnvelope, prepareCommandOutput, successEnvelope, writeEnvelope, writeTableLines } from "./envelope.js";
 import { defaultGlobalOptions, parseCliArgv } from "./globals.js";
@@ -296,6 +298,12 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "spend" && second === "authorize") {
       canonical = "spend authorize";
       result = await handleSpendAuthorize(ctx, tail);
+    } else if (head === "spend" && second === "budget-remaining") {
+      canonical = "spend budget-remaining";
+      result = await handleSpendBudgetRemaining(ctx, tail);
+    } else if (head === "spend" && second === "explain-policy") {
+      canonical = "spend explain-policy";
+      result = await handleSpendExplainPolicy(ctx, tail);
     } else if (head === "signal" && second) {
       canonical = commandPath(["signal", second]);
       result = await handleSignal(ctx, second, tail);

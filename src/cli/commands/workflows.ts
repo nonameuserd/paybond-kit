@@ -359,4 +359,144 @@ export async function handleSpendAuthorize(ctx: CliContext, argv: string[]): Pro
   });
 }
 
+function parseSpendPreflightCliArgs(argv: string[]): {
+  intentId: string;
+  operation: string;
+  requestedSpendCents: number;
+  payload: Record<string, unknown>;
+  rest: string[];
+} {
+  const intentFlag = consumeFlag(argv, "--intent-id");
+  const operationFlag = consumeFlag(intentFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const vendorFlag = consumeFlag(spendFlag.rest, "--vendor-id");
+  const toolFlag = consumeFlag(vendorFlag.rest, "--tool-name");
+  const taskFlag = consumeFlag(toolFlag.rest, "--task-id");
+  const workflowFlag = consumeFlag(taskFlag.rest, "--workflow-id");
+  const toolCallFlag = consumeFlag(workflowFlag.rest, "--tool-call-id");
+  const currencyFlag = consumeFlag(toolCallFlag.rest, "--currency");
+  const agentFlag = consumeFlag(currencyFlag.rest, "--agent-subject");
+  const approvalFlag = consumeFlag(agentFlag.rest, "--approval-token");
+  if (!intentFlag.value) {
+    throw new CliError("spend preflight requires --intent-id", {
+      category: "usage",
+      code: "cli.usage.missing_args",
+    });
+  }
+  const operation = operationFlag.value?.trim() || "*";
+  const spendCents = parseOptionalNonNegativeInt(spendFlag.value, "--requested-spend-cents");
+  const payload: Record<string, unknown> = {
+    intent_id: intentFlag.value,
+    operation,
+    requested_spend_cents: spendCents,
+  };
+  if (vendorFlag.value) {
+    payload.vendor_id = vendorFlag.value;
+  }
+  if (toolFlag.value) {
+    payload.tool_name = toolFlag.value;
+  }
+  if (taskFlag.value) {
+    payload.task_id = taskFlag.value;
+  }
+  if (workflowFlag.value) {
+    payload.workflow_id = workflowFlag.value;
+  }
+  if (toolCallFlag.value) {
+    payload.tool_call_id = toolCallFlag.value;
+  }
+  if (currencyFlag.value) {
+    payload.currency = currencyFlag.value;
+  }
+  if (agentFlag.value) {
+    payload.agent_subject = agentFlag.value;
+  }
+  if (approvalFlag.value) {
+    payload.approval_token = approvalFlag.value;
+  }
+  return {
+    intentId: intentFlag.value,
+    operation,
+    requestedSpendCents: spendCents,
+    payload,
+    rest: approvalFlag.rest,
+  };
+}
+
+function normalizeExplainPolicyOutcome(
+  outcome: string,
+  classification: string,
+): "allow" | "approval_required" | "deny" {
+  const normalized = outcome.trim().toLowerCase();
+  if (normalized === "allow" || normalized === "anomaly_observe") {
+    return "allow";
+  }
+  if (normalized === "approval_required" || normalized === "anomaly_escalate") {
+    return "approval_required";
+  }
+  if (normalized === "deny") {
+    return "deny";
+  }
+  const classNorm = classification.trim().toLowerCase();
+  if (classNorm === "allow") {
+    return "allow";
+  }
+  if (classNorm === "hold") {
+    return "approval_required";
+  }
+  return "deny";
+}
+
+export async function handleSpendBudgetRemaining(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  return withGateway(ctx, async (gateway) => {
+    const parsed = parseSpendPreflightCliArgs(argv);
+    const body = await gateway.postJson("/v1/spend/preflight", parsed.payload);
+    return {
+      data: {
+        remaining_cents: body.remaining_cents ?? null,
+        spend_scope: body.spend_scope ?? null,
+        policy_version: body.policy_version ?? null,
+        intent_id: parsed.intentId,
+        operation: parsed.operation,
+        requested_spend_cents: parsed.requestedSpendCents,
+      },
+    };
+  });
+}
+
+export async function handleSpendExplainPolicy(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  return withGateway(ctx, async (gateway) => {
+    const parsed = parseSpendPreflightCliArgs(argv);
+    const body = await gateway.postJson("/v1/spend/preflight", parsed.payload);
+    const reasonCodes = Array.isArray(body.reason_codes)
+      ? body.reason_codes.map((code: unknown) => String(code))
+      : [];
+    const outcome = normalizeExplainPolicyOutcome(
+      String(body.outcome ?? ""),
+      String(body.classification ?? ""),
+    );
+    return {
+      data: {
+        outcome,
+        reason_codes: reasonCodes,
+        explanation: String(body.explanation ?? ""),
+        remaining_cents: body.remaining_cents ?? null,
+        approval_threshold_exceeded:
+          reasonCodes.includes("approval_threshold_exceeded") || outcome === "approval_required"
+            ? reasonCodes.includes("approval_threshold_exceeded")
+            : undefined,
+        intent_id: parsed.intentId,
+        operation: parsed.operation,
+        requested_spend_cents: parsed.requestedSpendCents,
+      },
+    };
+  });
+}
+
 export { commandPath };

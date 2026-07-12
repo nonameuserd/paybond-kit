@@ -122,6 +122,17 @@ export function createOfflineDevGatewayFetch(
         decision_id: "00000000-0000-4000-8000-000000000003",
       });
     }
+    if (url.endsWith("/v1/spend/preflight")) {
+      return jsonResponse({
+        classification: "allow",
+        outcome: "allow",
+        reason_codes: [],
+        remaining_cents: 100000,
+        spend_scope: { scope_type: "tenant", scope_key: "" },
+        policy_version: 1,
+        explanation: "Spend is allowed under the current policy.",
+      });
+    }
     if (url.endsWith(`/v1/sandbox/guardrails/${OFFLINE_DEV_INTENT_ID}/evidence`)) {
       return jsonResponse({
         tenant_id: OFFLINE_DEV_TENANT_ID,

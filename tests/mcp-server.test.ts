@@ -47,6 +47,8 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_get_settlement_receipt_v1")).toBe(true);
     expect(names.has("paybond_verify_protocol_receipt_v1")).toBe(true);
     expect(names.has("paybond_authorize_agent_spend")).toBe(true);
+    expect(names.has("paybond_get_budget_remaining")).toBe(true);
+    expect(names.has("paybond_explain_policy")).toBe(true);
     expect(names.has("paybond_bootstrap_sandbox_guardrail")).toBe(true);
     expect(names.has("paybond_submit_sandbox_guardrail_evidence")).toBe(true);
     expect(names.has("paybond_validate_completion_evidence")).toBe(true);
@@ -109,6 +111,42 @@ describe("PaybondMCPServer", () => {
         allow: { type: "boolean" },
         tenant: { type: "string" },
         intent_id: { type: "string" },
+        remaining_cents: { type: "integer" },
+        reason_codes: { type: "array", items: { type: "string" } },
+        message: { type: "string" },
+        decision_id: { type: "string" },
+        approval_request_id: { type: "string" },
+      },
+    });
+    expect(toolByName.get("paybond_get_budget_remaining")).toMatchObject({
+      title: "Get Budget Remaining",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          remaining_cents: { type: "integer" },
+          spend_scope: expect.objectContaining({ type: "object" }),
+          policy_version: { type: "integer" },
+        },
+      },
+    });
+    expect(toolByName.get("paybond_explain_policy")).toMatchObject({
+      title: "Explain Spend Policy",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          outcome: { type: "string" },
+          reason_codes: { type: "array", items: { type: "string" } },
+          explanation: { type: "string" },
+          remaining_cents: { type: "integer" },
+        },
       },
     });
     expect(toolByName.get("paybond_create_spend_intent")).toMatchObject({
@@ -126,6 +164,246 @@ describe("PaybondMCPServer", () => {
         },
       },
     });
+    const fraudAssessment = toolByName.get("paybond_get_fraud_assessment");
+    expect(fraudAssessment?.title).toBe("Get Fraud Assessment");
+    expect(fraudAssessment?.description).toContain("Use this when");
+    expect(fraudAssessment?.description).toContain("did:web:vendor.example#booker-agent");
+    expect(fraudAssessment?.description).toContain("paybond_get_fraud_metrics");
+    expect(fraudAssessment?.description).toContain("paybond_get_intent");
+    expect(fraudAssessment?.description).toContain("Do not use this");
+    expect(fraudAssessment?.annotations).toMatchObject({
+      title: "Get Fraud Assessment",
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(fraudAssessment?.inputSchema).toMatchObject({
+      type: "object",
+      required: ["operator_did"],
+      properties: {
+        operator_did: {
+          type: "string",
+          description: expect.stringContaining("did:web:vendor.example#booker-agent"),
+          examples: expect.arrayContaining(["did:web:vendor.example#booker-agent"]),
+        },
+        score_version: {
+          type: "string",
+          description: expect.stringContaining("1.0"),
+          examples: ["1.0"],
+        },
+      },
+    });
+    expect(fraudAssessment?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        tenant_id: {
+          type: "string",
+          description: expect.stringContaining("tenant-a"),
+          examples: ["tenant-a"],
+        },
+        operator_did: {
+          type: "string",
+          description: expect.stringContaining("Operator DID"),
+          examples: ["did:web:vendor.example#booker-agent"],
+        },
+        fraud_assessment: {
+          type: "object",
+          description: expect.stringContaining("level"),
+          examples: expect.arrayContaining([
+            expect.objectContaining({ level: "high", signal_count: 1 }),
+          ]),
+        },
+      },
+    });
+
+    const portfolioSummary = toolByName.get("paybond_get_portfolio_summary");
+    expect(portfolioSummary?.title).toBe("Get Portfolio Summary");
+    expect(portfolioSummary?.description).toContain("Use this when");
+    expect(portfolioSummary?.description).toContain("paybond_get_signed_portfolio_artifact");
+    expect(portfolioSummary?.description).toContain("paybond_get_reputation_receipt");
+    expect(portfolioSummary?.description).toContain("Do not use this");
+    expect(portfolioSummary?.description).toContain("no side effects");
+    expect(portfolioSummary?.annotations).toMatchObject({
+      title: "Get Portfolio Summary",
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(portfolioSummary?.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        score_version: {
+          type: "string",
+          description: expect.stringContaining("1.0"),
+          examples: ["1.0"],
+        },
+      },
+    });
+    expect(portfolioSummary?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        tenant_id: {
+          type: "string",
+          description: expect.stringContaining("tenant-a"),
+          examples: ["tenant-a"],
+        },
+        score_model_version: {
+          type: "string",
+          description: expect.stringContaining("1.0"),
+          examples: ["1.0"],
+        },
+        operator_count: { type: "integer" },
+        average_score: { type: "number" },
+        operators_under_review: { type: "integer" },
+      },
+    });
+    expect(
+      (portfolioSummary?.outputSchema as { properties?: Record<string, unknown> } | undefined)
+        ?.properties,
+    ).not.toHaveProperty("operators");
+
+    const verifyProtocolReceipt = toolByName.get("paybond_verify_protocol_receipt_v1");
+    expect(verifyProtocolReceipt?.title).toBe("Verify Protocol Receipt");
+    expect(verifyProtocolReceipt?.description).toContain("Use this when");
+    expect(verifyProtocolReceipt?.description).toContain("paybond_verify_agent_mandate_v1");
+    expect(verifyProtocolReceipt?.description).toContain("paybond_verify_capability");
+    expect(verifyProtocolReceipt?.description).toContain("paybond_get_settlement_receipt_v1");
+    expect(verifyProtocolReceipt?.description).toContain("Do not use this");
+    expect(verifyProtocolReceipt?.description).toContain("side-effect free");
+    expect(verifyProtocolReceipt?.annotations).toMatchObject({
+      title: "Verify Protocol Receipt",
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(verifyProtocolReceipt?.inputSchema).toMatchObject({
+      type: "object",
+      required: ["receipt"],
+      properties: {
+        receipt: {
+          type: "object",
+          description: expect.stringContaining("paybond.protocol_authorization_receipt_v1"),
+        },
+      },
+    });
+    expect(
+      String(
+        (
+          verifyProtocolReceipt?.inputSchema as {
+            properties?: { receipt?: { description?: string } };
+          }
+        )?.properties?.receipt?.description,
+      ),
+    ).toContain("paybond.protocol_settlement_receipt_v1");
+    expect(verifyProtocolReceipt?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        valid: {
+          type: "boolean",
+          description: expect.stringContaining("Ed25519"),
+        },
+        kind: {
+          type: "string",
+          description: expect.stringContaining("paybond.protocol_authorization_receipt_v1"),
+        },
+        receipt_id: { type: "string" },
+        tenant_id: { type: "string" },
+        receipt: { type: "object" },
+      },
+    });
+
+    const fraudMetrics = toolByName.get("paybond_get_fraud_metrics");
+    expect(fraudMetrics?.title).toBe("Get Fraud Metrics");
+    expect(fraudMetrics?.description).toContain("Use this when");
+    expect(fraudMetrics?.description).toContain("paybond_get_fraud_assessment");
+    expect(fraudMetrics?.description).toContain("Do not use this");
+    expect(fraudMetrics?.description).toContain("24h");
+    expect(fraudMetrics?.description).toContain("no side effects");
+    expect(fraudMetrics?.annotations).toMatchObject({
+      title: "Get Fraud Metrics",
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(fraudMetrics?.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        window: {
+          type: "string",
+          enum: ["24h", "7d", "30d"],
+          description: expect.stringContaining("24h"),
+          examples: expect.arrayContaining(["24h", "7d", "30d"]),
+        },
+        score_version: {
+          type: "string",
+          description: expect.stringContaining("1.0"),
+          examples: ["1.0"],
+        },
+      },
+    });
+    expect(fraudMetrics?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        tenant_id: {
+          type: "string",
+          description: expect.stringContaining("tenant-a"),
+        },
+        window: {
+          type: "string",
+          description: expect.stringContaining("24h"),
+        },
+        flagged_operator_count: {
+          type: "integer",
+          description: expect.stringContaining("Operators"),
+        },
+        critical_signal_count: {
+          type: "integer",
+          description: expect.stringContaining("critical"),
+        },
+        backtest_summary: {
+          type: "string",
+          description: expect.stringContaining("backtest"),
+        },
+      },
+    });
+
+    const reputationReceipt = toolByName.get("paybond_get_reputation_receipt");
+    expect(reputationReceipt?.title).toBe("Get Reputation Receipt");
+    expect(reputationReceipt?.description).toContain("Use this when");
+    expect(reputationReceipt?.description).toContain("paybond_get_portfolio_summary");
+    expect(reputationReceipt?.description).toContain("paybond_get_signed_portfolio_artifact");
+    expect(reputationReceipt?.description).toContain("paybond_get_fraud_assessment");
+    expect(reputationReceipt?.description).toContain("Do not use this");
+    expect(reputationReceipt?.description).toContain("returns null");
+    expect(reputationReceipt?.annotations).toMatchObject({
+      title: "Get Reputation Receipt",
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(reputationReceipt?.inputSchema).toMatchObject({
+      type: "object",
+      required: ["operator_did"],
+      properties: {
+        operator_did: {
+          type: "string",
+          description: expect.stringContaining("did:web:vendor.example#booker-agent"),
+          examples: expect.arrayContaining(["did:web:vendor.example#booker-agent"]),
+        },
+        score_version: {
+          type: "string",
+          description: expect.stringContaining("1.0"),
+          examples: ["1.0"],
+        },
+      },
+    });
+    expect(reputationReceipt?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        schema_version: { type: "integer" },
+        updated_at: { type: "string" },
+        receipt: {
+          type: "object",
+          description: expect.stringContaining("signature_hex"),
+        },
+      },
+    });
+
     expect(toolByName.get("paybond_get_principal")).toMatchObject({
       annotations: {
         readOnlyHint: true,
@@ -138,13 +416,33 @@ describe("PaybondMCPServer", () => {
         name: "paybond_verify_capability",
         title: "Verify Paybond Capability",
         descriptionFragments: ["Use this when", "Do not use this"],
-        outputProperties: ["allow", "tenant", "intent_id", "audit_id"],
+        outputProperties: [
+          "allow",
+          "tenant",
+          "intent_id",
+          "audit_id",
+          "remaining_cents",
+          "reason_codes",
+          "message",
+          "decision_id",
+          "approval_request_id",
+        ],
       },
       {
         name: "paybond_authorize_agent_spend",
         title: "Authorize Agent Spend",
         descriptionFragments: ["Use this when", "Do not use this"],
-        outputProperties: ["allow", "tenant", "intent_id", "audit_id"],
+        outputProperties: [
+          "allow",
+          "tenant",
+          "intent_id",
+          "audit_id",
+          "remaining_cents",
+          "reason_codes",
+          "message",
+          "decision_id",
+          "approval_request_id",
+        ],
       },
       {
         name: "paybond_bootstrap_sandbox_guardrail",
@@ -612,6 +910,77 @@ describe("PaybondMCPServer", () => {
     });
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toMatch(/tenant mismatch/);
+  });
+
+  it("calls spend preflight for budget remaining and explain policy", async () => {
+    const intentId = "550e8400-e29b-41d4-a716-446655440000";
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(JSON.stringify({ tenant_id: "tenant-a" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      if (url.endsWith("/v1/spend/preflight")) {
+        const headers = new Headers(init?.headers);
+        expect(headers.get("x-tenant-id")).toBe("tenant-a");
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+        expect(body.intent_id).toBe(intentId);
+        expect(body.operation).toBe("tool.purchase");
+        expect(body.requested_spend_cents).toBe(75000);
+        expect(body.vendor_id).toBe("vendor-1");
+        return new Response(
+          JSON.stringify({
+            classification: "hold",
+            outcome: "approval_required",
+            reason_codes: ["approval_threshold_exceeded"],
+            remaining_cents: 25000,
+            spend_scope: { scope_type: "tenant", scope_key: "" },
+            policy_version: 3,
+            explanation:
+              "Requested spend is at or above the approval threshold and requires human approval.",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error(`unexpected url ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+
+    const budget = await server.callTool("paybond_get_budget_remaining", {
+      intent_id: intentId,
+      operation: "tool.purchase",
+      requested_spend_cents: 75000,
+      vendor_id: "vendor-1",
+    });
+    expect(budget.isError).toBeUndefined();
+    expect(budget.structuredContent).toEqual({
+      remaining_cents: 25000,
+      spend_scope: { scope_type: "tenant", scope_key: "" },
+      policy_version: 3,
+    });
+
+    const explained = await server.callTool("paybond_explain_policy", {
+      intent_id: intentId,
+      operation: "tool.purchase",
+      requested_spend_cents: 75000,
+      vendor_id: "vendor-1",
+    });
+    expect(explained.isError).toBeUndefined();
+    expect(explained.structuredContent).toEqual({
+      outcome: "approval_required",
+      reason_codes: ["approval_threshold_exceeded"],
+      explanation:
+        "Requested spend is at or above the approval threshold and requires human approval.",
+      remaining_cents: 25000,
+      approval_threshold_exceeded: true,
+    });
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith("/v1/spend/preflight"))).toHaveLength(2);
   });
 
   it("does not cache capability tokens from authorize tool responses", async () => {
@@ -1102,6 +1471,8 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_get_principal")).toBe(true);
     expect(names.has("paybond_list_audit_exports")).toBe(true);
     expect(names.has("paybond_get_audit_export")).toBe(true);
+    expect(names.has("paybond_get_budget_remaining")).toBe(true);
+    expect(names.has("paybond_explain_policy")).toBe(true);
     expect(names.has("paybond_create_spend_intent")).toBe(false);
   });
 
