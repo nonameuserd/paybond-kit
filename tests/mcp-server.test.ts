@@ -405,11 +405,90 @@ describe("PaybondMCPServer", () => {
     });
 
     expect(toolByName.get("paybond_get_principal")).toMatchObject({
+      title: "Get Paybond Principal",
+      description: expect.stringContaining("Use this when"),
       annotations: {
+        title: "Get Paybond Principal",
         readOnlyHint: true,
         openWorldHint: false,
       },
     });
+    const principal = toolByName.get("paybond_get_principal");
+    expect(principal?.description).toContain("Call early as a prerequisite");
+    expect(principal?.description).toContain("Not required before every later call");
+    expect(principal?.description).toContain(
+      "use paybond_get_intent instead when you have an intent_id",
+    );
+    expect(principal?.description).toContain(
+      "Do not use this for A2A discovery; use paybond_get_a2a_agent_card instead",
+    );
+    expect(principal?.description).toContain("Do not use this when");
+    expect(principal?.description).toContain("no side effects");
+    expect(principal?.description).toContain("read-only");
+    expect(principal?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        tenant_id: {
+          type: "string",
+          description: expect.stringContaining("Tenant bound"),
+        },
+        subject: {
+          type: "string",
+          description: expect.stringContaining("service-account"),
+          examples: ["service-account-1"],
+        },
+        roles: {
+          type: "array",
+          description: expect.stringContaining("RBAC"),
+          examples: [["operator"]],
+        },
+      },
+    });
+
+    const signedPortfolio = toolByName.get("paybond_get_signed_portfolio_artifact");
+    expect(signedPortfolio?.title).toBe("Get Signed Portfolio Artifact");
+    expect(signedPortfolio?.description).toContain("Use this when");
+    expect(signedPortfolio?.description).toContain("paybond_get_portfolio_summary");
+    expect(signedPortfolio?.description).toContain("paybond_get_reputation_receipt");
+    expect(signedPortfolio?.description).toContain("paybond_get_fraud_assessment");
+    expect(signedPortfolio?.description).toContain("Do not use this");
+    expect(signedPortfolio?.description).toContain("no side effects");
+    expect(signedPortfolio?.annotations).toMatchObject({
+      title: "Get Signed Portfolio Artifact",
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(signedPortfolio?.inputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        score_version: {
+          type: "string",
+          description: expect.stringContaining("1.0"),
+          examples: ["1.0"],
+        },
+      },
+    });
+    expect(signedPortfolio?.outputSchema).toMatchObject({
+      type: "object",
+      properties: {
+        kind: {
+          type: "string",
+          description: expect.stringContaining("paybond.signal.portfolio_snapshot"),
+          examples: ["paybond.signal.portfolio_snapshot"],
+        },
+        tenant_id: {
+          type: "string",
+          description: expect.stringContaining("tenant-a"),
+          examples: ["tenant-a"],
+        },
+        signature_hex: {
+          type: "string",
+          description: expect.stringContaining("Ed25519"),
+        },
+        checkpoint_last_ledger_seq: { type: "integer" },
+      },
+    });
+
     expect(toolByName.get("paybond_bootstrap_sandbox_guardrail")?.description).toContain("sandbox-only");
     for (const expected of [
       {
