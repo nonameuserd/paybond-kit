@@ -35,6 +35,7 @@ type AgentMiddlewareFramework =
   | "openai"
   | "mastra"
   | "cloudflare-agents"
+  | "google-adk"
   | "mcp";
 
 type Preset = "paid-tool-guard" | "agent-middleware";
@@ -60,6 +61,7 @@ const AGENT_MIDDLEWARE_FRAMEWORKS = new Set<AgentMiddlewareFramework>([
   "vercel-ai",
   "mastra",
   "cloudflare-agents",
+  "google-adk",
   "mcp",
 ]);
 
@@ -287,6 +289,8 @@ function agentMiddlewareHeaderComments(framework: AgentMiddlewareFramework): str
       "paybond agent demo mastra smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
     "cloudflare-agents":
       "paybond agent demo cloudflare-agents smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
+    "google-adk":
+      "paybond agent demo google-adk smoke --operation paid-tool --requested-spend-cents 100 --evidence-preset cost_and_completion --format json",
     mcp:
       "paybond agent demo mcp smoke --operation travel.book_hotel --requested-spend-cents 20000 --evidence-preset cost_and_completion --format json",
   };
@@ -454,6 +458,33 @@ export function createGuardedMastraTools(run: PaybondAgentRun) {
     }),
   ];
   return createPaybondMastraConfig(run, tools).tools;
+}`;
+    case "google-adk":
+      return `import { FunctionTool } from "@google/adk";
+import { z } from "zod";
+import { createPaybondGoogleAdkConfig } from "@paybond/kit/google-adk";
+import type { PaybondAgentRun } from "@paybond/kit/agent";
+
+/** Wrap Google ADK FunctionTool definitions with Paybond middleware on \`execute\`. */
+export function createGuardedGoogleAdkTools(run: PaybondAgentRun) {
+  const tools = [
+    new FunctionTool({
+      name: "travel.book_hotel",
+      description: "Book a hotel room",
+      parameters: z.object({
+        city: z.string(),
+        estimatedPriceCents: z.number().int().nonnegative(),
+      }),
+      execute: async (args) => bookHotel(args),
+    }),
+    new FunctionTool({
+      name: "search.web",
+      description: "Search the web",
+      parameters: z.object({ query: z.string() }),
+      execute: async (args) => searchWeb(args),
+    }),
+  ];
+  return createPaybondGoogleAdkConfig(run, tools).tools;
 }`;
     case "cloudflare-agents":
       return `import { tool } from "ai";

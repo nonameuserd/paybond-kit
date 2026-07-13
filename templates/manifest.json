@@ -16,7 +16,7 @@
         "cost_cents": 18700
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11",
+        "@paybond/kit": "^0.12.5",
         "@langchain/core": "^1.2.1",
         "@langchain/langgraph": "^1.4.7",
         "zod": "^4.2.0"
@@ -39,12 +39,35 @@
         "cost_cents": 4500
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11",
+        "@paybond/kit": "^0.12.5",
         "ai": "^5.0.0",
         "zod": "^4.2.0"
       },
       "demo_import": "@paybond/kit/vercel-ai",
       "demo_export": "runVercelAiSandboxDemo"
+    },
+    {
+      "id": "cloudflare-shopping-agent",
+      "repo": "paybond-cloudflare-shopping-agent",
+      "title": "Shopping checkout agent (Cloudflare Agents)",
+      "language": "typescript",
+      "framework": "cloudflare-agents",
+      "preset": "shopping",
+      "primary_operation": "commerce.checkout",
+      "requested_spend_cents": 4500,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 4500
+      },
+      "dependencies": {
+        "@paybond/kit": "^0.12.5",
+        "agents": "^0.10.0",
+        "ai": "^5.0.0",
+        "zod": "^4.2.0"
+      },
+      "demo_import": "@paybond/kit/cloudflare-agents",
+      "demo_export": "runCloudflareAgentsSandboxDemo"
     },
     {
       "id": "openai-agents-demo",
@@ -61,7 +84,7 @@
         "cost_cents": 2900
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11",
+        "@paybond/kit": "^0.12.5",
         "@openai/agents": "^0.4.0",
         "zod": "^4.2.0"
       },
@@ -83,7 +106,7 @@
         "cost_cents": 4500
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11",
+        "@paybond/kit": "^0.12.5",
         "@openai/agents": "^0.4.0",
         "zod": "^4.2.0"
       },
@@ -105,7 +128,7 @@
         "cost_cents": 18700
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11",
+        "@paybond/kit": "^0.12.5",
         "@anthropic-ai/claude-agent-sdk": "^0.2.100",
         "zod": "^4.2.0"
       },
@@ -127,7 +150,7 @@
         "cost_cents": 18700
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11",
+        "@paybond/kit": "^0.12.5",
         "@mastra/core": "^1.49.0",
         "zod": "^4.2.0"
       },
@@ -150,7 +173,7 @@
         "cost_cents": 500
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11"
+        "@paybond/kit": "^0.12.5"
       },
       "mcp_tool_policy": "spend-write"
     },
@@ -170,7 +193,7 @@
         "cost_cents": 12000
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11"
+        "@paybond/kit": "^0.12.5"
       },
       "demo_mode": "generic"
     },
@@ -189,7 +212,7 @@
         "cost_cents": 12500
       },
       "dependencies": {
-        "@paybond/kit": "^0.11.11"
+        "@paybond/kit": "^0.12.5"
       },
       "demo_mode": "generic"
     },
@@ -210,7 +233,7 @@
         "status": "succeeded"
       },
       "dependencies": {
-        "@paybond/kit": "^0.12.1"
+        "@paybond/kit": "^0.12.5"
       },
       "demo_mode": "generic"
     },
@@ -231,7 +254,7 @@
         "shop": "paybond-agent-commerce-dev.myshopify.com"
       },
       "dependencies": {
-        "@paybond/kit": "^0.12.1"
+        "@paybond/kit": "^0.12.5"
       },
       "demo_mode": "generic"
     },
@@ -250,11 +273,33 @@
         "cost_cents": 2900
       },
       "python_dependencies": {
-        "paybond-kit": ">=0.11.11",
+        "paybond-kit": ">=0.12.5",
         "langgraph": ">=1.2.0"
       },
       "demo_import": "paybond_kit.langgraph_sandbox_demo",
       "demo_export": "run_langgraph_sandbox_demo"
+    },
+    {
+      "id": "crewai-procurement-agent",
+      "repo": "paybond-crewai-procurement-agent",
+      "title": "Procurement crew (CrewAI + Paybond spend gates)",
+      "language": "python",
+      "framework": "crewai",
+      "preset": null,
+      "policy_file": "paybond.policy.yaml",
+      "primary_operation": "procurement.submit_po",
+      "requested_spend_cents": 12000,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 12000
+      },
+      "python_dependencies": {
+        "paybond-kit[crewai]": ">=0.12.5",
+        "crewai": ">=0.80.0"
+      },
+      "demo_import": "paybond_kit.crewai",
+      "demo_export": "run_crewai_sandbox_demo"
     }
   ]
 }

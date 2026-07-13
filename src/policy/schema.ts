@@ -140,6 +140,36 @@ const policyIntentSchema = z
   })
   .strict();
 
+const policyAdapterSchema = z
+  .object({
+    deny_provider_executed_tools: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((adapter, ctx) => {
+    if (Object.keys(adapter).length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: [],
+        message: "adapter must set at least one field",
+      });
+    }
+  });
+
+const policyAdapterOverrideSchema = z
+  .object({
+    deny_provider_executed_tools: z.boolean().optional(),
+  })
+  .strict()
+  .superRefine((adapter, ctx) => {
+    if (Object.keys(adapter).length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: [],
+        message: "adapter override must set at least one field",
+      });
+    }
+  });
+
 const policyIntentOverrideSchema = z
   .object({
     policy_binding: policyBindingOverrideSchema.optional(),
@@ -173,18 +203,20 @@ const policyOverridesSchema = z
     default_deny: z.boolean().optional(),
     tools: z.record(toolNameSchema, policyToolOverrideEntrySchema).optional(),
     intent: policyIntentOverrideSchema.optional(),
+    adapter: policyAdapterOverrideSchema.optional(),
   })
   .strict()
   .superRefine((overrides, ctx) => {
     if (
       overrides.default_deny === undefined &&
       !overrides.tools &&
-      !overrides.intent
+      !overrides.intent &&
+      !overrides.adapter
     ) {
       ctx.addIssue({
         code: "custom",
         path: [],
-        message: "overrides must set default_deny, tools, and/or intent",
+        message: "overrides must set default_deny, tools, intent, and/or adapter",
       });
     }
   });
@@ -200,6 +232,7 @@ export const paybondPolicyDocumentV1Schema = z
         message: "tools must declare at least one entry",
       }),
     intent: policyIntentSchema.optional(),
+    adapter: policyAdapterSchema.optional(),
   })
   .strict();
 
@@ -212,6 +245,7 @@ export const paybondPolicyDocumentV2Schema = z
     overrides: policyOverridesSchema.optional(),
     tools: z.record(toolNameSchema, policyToolEntrySchema),
     intent: policyIntentSchema.optional(),
+    adapter: policyAdapterSchema.optional(),
   })
   .strict()
   .superRefine((document, ctx) => {
@@ -230,6 +264,8 @@ export type PaybondPolicyBinding = z.infer<typeof policyBindingSchema>;
 export type PaybondPolicyBindingOverride = z.infer<typeof policyBindingOverrideSchema>;
 export type PaybondPolicyBudget = z.infer<typeof policyBudgetSchema>;
 export type PaybondPolicyIntentSection = z.infer<typeof policyIntentSchema>;
+export type PaybondPolicyAdapterSection = z.infer<typeof policyAdapterSchema>;
+export type PaybondPolicyAdapterOverrideSection = z.infer<typeof policyAdapterOverrideSchema>;
 export type PaybondPolicyIntentOverrideSection = z.infer<typeof policyIntentOverrideSchema>;
 export type PaybondPolicyExtends = z.infer<typeof policyExtendsSchema>;
 export type PaybondPolicyOverrides = z.infer<typeof policyOverridesSchema>;

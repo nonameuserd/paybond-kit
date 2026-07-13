@@ -35,7 +35,9 @@ export function agentReceiptResourceTemplateDefinition(): Record<string, unknown
     name: "paybond_agent_receipt",
     title: "Paybond Agent Receipt",
     description:
-      "Signed paybond.agent_receipt_v1 JSON fetched tenant-bound from Gateway GET /protocol/v2/agent-receipts/{receipt_id}.",
+      "Agent-to-agent handoff of signed paybond.agent_receipt_v1 JSON. " +
+      "resources/read fetches tenant-bound GET /protocol/v2/agent-receipts/{receipt_id} " +
+      "and runs an operational-tier signature verify before returning contents.",
     mimeType: MCP_AGENT_RECEIPT_RESOURCE_MIME_TYPE,
   };
 }

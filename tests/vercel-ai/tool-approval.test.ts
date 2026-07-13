@@ -250,4 +250,42 @@ describe("paybondVercelToolApproval", () => {
       expect.objectContaining({ approvalToken: "operator-token-123" }),
     );
   });
+
+  it("denies provider-executed tools when denyProviderExecutedTools is enabled", async () => {
+    const guard = makeGuard();
+    const run = await PaybondAgentRun.bind(makeHost(guard), {
+      bootstrap: {
+        kind: "sandbox",
+        operation: "travel.book_hotel",
+        requestedSpendCents: 20_000,
+      },
+      registry: makeRegistry(),
+    });
+
+    const tools = {
+      provider_search: {
+        description: "Provider web search",
+        inputSchema: {},
+        execute: async () => ({ hits: [] }),
+        isProviderExecuted: true,
+      },
+    } as never;
+
+    const toolApproval = paybondVercelToolApproval(run, {
+      denyProviderExecutedTools: true,
+    });
+    const status = await toolApproval({
+      toolCall: makeToolCall("provider_search", "call-provider", { query: "hotels" }),
+      tools,
+      toolsContext: {},
+      runtimeContext: undefined,
+      messages: [],
+    });
+
+    expect(status).toEqual({
+      type: "denied",
+      reason: expect.stringContaining("Paybond governs only locally executed registry tools"),
+    });
+    expect(guard.assertSpendAuthorized).not.toHaveBeenCalled();
+  });
 });

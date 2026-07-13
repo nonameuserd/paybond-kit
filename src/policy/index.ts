@@ -3,6 +3,10 @@ export {
   policyDocumentToDict,
   policyVersionLabel,
 } from "./digest.js";
+export {
+  policyToAdapterOptions,
+  type PaybondPolicyAdapterOptions,
+} from "./adapter-options.js";
 export { PaybondPolicy, type PaybondPolicyLoadSource, type PaybondPolicyLoadEffectiveResult } from "./load.js";
 export {
   isKnownPolicyPresetId,

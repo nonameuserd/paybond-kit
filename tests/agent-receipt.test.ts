@@ -7,9 +7,11 @@ import {
   actionReceiptId,
   attachOperatorAttestationV1,
   configHashSha256Hex,
+  continuityFromPrior,
   valueDigestSha256Hex,
   verifyAgentReceiptV1,
   verifyAgentReceiptV1FromJSON,
+  verifyContinuityChain,
   type AgentReceiptV1,
 } from "../src/agent-receipt.js";
 
@@ -36,6 +38,31 @@ describe("agent receipt verify", () => {
     expect(verified.receipt_id).toBe("660e8400-e29b-41d4-a716-446655440001");
     expect(verified.scope).toBe("intent_terminal");
     expect(verified.execution).toBeUndefined();
+    expect(verified.outcome.settlement_outcome).toBe("SETTLED");
+  });
+
+  it("rejects mandate digest mismatch vs external_attestations", async () => {
+    const raw = readFileSync(join(CONFORMANCE_DIR, "signed-action-receipt-v1.json"), "utf8");
+    const receipt = JSON.parse(raw) as AgentReceiptV1;
+    receipt.authorization.mandate_digest_sha256_hex = "aa".repeat(32);
+    receipt.external_attestations = [
+      {
+        source: "ap2",
+        kind: "agent_mandate_v1",
+        digest_sha256_hex: "bb".repeat(32),
+        reference_id: "ext-auth-1",
+      },
+    ];
+    await expect(verifyAgentReceiptV1(receipt)).rejects.toThrow(/mandate_digest_sha256_hex must match/);
+  });
+
+  it("rejects settlement_outcome on action scope", async () => {
+    const raw = readFileSync(join(CONFORMANCE_DIR, "signed-action-receipt-v1.json"), "utf8");
+    const receipt = JSON.parse(raw) as AgentReceiptV1;
+    receipt.outcome.settlement_outcome = "SETTLED";
+    await expect(verifyAgentReceiptV1(receipt)).rejects.toThrow(
+      /settlement_outcome is only valid for intent_terminal scope/,
+    );
   });
 
   it("derives action receipt_id deterministically", () => {
@@ -170,5 +197,84 @@ describe("agent receipt verify", () => {
         trustedOperatorPublicKeys: ["00".repeat(32)],
       }),
     ).rejects.toThrow(/operator registry/);
+  });
+
+  it("defaults operator registry on for tenant_registry trust mode", async () => {
+    const receipt = loadConformanceReceipt();
+    const attested = await attachOperatorAttestationV1(
+      receipt,
+      OPERATOR_SEED_HEX,
+      receipt.authorization.agent.operator_did,
+    );
+    const operatorPubHex = attested.operator_attestation!.signing_public_key_ed25519_hex;
+
+    await expect(
+      verifyAgentReceiptV1(attested, {
+        trustMode: "tenant_registry",
+        trustedOperatorPublicKeys: [operatorPubHex],
+      }),
+    ).resolves.toBeTruthy();
+
+    await expect(
+      verifyAgentReceiptV1(attested, {
+        trustMode: "tenant_registry",
+        trustedOperatorPublicKeys: [],
+      }),
+    ).rejects.toThrow(/operator registry/);
+
+    // Gateway JWKS / gateway trust mode remains opt-in.
+    await expect(
+      verifyAgentReceiptV1(attested, {
+        trustMode: "gateway",
+        trustedOperatorPublicKeys: [],
+      }),
+    ).resolves.toBeTruthy();
+  });
+
+  it("enforces validity tiers and continuity fail-closed", async () => {
+    const raw = readFileSync(join(CONFORMANCE_DIR, "signed-action-receipt-v1.json"), "utf8");
+    const receipt = JSON.parse(raw) as AgentReceiptV1;
+    await expect(
+      verifyAgentReceiptV1(receipt, { requiredValidityTier: "primary" }),
+    ).resolves.toBeTruthy();
+    await expect(
+      verifyAgentReceiptV1(receipt, { requiredValidityTier: "attested" }),
+    ).rejects.toThrow(/attested validity requires operator_attestation/);
+
+    await expect(
+      verifyAgentReceiptV1(receipt, {
+        expectedPriorMessageDigestHex: "cd".repeat(32),
+      }),
+    ).rejects.toThrow(/continuity is required/);
+  });
+
+  it("verifies continuity hash chains and rejects broken links", () => {
+    const raw = readFileSync(join(CONFORMANCE_DIR, "signed-action-receipt-v1.json"), "utf8");
+    const base = JSON.parse(raw) as AgentReceiptV1;
+    const runId = base.execution!.run_id;
+
+    const first: AgentReceiptV1 = {
+      ...base,
+      continuity: continuityFromPrior(runId),
+    };
+    const second: AgentReceiptV1 = {
+      ...base,
+      execution: {
+        ...base.execution!,
+        tool_call_id: "call_cont_002",
+      },
+      receipt_id: actionReceiptId(base.references.intent_id, "call_cont_002"),
+      continuity: continuityFromPrior(runId, first),
+    };
+    expect(() => verifyContinuityChain([first, second])).not.toThrow();
+
+    const broken: AgentReceiptV1 = {
+      ...second,
+      continuity: {
+        ...second.continuity!,
+        prev_message_digest_sha256_hex: "ab".repeat(32),
+      },
+    };
+    expect(() => verifyContinuityChain([first, broken])).toThrow(/digest mismatch/);
   });
 });

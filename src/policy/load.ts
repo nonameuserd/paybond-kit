@@ -28,6 +28,7 @@ import {
   policySandboxBootstrap,
   type PaybondPolicySandboxBootstrapOptions,
 } from "./sandbox-bootstrap.js";
+import { policyToAdapterOptions, type PaybondPolicyAdapterOptions } from "./adapter-options.js";
 import { PolicyValidator, type PolicyValidatorOptions, type PolicyValidatorResult } from "./validate.js";
 import {
   validatePolicyRemote,
@@ -81,6 +82,21 @@ export class PaybondPolicy {
   /** Optional intent section from the policy file. */
   get intent(): PaybondPolicyDocumentV1["intent"] {
     return this.document.intent;
+  }
+
+  /** Optional adapter section from the policy file. */
+  get adapter(): PaybondPolicyDocumentV1["adapter"] {
+    return this.document.adapter;
+  }
+
+  /** Whether provider-executed AI SDK tools should fail closed (Vercel AI / Cloudflare Agents). */
+  get denyProviderExecutedTools(): boolean {
+    return this.document.adapter?.deny_provider_executed_tools === true;
+  }
+
+  /** Map policy adapter settings to framework runner options. */
+  toAdapterOptions(): PaybondPolicyAdapterOptions {
+    return policyToAdapterOptions(this.document);
   }
 
   /**

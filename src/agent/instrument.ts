@@ -18,6 +18,10 @@ import {
   type GuardedAgentFramework,
 } from "./guarded-agent.js";
 import {
+  createPaybondGenericInputGuard,
+} from "./generic-runner.js";
+import { paybondVercelToolApproval } from "../vercel-ai/tool-approval.js";
+import {
   toPaybondAgentResult,
   wrapPaybondTools,
   type PaybondAgentHooks,
@@ -350,6 +354,7 @@ function wrapToolsForFramework<TTools>(
   rawTools: TTools,
   framework: GuardedAgentFramework,
   guarded?: CreateGuardedAgentResult<TTools>,
+  adapterOptions?: ReturnType<PaybondPolicy["toAdapterOptions"]>,
 ): TTools {
   if (framework === "langgraph") {
     return rawTools;
@@ -357,7 +362,23 @@ function wrapToolsForFramework<TTools>(
   if (guarded) {
     return guarded.agentTools as TTools;
   }
-  return wrapPaybondTools(run, rawTools, { framework }) as TTools;
+  return wrapPaybondTools(run, rawTools, { framework, ...adapterOptions }) as TTools;
+}
+
+function hooksForAttachedFramework(
+  run: PaybondAgentRun,
+  framework: GuardedAgentFramework,
+  adapterOptions?: ReturnType<PaybondPolicy["toAdapterOptions"]>,
+): PaybondAgentHooks {
+  const hooks: PaybondAgentHooks = {};
+  if (framework === "generic") {
+    hooks.inputGuard = createPaybondGenericInputGuard(run);
+    return hooks;
+  }
+  if (framework === "vercel-ai" || framework === "cloudflare-agents") {
+    hooks.toolApproval = paybondVercelToolApproval(run, adapterOptions);
+  }
+  return hooks;
 }
 
 /**
@@ -518,14 +539,9 @@ async function createBoundRuntime<TTools>(
     attach,
     traceSink,
   });
-  const tools = wrapToolsForFramework(run, rawTools, framework);
-  const hooks = hooksFromGuardedResult({
-    run,
-    policy,
-    registry: policy.toToolRegistry(),
-    framework,
-    agentTools: tools,
-  } as CreateGuardedAgentResult<TTools>);
+  const adapterOptions = policy.toAdapterOptions();
+  const tools = wrapToolsForFramework(run, rawTools, framework, undefined, adapterOptions);
+  const hooks = hooksForAttachedFramework(run, framework, adapterOptions);
   return new PaybondInstrumentRuntime(
     tools,
     run,
@@ -759,6 +775,13 @@ export function instrumentPaybondOpenAI<TTools>(
   input: Omit<PaybondInstrumentBaseInput<TTools>, "framework"> & { tools: TTools },
 ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
   return frameworkInstrument(paybond, "openai-agents", input);
+}
+
+export function instrumentPaybondGoogleAdk<TTools>(
+  paybond: PaybondAgentRunHost,
+  input: Omit<PaybondInstrumentBaseInput<TTools>, "framework"> & { tools: TTools },
+): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+  return frameworkInstrument(paybond, "google-adk", input);
 }
 
 export function instrumentPaybondVercel<TTools>(

@@ -24,6 +24,7 @@ describe("paybond init --template", () => {
     expect(normalizeTemplateId("paybond-travel-agent")).toBe("travel-agent");
     expect(normalizeTemplateId("paybond-mastra-travel-agent")).toBe("mastra-travel-agent");
     expect(normalizeTemplateId("openai-shopping-agent")).toBe("openai-shopping-agent");
+    expect(normalizeTemplateId("paybond-crewai-procurement-agent")).toBe("crewai-procurement-agent");
   });
 
   it("copies travel-agent template into an empty directory", async () => {
@@ -98,6 +99,30 @@ describe("paybond init --template", () => {
       dependencies: Record<string, string>;
     };
     expect(packageJson.dependencies["@mastra/core"]).toMatch(/^\^/);
+  });
+
+  it("copies crewai-procurement-agent template into an empty directory", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-template-crewai-"));
+    const result = await copyTemplateToDirectory({
+      cwd,
+      templateId: "crewai-procurement-agent",
+      framework: "crewai",
+    });
+
+    expect(result.template_id).toBe("crewai-procurement-agent");
+    expect(result.repo).toBe("paybond-crewai-procurement-agent");
+    expect(result.language).toBe("python");
+    expect(result.framework).toBe("crewai");
+    expect(result.smoke_command).toContain("procurement.submit_po");
+
+    await access(join(cwd, "app.py"), constants.F_OK);
+    await access(join(cwd, "crew.py"), constants.F_OK);
+    await access(join(cwd, "paybond.policy.yaml"), constants.F_OK);
+    await access(join(cwd, "requirements.txt"), constants.F_OK);
+
+    const requirements = await readFile(join(cwd, "requirements.txt"), "utf8");
+    expect(requirements).toContain("paybond-kit[crewai]");
+    expect(requirements).toContain("crewai");
   });
 
   it("copies stripe-agent-demo template into an empty directory", async () => {

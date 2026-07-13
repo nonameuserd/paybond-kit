@@ -40,7 +40,10 @@ import {
   parseMcpPolicyReloadConfig,
   type McpPolicyReloadConfig,
 } from "./mcp-policy-reload.js";
-import { verifyAgentReceiptV1FromJSON } from "./agent-receipt.js";
+import {
+  AGENT_RECEIPT_KIND_V1,
+  verifyAgentReceiptV1FromJSON,
+} from "./agent-receipt.js";
 import {
   agentReceiptResourceTemplateDefinition,
   agentReceiptResourceUri,
@@ -69,7 +72,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.5";
+const SERVER_VERSION = "0.12.6";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -704,6 +707,70 @@ const TOOL_SELECTION_METADATA: Record<string, MCPToolSelectionMetadata> = {
       },
       ["tenant_id", "receipt_id"],
     ),
+  },
+  paybond_get_agent_receipt_v1: {
+    title: "Get Agent Receipt",
+    description:
+      "Use this when you need the signed paybond.agent_receipt_v1 JSON for one receipt_id " +
+      "(SHA-256 action id or intent-terminal UUID) via tenant-bound Gateway GET. " +
+      "Do not use this for protocol settlement receipts—call paybond_get_settlement_receipt_v1. " +
+      "For agent-to-agent handoff without embedding JSON in prompts, prefer the MCP resource " +
+      "paybond://receipt/{receipt_id} (resources/read verifies at the operational tier). " +
+      "Validity tiers beyond operational, continuity-chain, inclusion proofs, owner disclosure, " +
+      "and ACTA/PEF/SCITT adapters are Kit/CLI/Gateway auditor surfaces—not this tool's job. " +
+      "Read-only and side-effect free.",
+    annotations: readOnlyToolAnnotations("Get Agent Receipt"),
+    outputSchema: outputObjectSchema(
+      {
+        tenant_id: { type: "string" },
+        receipt_id: { type: "string" },
+        kind: { type: "string" },
+      },
+      ["tenant_id", "receipt_id"],
+    ),
+  },
+  paybond_verify_agent_receipt_v1: {
+    title: "Verify Agent Receipt",
+    description:
+      "Use this when you already have a signed paybond.agent_receipt_v1 JSON object and need an " +
+      "offline operational-tier (default) Ed25519 signature check—schema, digest, and Gateway " +
+      "signature—matching resources/read on paybond://receipt/{receipt_id}. " +
+      "Optional validity_tier=primary|attested raises the bar (payee digest / operator attestation). " +
+      "Do not use this for protocol authorization/settlement receipts—call paybond_verify_protocol_receipt_v1. " +
+      "Continuity-chain audits, inclusion proofs, owner disclosure, and ACTA/PEF/SCITT are Kit/CLI/Gateway " +
+      "auditor surfaces. Read-only and side-effect free: success returns valid=true with kind, receipt_id, " +
+      "tenant_id, and the normalized receipt; failures raise a clear verification error.",
+    annotations: readOnlyToolAnnotations("Verify Agent Receipt"),
+    outputSchema: outputObjectSchema({
+      valid: {
+        type: "boolean",
+        description: "True when operational (or requested) validity checks passed. Example: true.",
+        examples: [true],
+      },
+      kind: {
+        type: "string",
+        description: "Verified receipt kind (paybond.agent_receipt_v1).",
+        examples: ["paybond.agent_receipt_v1"],
+      },
+      receipt_id: {
+        type: "string",
+        description: "Canonical receipt identifier from the verified receipt.",
+      },
+      tenant_id: {
+        type: "string",
+        description: "Tenant id embedded in the verified receipt (not invented by the caller).",
+      },
+      validity_tier: {
+        type: "string",
+        description: "Requested validity tier used for this verify (operational, primary, or attested).",
+        examples: ["operational", "primary", "attested"],
+      },
+      receipt: {
+        type: "object",
+        additionalProperties: true,
+        description: "Normalized verified paybond.agent_receipt_v1 object.",
+      },
+    }),
   },
   paybond_verify_protocol_receipt_v1: {
     title: "Verify Protocol Receipt",
@@ -2679,6 +2746,75 @@ export class PaybondMCPServer {
           ),
       },
       {
+        name: "paybond_get_agent_receipt_v1",
+        description:
+          "Fetch the signed paybond.agent_receipt_v1 for one receipt_id.",
+        inputSchema: objectSchema(
+          {
+            receipt_id: {
+              type: "string",
+              description:
+                "Agent receipt id: lowercase SHA-256 hex (action scope) or canonical UUID (intent_terminal). " +
+                "Must belong to the authenticated tenant; do not invent tenant identifiers.",
+            },
+          },
+          ["receipt_id"],
+        ),
+        call: async (args) =>
+          this.runtime.getAgentReceiptV1(agentReceiptIdArg(args.receipt_id)),
+      },
+      {
+        name: "paybond_verify_agent_receipt_v1",
+        description:
+          "Verify a signed paybond.agent_receipt_v1 offline (operational tier by default).",
+        inputSchema: objectSchema(
+          {
+            receipt: {
+              type: "object",
+              additionalProperties: true,
+              description:
+                "Complete signed paybond.agent_receipt_v1 object (not a receipt_id string). " +
+                "Obtain from paybond_get_agent_receipt_v1, paybond://receipt/{receipt_id}, " +
+                "audit export (agent_receipts/{id}.json; PEF companions may also appear as *.pef.json), " +
+                "or partner handoff—do not invent digests or signatures.",
+            },
+            validity_tier: {
+              type: "string",
+              description:
+                "Optional validity bar: operational (default), primary, or attested. " +
+                "Higher tiers are auditor-oriented; MCP handoff only requires operational.",
+              enum: ["operational", "primary", "attested"],
+            },
+          },
+          ["receipt"],
+        ),
+        call: async (args) => {
+          const receipt = ensureObject(args.receipt, "receipt");
+          const validityTier =
+            args.validity_tier === undefined
+              ? "operational"
+              : stringArg(args.validity_tier, "validity_tier").toLowerCase();
+          let verified;
+          try {
+            verified = await verifyAgentReceiptV1FromJSON(receipt, {
+              requiredValidityTier: validityTier,
+            });
+          } catch (err) {
+            throw new Error(
+              `agent receipt verification failed: ${formatError(err)}`,
+            );
+          }
+          return {
+            valid: true,
+            kind: AGENT_RECEIPT_KIND_V1,
+            receipt_id: verified.receipt_id,
+            tenant_id: verified.tenant_id,
+            validity_tier: validityTier,
+            receipt: verified as unknown as Record<string, unknown>,
+          };
+        },
+      },
+      {
         name: "paybond_verify_protocol_receipt_v1",
         description:
           "Verify a signed protocol-v2 authorization or settlement receipt through the gateway.",
@@ -3086,6 +3222,13 @@ function uuidArg(value: unknown, field: string): string {
     throw new Error(`${field} must be a canonical UUID`);
   }
   return raw;
+}
+
+/** Accept action-scope SHA-256 hex or intent-terminal UUID receipt ids. */
+function agentReceiptIdArg(value: unknown): string {
+  const raw = stringArg(value, "receipt_id").toLowerCase();
+  // Validates via URI helper shared with resources/read.
+  return parseAgentReceiptResourceUri(`paybond://receipt/${raw}`);
 }
 
 function stringArrayArg(value: unknown, field: string): string[] {

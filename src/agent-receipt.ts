@@ -19,6 +19,20 @@ export const PAYBOND_AGENT_RECEIPT_ATTESTATIONS_HEADER = "x-paybond-agent-receip
 /** Optional agent run id bound to the attestation header for server-side audit. */
 export const PAYBOND_AGENT_RECEIPT_SOURCE_RUN_HEADER = "x-paybond-agent-run-id";
 
+/** AP2 signed-mandate digest kind promoted into authorization.mandate_digest_sha256_hex. */
+export const EXTERNAL_ATTESTATION_KIND_AGENT_MANDATE_V1 = "agent_mandate_v1";
+
+export const SETTLEMENT_OUTCOME_SETTLED = "SETTLED";
+export const SETTLEMENT_OUTCOME_PENDING_FINALITY = "PENDING_FINALITY";
+export const SETTLEMENT_OUTCOME_REVERSED = "REVERSED";
+export const SETTLEMENT_OUTCOME_FAILED = "FAILED";
+
+export type AgentReceiptSettlementOutcome =
+  | typeof SETTLEMENT_OUTCOME_SETTLED
+  | typeof SETTLEMENT_OUTCOME_PENDING_FINALITY
+  | typeof SETTLEMENT_OUTCOME_REVERSED
+  | typeof SETTLEMENT_OUTCOME_FAILED;
+
 const SCOPE_TOKEN_RE = /^[a-z0-9][a-z0-9._:/-]{0,127}$/;
 const HEX64_RE = /^[0-9a-f]{64}$/;
 const CURRENCY_RE = /^[a-z]{3}$/;
@@ -52,6 +66,10 @@ export type AgentReceiptAuthorizationV1 = {
   requested_spend_cents: number;
   currency: string;
   reason_codes?: string[];
+  mandate_digest_sha256_hex?: string;
+  mandate_reference_id?: string;
+  /** Reserved ZK policy-compliance proof digest — schema-ready; not emitted by compose yet. */
+  zk_policy_proof_digest_sha256_hex?: string;
 };
 
 export type AgentReceiptExecutionV1 = {
@@ -65,6 +83,8 @@ export type AgentReceiptExecutionV1 = {
   started_at: string;
   completed_at: string;
   duration_ms?: number;
+  /** Reserved TEE attestation digest — schema-ready; not emitted by compose yet. */
+  tee_attestation_digest_sha256_hex?: string;
 };
 
 export type AgentReceiptMerchantV1 = {
@@ -94,6 +114,8 @@ export type AgentReceiptOutcomeV1 = {
   harbor_state: string;
   spend_reservation_outcome?: "consumed" | "released" | "pending" | "none";
   predicate_passed?: boolean;
+  /** Categorical settlement claim for intent_terminal scope only. */
+  settlement_outcome?: AgentReceiptSettlementOutcome;
 };
 
 export type AgentReceiptReferencesV1 = {
@@ -116,6 +138,21 @@ export type AgentReceiptOperatorAttestationV1 = {
   ed25519_signature_hex: string;
 };
 
+export type AgentReceiptContinuityV1 = {
+  prev_message_digest_sha256_hex?: string;
+  sequence_number: number;
+  run_id: string;
+};
+
+export const AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL = "operational";
+export const AGENT_RECEIPT_VALIDITY_TIER_PRIMARY = "primary";
+export const AGENT_RECEIPT_VALIDITY_TIER_ATTESTED = "attested";
+
+export type AgentReceiptValidityTier =
+  | typeof AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL
+  | typeof AGENT_RECEIPT_VALIDITY_TIER_PRIMARY
+  | typeof AGENT_RECEIPT_VALIDITY_TIER_ATTESTED;
+
 export type AgentReceiptV1 = {
   schema_version: number;
   kind: string;
@@ -132,6 +169,7 @@ export type AgentReceiptV1 = {
   outcome: AgentReceiptOutcomeV1;
   references: AgentReceiptReferencesV1;
   external_attestations: AgentReceiptExternalAttestationV1[];
+  continuity?: AgentReceiptContinuityV1;
   operator_attestation?: AgentReceiptOperatorAttestationV1;
   signing_algorithm: string;
   message_digest_sha256_hex: string;
@@ -272,9 +310,10 @@ function normalizeReceipt(receipt: AgentReceiptV1): AgentReceiptV1 {
   }
 
   const authorization = normalizeAuthorization(receipt.authorization);
-  const outcome = normalizeOutcome(receipt.outcome);
   const references = normalizeReferences(receipt.references);
   const externalAttestations = normalizeExternalAttestations(receipt.external_attestations ?? []);
+  verifyMandateAuthorizationConsistency(authorization, externalAttestations);
+  const outcome = normalizeOutcome(receipt.outcome, scope);
 
   let execution: AgentReceiptExecutionV1 | undefined;
   if (scope === AGENT_RECEIPT_SCOPE_ACTION) {
@@ -300,6 +339,7 @@ function normalizeReceipt(receipt: AgentReceiptV1): AgentReceiptV1 {
     outcome,
     references,
     external_attestations: externalAttestations,
+    continuity: receipt.continuity ? normalizeContinuity(receipt.continuity, execution) : undefined,
     operator_attestation: receipt.operator_attestation
       ? normalizeOperatorAttestation(receipt.operator_attestation)
       : undefined,
@@ -312,6 +352,37 @@ function normalizeReceipt(receipt: AgentReceiptV1): AgentReceiptV1 {
 
   verifyReceiptId(normalized);
   return normalized;
+}
+
+function normalizeContinuity(
+  continuity: AgentReceiptContinuityV1,
+  execution: AgentReceiptExecutionV1 | undefined,
+): AgentReceiptContinuityV1 {
+  const runId = continuity.run_id.trim().toLowerCase();
+  if (!UUID_RE.test(runId)) {
+    throw new Error("agent receipt: continuity.run_id must be a canonical UUID");
+  }
+  if (!Number.isInteger(continuity.sequence_number) || continuity.sequence_number < 1) {
+    throw new Error("agent receipt: continuity.sequence_number must be an integer >= 1");
+  }
+  const prev = continuity.prev_message_digest_sha256_hex?.trim().toLowerCase() ?? "";
+  if (continuity.sequence_number === 1) {
+    if (prev) {
+      throw new Error(
+        "agent receipt: continuity.sequence_number 1 must not set prev_message_digest_sha256_hex",
+      );
+    }
+  } else {
+    requireHex64(prev, "continuity.prev_message_digest_sha256_hex");
+  }
+  if (execution && execution.run_id !== runId) {
+    throw new Error("agent receipt: continuity.run_id must match execution.run_id");
+  }
+  return {
+    ...(prev ? { prev_message_digest_sha256_hex: prev } : {}),
+    sequence_number: continuity.sequence_number,
+    run_id: runId,
+  };
 }
 
 function normalizeOperatorAttestation(
@@ -345,6 +416,20 @@ function normalizeAuthorization(authorization: AgentReceiptAuthorizationV1): Age
   if (authorization.requested_spend_cents < 0) {
     throw new Error("agent receipt: requested_spend_cents must be non-negative");
   }
+  let mandateDigest: string | undefined;
+  if (authorization.mandate_digest_sha256_hex) {
+    mandateDigest = authorization.mandate_digest_sha256_hex.trim().toLowerCase();
+    requireHex64(mandateDigest, "mandate_digest_sha256_hex");
+  }
+  const mandateReferenceId = authorization.mandate_reference_id?.trim() || undefined;
+  if (mandateReferenceId && !mandateDigest) {
+    throw new Error("agent receipt: mandate_reference_id requires mandate_digest_sha256_hex");
+  }
+  let zkPolicyProofDigest: string | undefined;
+  if (authorization.zk_policy_proof_digest_sha256_hex) {
+    zkPolicyProofDigest = authorization.zk_policy_proof_digest_sha256_hex.trim().toLowerCase();
+    requireHex64(zkPolicyProofDigest, "zk_policy_proof_digest_sha256_hex");
+  }
   return {
     principal_did: principalDid,
     actor_subject: actorSubject,
@@ -356,6 +441,9 @@ function normalizeAuthorization(authorization: AgentReceiptAuthorizationV1): Age
     requested_spend_cents: authorization.requested_spend_cents,
     currency,
     reason_codes: normalizeScopeSet(authorization.reason_codes, "reason_codes"),
+    ...(mandateDigest ? { mandate_digest_sha256_hex: mandateDigest } : {}),
+    ...(mandateReferenceId ? { mandate_reference_id: mandateReferenceId } : {}),
+    ...(zkPolicyProofDigest ? { zk_policy_proof_digest_sha256_hex: zkPolicyProofDigest } : {}),
   };
 }
 
@@ -413,6 +501,11 @@ function normalizeExecution(execution: AgentReceiptExecutionV1): AgentReceiptExe
   if ((execution.duration_ms ?? 0) < 0) {
     throw new Error("agent receipt: duration_ms must be non-negative");
   }
+  let teeAttestationDigest: string | undefined;
+  if (execution.tee_attestation_digest_sha256_hex) {
+    teeAttestationDigest = execution.tee_attestation_digest_sha256_hex.trim().toLowerCase();
+    requireHex64(teeAttestationDigest, "tee_attestation_digest_sha256_hex");
+  }
   return {
     run_id: parseUuid(execution.run_id, "run_id"),
     tool_call_id: toolCallId,
@@ -424,6 +517,7 @@ function normalizeExecution(execution: AgentReceiptExecutionV1): AgentReceiptExe
     started_at: formatRfc3339Seconds(execution.started_at),
     completed_at: formatRfc3339Seconds(execution.completed_at),
     duration_ms: execution.duration_ms,
+    ...(teeAttestationDigest ? { tee_attestation_digest_sha256_hex: teeAttestationDigest } : {}),
   };
 }
 
@@ -483,7 +577,7 @@ function normalizePayment(payment: AgentReceiptPaymentV1): AgentReceiptPaymentV1
   };
 }
 
-function normalizeOutcome(outcome: AgentReceiptOutcomeV1): AgentReceiptOutcomeV1 {
+function normalizeOutcome(outcome: AgentReceiptOutcomeV1, scope: string): AgentReceiptOutcomeV1 {
   const harborState = normalizeScopeToken(outcome.harbor_state, "harbor_state");
   let spendReservationOutcome: AgentReceiptOutcomeV1["spend_reservation_outcome"];
   if (outcome.spend_reservation_outcome) {
@@ -495,11 +589,63 @@ function normalizeOutcome(outcome: AgentReceiptOutcomeV1): AgentReceiptOutcomeV1
     }
     spendReservationOutcome = normalized as AgentReceiptOutcomeV1["spend_reservation_outcome"];
   }
+  let settlementOutcome: AgentReceiptSettlementOutcome | undefined;
+  if (outcome.settlement_outcome) {
+    const normalized = outcome.settlement_outcome.trim();
+    if (
+      ![
+        SETTLEMENT_OUTCOME_SETTLED,
+        SETTLEMENT_OUTCOME_PENDING_FINALITY,
+        SETTLEMENT_OUTCOME_REVERSED,
+        SETTLEMENT_OUTCOME_FAILED,
+      ].includes(normalized)
+    ) {
+      throw new Error(
+        "agent receipt: settlement_outcome must be SETTLED, PENDING_FINALITY, REVERSED, or FAILED",
+      );
+    }
+    if (scope !== AGENT_RECEIPT_SCOPE_INTENT_TERMINAL) {
+      throw new Error("agent receipt: settlement_outcome is only valid for intent_terminal scope");
+    }
+    settlementOutcome = normalized as AgentReceiptSettlementOutcome;
+  }
   return {
     harbor_state: harborState,
     spend_reservation_outcome: spendReservationOutcome,
     predicate_passed: outcome.predicate_passed,
+    ...(settlementOutcome ? { settlement_outcome: settlementOutcome } : {}),
   };
+}
+
+function verifyMandateAuthorizationConsistency(
+  authorization: AgentReceiptAuthorizationV1,
+  attestations: AgentReceiptExternalAttestationV1[],
+): void {
+  const digest = authorization.mandate_digest_sha256_hex?.trim().toLowerCase() ?? "";
+  const refId = authorization.mandate_reference_id?.trim() ?? "";
+  if (!digest && !refId) {
+    return;
+  }
+  if (!digest) {
+    throw new Error("agent receipt: mandate_reference_id requires mandate_digest_sha256_hex");
+  }
+  requireHex64(digest, "mandate_digest_sha256_hex");
+  const matched = attestations.find(
+    (entry) =>
+      entry.kind.trim() === EXTERNAL_ATTESTATION_KIND_AGENT_MANDATE_V1 &&
+      entry.digest_sha256_hex.trim().toLowerCase() === digest,
+  );
+  if (!matched) {
+    throw new Error(
+      `agent receipt: mandate_digest_sha256_hex must match an external_attestations entry of kind ${EXTERNAL_ATTESTATION_KIND_AGENT_MANDATE_V1}`,
+    );
+  }
+  const attestationRef = matched.reference_id?.trim() ?? "";
+  if (refId && refId !== attestationRef) {
+    throw new Error(
+      "agent receipt: mandate_reference_id must match the matching external_attestations reference_id",
+    );
+  }
 }
 
 function normalizeReferences(references: AgentReceiptReferencesV1): AgentReceiptReferencesV1 {
@@ -596,6 +742,18 @@ function marshalCanonicalAgentReceipt(receipt: AgentReceiptV1): Uint8Array {
     ...(receipt.authorization.reason_codes?.length
       ? { reason_codes: receipt.authorization.reason_codes }
       : {}),
+    ...(receipt.authorization.mandate_digest_sha256_hex
+      ? { mandate_digest_sha256_hex: receipt.authorization.mandate_digest_sha256_hex }
+      : {}),
+    ...(receipt.authorization.mandate_reference_id
+      ? { mandate_reference_id: receipt.authorization.mandate_reference_id }
+      : {}),
+    ...(receipt.authorization.zk_policy_proof_digest_sha256_hex
+      ? {
+          zk_policy_proof_digest_sha256_hex:
+            receipt.authorization.zk_policy_proof_digest_sha256_hex,
+        }
+      : {}),
   };
 
   const payload: Record<string, unknown> = {
@@ -623,6 +781,12 @@ function marshalCanonicalAgentReceipt(receipt: AgentReceiptV1): Uint8Array {
       started_at: receipt.execution.started_at,
       completed_at: receipt.execution.completed_at,
       ...(receipt.execution.duration_ms ? { duration_ms: receipt.execution.duration_ms } : {}),
+      ...(receipt.execution.tee_attestation_digest_sha256_hex
+        ? {
+            tee_attestation_digest_sha256_hex:
+              receipt.execution.tee_attestation_digest_sha256_hex,
+          }
+        : {}),
     };
   }
   if (receipt.merchant) {
@@ -668,6 +832,9 @@ function marshalCanonicalAgentReceipt(receipt: AgentReceiptV1): Uint8Array {
     ...(receipt.outcome.predicate_passed !== undefined
       ? { predicate_passed: receipt.outcome.predicate_passed }
       : {}),
+    ...(receipt.outcome.settlement_outcome
+      ? { settlement_outcome: receipt.outcome.settlement_outcome }
+      : {}),
   };
   payload.references = {
     intent_id: receipt.references.intent_id,
@@ -676,6 +843,15 @@ function marshalCanonicalAgentReceipt(receipt: AgentReceiptV1): Uint8Array {
   };
   payload.external_attestations =
     receipt.external_attestations.length > 0 ? receipt.external_attestations : null;
+  if (receipt.continuity) {
+    payload.continuity = {
+      ...(receipt.continuity.prev_message_digest_sha256_hex
+        ? { prev_message_digest_sha256_hex: receipt.continuity.prev_message_digest_sha256_hex }
+        : {}),
+      sequence_number: receipt.continuity.sequence_number,
+      run_id: receipt.continuity.run_id,
+    };
+  }
 
   return new TextEncoder().encode(JSON.stringify(payload));
 }
@@ -702,10 +878,28 @@ export type VerifyAgentReceiptV1Options = {
    * When true, require any operator_attestation signing key to appear in
    * trustedOperatorPublicKeys (e.g. tenant middleware attach recognition keys). The
    * operator_did binding to authorization.agent.operator_did is always enforced.
+   *
+   * For `trustMode: "tenant_registry"`, defaults to true when an operator_attestation
+   * is present (empty trusted set rejects the attestation). Gateway JWKS / gateway
+   * trust mode leaves this opt-in.
    */
   verifyOperatorAgainstRegistry?: boolean;
   /** Lowercase operator signing pubkeys accepted when the registry check is enabled. */
   trustedOperatorPublicKeys?: readonly string[];
+  /**
+   * Mirror of Gateway `?trust_mode=`. `tenant_registry` defaults operator registry
+   * checks on when an operator_attestation is present.
+   */
+  trustMode?: "gateway" | "tenant_registry";
+  /**
+   * Required validity tier: `operational` (default), `primary`, or `attested`.
+   * `attested` forces operator registry checks.
+   */
+  requiredValidityTier?: AgentReceiptValidityTier | string;
+  /**
+   * When set, require `continuity.prev_message_digest_sha256_hex` to equal this digest.
+   */
+  expectedPriorMessageDigestHex?: string;
 };
 
 function allowsSigningPublicKeyHex(
@@ -730,13 +924,219 @@ function allowsOperatorPublicKeyHex(
   return trustedOperatorPublicKeys.some((value) => value.trim().toLowerCase() === normalized);
 }
 
+function normalizeValidityTier(value: string | undefined): AgentReceiptValidityTier {
+  const normalized = (value ?? "").trim().toLowerCase();
+  switch (normalized) {
+    case "":
+    case AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL:
+      return AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL;
+    case AGENT_RECEIPT_VALIDITY_TIER_PRIMARY:
+      return AGENT_RECEIPT_VALIDITY_TIER_PRIMARY;
+    case AGENT_RECEIPT_VALIDITY_TIER_ATTESTED:
+      return AGENT_RECEIPT_VALIDITY_TIER_ATTESTED;
+    default:
+      throw new Error(`agent receipt: unknown validity_tier ${JSON.stringify(value)}`);
+  }
+}
+
+function requirePrimaryValidity(receipt: AgentReceiptV1): void {
+  if (!receipt.evidence) {
+    throw new Error("agent receipt: primary validity requires evidence");
+  }
+  const digest = receipt.evidence.payee_signature_digest_sha256_hex?.trim().toLowerCase() ?? "";
+  if (!digest) {
+    throw new Error(
+      "agent receipt: primary validity requires evidence.payee_signature_digest_sha256_hex",
+    );
+  }
+  requireHex64(digest, "evidence.payee_signature_digest_sha256_hex");
+  if (receipt.payment && receipt.payment.intent_id !== receipt.references.intent_id) {
+    throw new Error(
+      "agent receipt: primary validity: payment.intent_id must match references.intent_id",
+    );
+  }
+  if (
+    receipt.merchant &&
+    receipt.merchant.payee_did.trim() !== "" &&
+    receipt.evidence.payee_did.trim() !== "" &&
+    receipt.merchant.payee_did.trim() !== receipt.evidence.payee_did.trim()
+  ) {
+    throw new Error(
+      "agent receipt: primary validity: evidence.payee_did must match merchant.payee_did",
+    );
+  }
+}
+
+function requireAttestedValidity(
+  receipt: AgentReceiptV1,
+  trustedOperatorPublicKeys: readonly string[] | undefined,
+): void {
+  if (!receipt.operator_attestation) {
+    throw new Error("agent receipt: attested validity requires operator_attestation");
+  }
+  if (
+    !allowsOperatorPublicKeyHex(
+      receipt.operator_attestation.signing_public_key_ed25519_hex,
+      trustedOperatorPublicKeys,
+    )
+  ) {
+    throw new Error(
+      "agent receipt: attested validity requires operator_attestation signing key in the configured tenant operator registry",
+    );
+  }
+}
+
+/** Returns the highest validity tier met under the given registry options. */
+export function achievedValidityTier(
+  receipt: AgentReceiptV1,
+  options: Pick<VerifyAgentReceiptV1Options, "trustedOperatorPublicKeys"> = {},
+): AgentReceiptValidityTier {
+  try {
+    requirePrimaryValidity(receipt);
+  } catch {
+    return AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL;
+  }
+  if (
+    receipt.operator_attestation &&
+    allowsOperatorPublicKeyHex(
+      receipt.operator_attestation.signing_public_key_ed25519_hex,
+      options.trustedOperatorPublicKeys,
+    )
+  ) {
+    return AGENT_RECEIPT_VALIDITY_TIER_ATTESTED;
+  }
+  return AGENT_RECEIPT_VALIDITY_TIER_PRIMARY;
+}
+
+/**
+ * Builds the next continuity link from a prior signed action receipt for the same run.
+ * When `prior` is omitted, returns sequence 1 with no prev digest.
+ */
+export function continuityFromPrior(
+  runId: string,
+  prior?: AgentReceiptV1 | null,
+): AgentReceiptContinuityV1 {
+  const normalizedRunId = runId.trim().toLowerCase();
+  if (!UUID_RE.test(normalizedRunId)) {
+    throw new Error("agent receipt: continuity.run_id must be a canonical UUID");
+  }
+  if (!prior) {
+    return {
+      sequence_number: 1,
+      run_id: normalizedRunId,
+    };
+  }
+  let priorRunId = normalizedRunId;
+  if (prior.continuity?.run_id?.trim()) {
+    priorRunId = prior.continuity.run_id.trim().toLowerCase();
+  } else if (prior.execution?.run_id?.trim()) {
+    priorRunId = prior.execution.run_id.trim().toLowerCase();
+  }
+  if (priorRunId !== normalizedRunId) {
+    throw new Error("agent receipt: continuity prior run_id mismatch");
+  }
+  const prevDigest = prior.message_digest_sha256_hex.trim().toLowerCase();
+  requireHex64(prevDigest, "prior message_digest_sha256_hex");
+  const seq =
+    prior.continuity && prior.continuity.sequence_number > 0
+      ? prior.continuity.sequence_number + 1
+      : 2;
+  return {
+    prev_message_digest_sha256_hex: prevDigest,
+    sequence_number: seq,
+    run_id: normalizedRunId,
+  };
+}
+
+/**
+ * Validates an ordered set of action receipts that declare continuity.
+ * Receipts without continuity are ignored. Broken links fail closed.
+ */
+export function verifyContinuityChain(receipts: readonly AgentReceiptV1[]): void {
+  const linked = receipts
+    .filter((receipt) => receipt.continuity != null)
+    .map((receipt) => normalizeReceipt(receipt))
+    .sort((a, b) => {
+      const aRun = a.continuity?.run_id ?? "";
+      const bRun = b.continuity?.run_id ?? "";
+      if (aRun === bRun) {
+        return (a.continuity?.sequence_number ?? 0) - (b.continuity?.sequence_number ?? 0);
+      }
+      return aRun < bRun ? -1 : 1;
+    });
+  if (linked.length === 0) {
+    return;
+  }
+  const prevByRun = new Map<string, AgentReceiptV1>();
+  for (const item of linked) {
+    const continuity = item.continuity;
+    if (!continuity) {
+      continue;
+    }
+    const prior = prevByRun.get(continuity.run_id);
+    if (!prior) {
+      if (continuity.sequence_number !== 1 || continuity.prev_message_digest_sha256_hex) {
+        throw new Error(
+          `agent receipt: continuity chain for run ${continuity.run_id} must start at sequence_number 1 without prev digest`,
+        );
+      }
+      prevByRun.set(continuity.run_id, item);
+      continue;
+    }
+    const expectedSeq = (prior.continuity?.sequence_number ?? 1) + 1;
+    if (continuity.sequence_number !== expectedSeq) {
+      throw new Error(
+        `agent receipt: continuity chain sequence gap for run ${continuity.run_id}: got ${continuity.sequence_number} want ${expectedSeq}`,
+      );
+    }
+    if (continuity.prev_message_digest_sha256_hex !== prior.message_digest_sha256_hex) {
+      throw new Error(
+        `agent receipt: continuity chain digest mismatch for run ${continuity.run_id} sequence ${continuity.sequence_number}`,
+      );
+    }
+    prevByRun.set(continuity.run_id, item);
+  }
+}
+
+function verifyContinuityExpectedPrior(
+  receipt: AgentReceiptV1,
+  expectedPriorMessageDigestHex: string | undefined,
+): void {
+  const expected = expectedPriorMessageDigestHex?.trim().toLowerCase() ?? "";
+  if (!expected) {
+    return;
+  }
+  if (!receipt.continuity) {
+    throw new Error(
+      "agent receipt: continuity is required when an expected prior digest is configured",
+    );
+  }
+  if (receipt.continuity.sequence_number < 2) {
+    throw new Error(
+      "agent receipt: continuity: expected prior digest requires sequence_number > 1",
+    );
+  }
+  if (receipt.continuity.prev_message_digest_sha256_hex !== expected) {
+    throw new Error(
+      "agent receipt: continuity: prev_message_digest_sha256_hex does not match expected prior digest",
+    );
+  }
+}
+
 /** Validates structure, receipt_id derivation, digest, and detached Ed25519 signature. */
 export async function verifyAgentReceiptV1(
   receipt: AgentReceiptV1,
   options: VerifyAgentReceiptV1Options = {},
 ): Promise<AgentReceiptV1> {
   ensureEd25519Sha512Sync();
+  const requiredTier = normalizeValidityTier(options.requiredValidityTier);
+  const verifyOperatorAgainstRegistry =
+    options.verifyOperatorAgainstRegistry === true ||
+    requiredTier === AGENT_RECEIPT_VALIDITY_TIER_ATTESTED
+      ? true
+      : options.verifyOperatorAgainstRegistry;
   const normalized = normalizeReceipt(receipt);
+  verifyContinuityExpectedPrior(normalized, options.expectedPriorMessageDigestHex);
   if (!allowsSigningPublicKeyHex(normalized.signing_public_key_ed25519_hex, options.expectedSigningPublicKeys)) {
     throw new Error(
       "agent receipt: signing_public_key_ed25519_hex is not in the configured trusted key set",
@@ -765,7 +1165,16 @@ export async function verifyAgentReceiptV1(
   if (!valid) {
     throw new Error("agent receipt: ed25519 signature verification failed");
   }
-  await verifyOperatorAttestation(normalized, digest, options);
+  await verifyOperatorAttestation(normalized, digest, {
+    ...options,
+    verifyOperatorAgainstRegistry,
+  });
+  if (requiredTier === AGENT_RECEIPT_VALIDITY_TIER_PRIMARY) {
+    requirePrimaryValidity(normalized);
+  } else if (requiredTier === AGENT_RECEIPT_VALIDITY_TIER_ATTESTED) {
+    requirePrimaryValidity(normalized);
+    requireAttestedValidity(normalized, options.trustedOperatorPublicKeys);
+  }
   return normalized;
 }
 
@@ -805,8 +1214,12 @@ async function verifyOperatorAttestation(
       "agent receipt: operator_attestation message_digest_sha256_hex must match gateway digest",
     );
   }
+  const enforceRegistry =
+    options.verifyOperatorAgainstRegistry === true ||
+    (options.verifyOperatorAgainstRegistry !== false &&
+      options.trustMode === "tenant_registry");
   if (
-    options.verifyOperatorAgainstRegistry &&
+    enforceRegistry &&
     !allowsOperatorPublicKeyHex(
       attestation.signing_public_key_ed25519_hex,
       options.trustedOperatorPublicKeys,

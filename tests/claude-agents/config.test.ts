@@ -8,7 +8,12 @@ import {
   type PaybondAgentRunHost,
   type PaybondRunGuard,
 } from "../../src/agent/index.js";
-import { createPaybondClaudeAgentsConfig } from "../../src/claude-agents/index.js";
+import {
+  CLAUDE_AGENT_SDK_BUILTIN_TOOL_NAMES,
+  createPaybondClaudeAgentsConfig,
+  findUnguardedClaudeBuiltinTools,
+  warnOnUnguardedClaudeBuiltinTools,
+} from "../../src/claude-agents/index.js";
 
 function makeRegistry() {
   return createPaybondToolRegistry({
@@ -171,5 +176,32 @@ describe("createPaybondClaudeAgentsConfig", () => {
     expect(() => createPaybondClaudeAgentsConfig(run, "not-an-array" as never)).toThrow(
       /SDK tool\(\) definitions/,
     );
+  });
+
+  it("detects unguarded built-in SDK tools in query allowedTools", () => {
+    expect(findUnguardedClaudeBuiltinTools(["Read", "mcp__paybond__travel.book_hotel"])).toEqual([
+      "Read",
+    ]);
+    expect(findUnguardedClaudeBuiltinTools(["mcp__paybond__travel.book_hotel"])).toEqual([]);
+    expect(CLAUDE_AGENT_SDK_BUILTIN_TOOL_NAMES).toContain("Bash");
+  });
+
+  it("warns once when built-in SDK tools remain in query allowedTools", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    warnOnUnguardedClaudeBuiltinTools(["Read", "Bash"]);
+    warnOnUnguardedClaudeBuiltinTools(["Read"]);
+    expect(warnSpy).toHaveBeenCalledOnce();
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain("Unguarded Claude Agent SDK built-in tools");
+    warnSpy.mockRestore();
+  });
+
+  it("regression: SDK tool() definitions expose name and handler", () => {
+    const handler = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "ok" }],
+    }));
+    const sdkTool = tool("travel.book_hotel", "Book hotel", { city: z.string() }, handler);
+    expect(typeof sdkTool.name).toBe("string");
+    expect(typeof sdkTool.handler).toBe("function");
+    expect(sdkTool.name).toBe("travel.book_hotel");
   });
 });

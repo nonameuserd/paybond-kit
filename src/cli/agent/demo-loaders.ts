@@ -83,6 +83,18 @@ export async function loadRunOpenAIAgentsSandboxDemo() {
   }
 }
 
+export async function loadRunGoogleAdkSandboxDemo() {
+  try {
+    const mod = await import("../../google-adk/sandbox-demo.js");
+    return mod.runGoogleAdkSandboxDemo;
+  } catch (err) {
+    if (isMissingModuleError(err, "@google/adk")) {
+      throw missingPeerDependencyError("@google/adk", "google-adk");
+    }
+    throw err;
+  }
+}
+
 export async function loadRunMastraSandboxDemo() {
   try {
     const mod = await import("../../mastra/sandbox-demo.js");

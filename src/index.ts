@@ -32,6 +32,7 @@ import {
   instrumentPaybondLangGraph,
   instrumentPaybondMCP,
   instrumentPaybondOpenAI,
+  instrumentPaybondGoogleAdk,
   instrumentPaybondVercel,
   resolveAgentPolicySource,
   wrapPaybondTools,
@@ -4181,6 +4182,12 @@ export class Paybond {
     return instrumentPaybondOpenAI(this, input);
   }
 
+  instrumentGoogleAdk<TTools>(
+    input: Omit<PaybondInstrumentInput<TTools>, "framework"> & { tools: TTools },
+  ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
+    return instrumentPaybondGoogleAdk(this, input);
+  }
+
   instrumentVercel<TTools>(
     input: Omit<PaybondInstrumentInput<TTools>, "framework"> & { tools: TTools },
   ): Promise<PaybondInstrumented<TTools> | PaybondInstrumentRuntime<TTools>> {
@@ -4382,6 +4389,7 @@ export {
   instrumentPaybondLangGraph,
   instrumentPaybondMCP,
   instrumentPaybondOpenAI,
+  instrumentPaybondGoogleAdk,
   instrumentPaybondVercel,
   paybondGenericToolExecutorAdapter,
   paybondToolInputGuardAdapter,
@@ -4501,18 +4509,30 @@ export {
   AGENT_RECEIPT_VERSION_V1,
   AGENT_RECEIPT_SIGNING_KEYS_WELL_KNOWN_PATH,
   AGENT_RECEIPT_WELL_KNOWN_PATH,
+  AGENT_RECEIPT_VALIDITY_TIER_OPERATIONAL,
+  AGENT_RECEIPT_VALIDITY_TIER_PRIMARY,
+  AGENT_RECEIPT_VALIDITY_TIER_ATTESTED,
+  EXTERNAL_ATTESTATION_KIND_AGENT_MANDATE_V1,
+  SETTLEMENT_OUTCOME_SETTLED,
+  SETTLEMENT_OUTCOME_PENDING_FINALITY,
+  SETTLEMENT_OUTCOME_REVERSED,
+  SETTLEMENT_OUTCOME_FAILED,
   PAYBOND_AGENT_RECEIPT_ATTESTATIONS_HEADER,
   PAYBOND_AGENT_RECEIPT_SOURCE_RUN_HEADER,
   actionReceiptId,
+  achievedValidityTier,
   attachOperatorAttestationV1,
   canonicalAgentReceiptBytes,
   configHashSha256Hex,
+  continuityFromPrior,
   promptHashSha256Hex,
   valueDigestSha256Hex,
   verifyAgentReceiptV1,
   verifyAgentReceiptV1FromJSON,
+  verifyContinuityChain,
   type AgentReceiptAgentV1,
   type AgentReceiptAuthorizationV1,
+  type AgentReceiptContinuityV1,
   type AgentReceiptEvidenceV1,
   type AgentReceiptExecutionV1,
   type AgentReceiptExternalAttestationV1,
@@ -4522,10 +4542,72 @@ export {
   type AgentReceiptPaymentV1,
   type AgentReceiptPolicyV1,
   type AgentReceiptReferencesV1,
+  type AgentReceiptSettlementOutcome,
   type AgentReceiptV1,
+  type AgentReceiptValidityTier,
   type ConfigHashInput,
   type VerifyAgentReceiptV1Options,
 } from "./agent-receipt.js";
+export {
+  AGENT_RECEIPT_TRANSPARENCY_INCLUSION_PROOF_KIND_V1,
+  AGENT_RECEIPT_TRANSPARENCY_SCHEMA_VERSION,
+  AGENT_RECEIPT_TRANSPARENCY_STH_KIND_V1,
+  merkleLeafHashRFC6962,
+  merkleNodeHashRFC6962,
+  verifyAgentReceiptInclusion,
+  verifySignedTreeHeadV1,
+  type InclusionProofV1,
+  type SignedTreeHeadV1,
+} from "./agent-receipt-inclusion.js";
+export {
+  ACTA_AGENT_RECEIPT_TYPE,
+  ACTA_SIGNATURE_ALG_EDDSA,
+  projectActaDecisionFromAgentReceipt,
+  projectAgentReceiptToActaDecisionReceipt,
+  type ActaDecision,
+  type ActaDecisionReceiptPayloadV1,
+  type ActaDecisionReceiptSignatureV1,
+  type ActaDecisionReceiptV1,
+} from "./agent-receipt-acta.js";
+export {
+  PEF_CANON_VERSION_JCS_RFC8785_V1,
+  PEF_CLAIM_TYPE_AGENT_RECEIPT_V1,
+  PEF_RECEIPT_FORMAT_AGENT_RECEIPT_V1,
+  PEF_VERSION_V1,
+  agentReceiptPefFrameId,
+  agentReceiptPefPreimage,
+  agentReceiptPefReceiptHash,
+  buildAgentReceiptPefFrame,
+  jcsCanonicalBytes,
+  verifyAgentReceiptPefFrameId,
+  type AgentReceiptPefFrameV1,
+  type BuildAgentReceiptPefFrameInput,
+} from "./agent-receipt-pef.js";
+export {
+  AGENT_RECEIPT_SCITT_EXPORT_KIND_V1,
+  AGENT_RECEIPT_SCITT_STATEMENT_KIND_V1,
+  COSE_ALG_EDDSA,
+  buildAgentReceiptScittExport,
+  verifyAgentReceiptScittExport,
+  type AgentReceiptScittExportV1,
+  type AgentReceiptScittStatementV1,
+  type BuildAgentReceiptScittExportInput,
+} from "./agent-receipt-scitt.js";
+export {
+  AGENT_RECEIPT_OWNER_DISCLOSURE_HPKE_SUITE,
+  AGENT_RECEIPT_OWNER_DISCLOSURE_INFO,
+  AGENT_RECEIPT_OWNER_DISCLOSURE_KIND_V1,
+  AGENT_RECEIPT_OWNER_DISCLOSURE_PLAINTEXT_KIND_V1,
+  AGENT_RECEIPT_OWNER_DISCLOSURE_SCHEMA_VERSION,
+  decryptOwnerDisclosurePackage,
+  deriveOwnerDisclosurePlaintext,
+  encryptOwnerDisclosurePackage,
+  generateX25519KeyPairHex,
+  openHpkeBaseX25519Aes128Gcm,
+  sealHpkeBaseX25519Aes128Gcm,
+  type AgentReceiptOwnerDisclosurePlaintextV1,
+  type AgentReceiptOwnerDisclosureV1,
+} from "./agent-receipt-owner-disclosure.js";
 export {
   FORBIDDEN_AGENT_RECEIPT_FIELDS,
   parseAgentReceiptJSON,

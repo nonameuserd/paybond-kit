@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { existsSync, readdirSync } from "node:fs";
 import { execSync } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 /** @param {string} version */
 export function isKitVersionOnRegistry(version) {
@@ -73,6 +73,27 @@ export function findKitLockEntry(lock) {
 }
 
 /**
+ * Keep package.json @paybond/kit range aligned with the stamped lock range.
+ * @param {string} packageJsonPath
+ * @param {string} kitVersion
+ */
+export async function patchKitPackageJsonRange(packageJsonPath, kitVersion) {
+  if (!existsSync(packageJsonPath)) {
+    return;
+  }
+  const pkg = JSON.parse(await readFile(packageJsonPath, "utf8"));
+  const kitRange = `^${kitVersion}`;
+  if (!pkg.dependencies?.["@paybond/kit"]) {
+    return;
+  }
+  if (pkg.dependencies["@paybond/kit"] === kitRange) {
+    return;
+  }
+  pkg.dependencies["@paybond/kit"] = kitRange;
+  await writeFile(packageJsonPath, `${JSON.stringify(pkg, null, 2)}\n`);
+}
+
+/**
  * @param {string} lockPath
  * @param {string} kitVersion
  * @param {string} registryIntegrity
@@ -98,6 +119,9 @@ export async function patchKitLockIntegrity(lockPath, kitVersion, registryIntegr
   entry.integrity = registryIntegrity;
 
   await writeFile(lockPath, `${JSON.stringify(lock, null, 2)}\n`);
+
+  // package.json must declare the same range or `npm ci` rejects the lockfile.
+  await patchKitPackageJsonRange(join(dirname(lockPath), "package.json"), kitVersion);
 }
 
 /**
@@ -128,6 +152,7 @@ export async function verifyTemplateLockIntegrity(templatesDir, kitVersion, opti
       continue;
     }
 
+    const packageJsonPath = join(templatesDir, repo.name, "package.json");
     const lock = JSON.parse(await readFile(lockPath, "utf8"));
     const found = findKitLockEntry(lock);
     if (!found) {
@@ -135,6 +160,7 @@ export async function verifyTemplateLockIntegrity(templatesDir, kitVersion, opti
     }
 
     const { entry } = found;
+    const kitRange = `^${kitVersion}`;
     const problems = [];
     if (entry.integrity !== registryIntegrity) {
       problems.push(
@@ -148,6 +174,22 @@ export async function verifyTemplateLockIntegrity(templatesDir, kitVersion, opti
     }
     if (entry.version !== kitVersion) {
       problems.push(`version ${entry.version ?? "(missing)"} != ${kitVersion}`);
+    }
+
+    if (existsSync(packageJsonPath)) {
+      const pkg = JSON.parse(await readFile(packageJsonPath, "utf8"));
+      const declared = pkg.dependencies?.["@paybond/kit"];
+      if (declared && declared !== kitRange) {
+        problems.push(
+          `package.json @paybond/kit ${declared} != ${kitRange} (npm ci requires lock sync)`,
+        );
+      }
+      const lockRange = lock.packages?.[""]?.dependencies?.["@paybond/kit"];
+      if (declared && lockRange && declared !== lockRange) {
+        problems.push(
+          `package.json @paybond/kit ${declared} != lock ${lockRange}`,
+        );
+      }
     }
 
     if (problems.length > 0) {

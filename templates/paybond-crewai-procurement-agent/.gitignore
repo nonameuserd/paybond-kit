@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env.local
+.paybond/
+__pycache__/
+*.pyc
+.venv/

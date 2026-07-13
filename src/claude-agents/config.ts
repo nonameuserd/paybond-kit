@@ -38,8 +38,13 @@ function loadClaudeAgentSdk(): ClaudeAgentSdkModule {
   return cachedClaudeAgentSdk;
 }
 
-/** Pre-built SDK tool from `tool()` in `@anthropic-ai/claude-agent-sdk`. */
-export type ClaudeAgentSdkTool = SdkMcpToolDefinition;
+/**
+ * Pre-built SDK tool from `tool()` in `@anthropic-ai/claude-agent-sdk`.
+ *
+ * Uses `any` for the schema param to match `createSdkMcpServer({ tools })`, which
+ * accepts heterogeneous `SdkMcpToolDefinition<any>[]` (per-tool schemas differ).
+ */
+export type ClaudeAgentSdkTool = SdkMcpToolDefinition<any>;
 
 type CallToolResult = {
   content: Array<{
@@ -51,12 +56,66 @@ type CallToolResult = {
   isError?: boolean;
 };
 
+/** Built-in Claude Agent SDK tools that execute outside Paybond MCP and stay unguarded. */
+export const CLAUDE_AGENT_SDK_BUILTIN_TOOL_NAMES = [
+  "Read",
+  "Write",
+  "Edit",
+  "Bash",
+  "Glob",
+  "Grep",
+  "WebFetch",
+  "WebSearch",
+  "NotebookEdit",
+  "Task",
+] as const;
+
+export type ClaudeAgentSdkBuiltinToolName =
+  (typeof CLAUDE_AGENT_SDK_BUILTIN_TOOL_NAMES)[number];
+
 export type PaybondClaudeAgentsConfigOptions = {
   /** MCP server name; defaults to `"paybond"`. */
   serverName?: string;
   /** Optional version passed to `createSdkMcpServer`. */
   serverVersion?: string;
+  /**
+   * When true (default), emit a console warning if `queryAllowedTools` includes built-in SDK tools
+   * that bypass Paybond Harbor verify and auto-evidence.
+   */
+  warnOnUnguardedBuiltins?: boolean;
+  /** `allowedTools` passed to Claude Agent SDK `query()` — used for built-in coverage warnings. */
+  queryAllowedTools?: readonly string[];
 };
+
+let claudeBuiltinToolsWarningEmitted = false;
+
+/** Returns built-in SDK tool names present in a query `allowedTools` list. */
+export function findUnguardedClaudeBuiltinTools(
+  queryAllowedTools: readonly string[] | undefined,
+): ClaudeAgentSdkBuiltinToolName[] {
+  if (!queryAllowedTools?.length) {
+    return [];
+  }
+  const allowed = new Set(queryAllowedTools);
+  return CLAUDE_AGENT_SDK_BUILTIN_TOOL_NAMES.filter((name) => allowed.has(name));
+}
+
+/** Warn once per process when built-in Claude SDK tools remain enabled alongside Paybond MCP tools. */
+export function warnOnUnguardedClaudeBuiltinTools(
+  queryAllowedTools: readonly string[] | undefined,
+): void {
+  const unguarded = findUnguardedClaudeBuiltinTools(queryAllowedTools);
+  if (unguarded.length === 0 || claudeBuiltinToolsWarningEmitted) {
+    return;
+  }
+  claudeBuiltinToolsWarningEmitted = true;
+  console.warn(
+    `[paybond/claude-agents] Unguarded Claude Agent SDK built-in tools remain enabled (${unguarded.join(", ")}). ` +
+      "Paybond governs only custom tools registered via tool() in the Paybond MCP server. " +
+      "Remove built-ins from allowedTools or restrict the agent to mcp__paybond__* tools. " +
+      "See https://docs.paybond.ai/kit/claude-agents#built-in-sdk-tools",
+  );
+}
 
 export type ClaudeAgentsConfig = {
   mcpServer: ReturnType<
@@ -218,6 +277,10 @@ export function createPaybondClaudeAgentsConfig(
   const sdkTools = assertClaudeAgentSdkTools(tools);
   const serverName = options?.serverName?.trim() || "paybond";
 
+  if (options?.warnOnUnguardedBuiltins !== false) {
+    warnOnUnguardedClaudeBuiltinTools(options?.queryAllowedTools);
+  }
+
   for (const sdkTool of sdkTools) {
     wrapClaudeAgentSdkTool(run, sdkTool);
   }
@@ -225,7 +288,7 @@ export function createPaybondClaudeAgentsConfig(
   const mcpServer = createSdkMcpServer({
     name: serverName,
     ...(options?.serverVersion ? { version: options.serverVersion } : {}),
-    tools: sdkTools as SdkMcpToolDefinition[],
+    tools: sdkTools,
   });
 
   return {

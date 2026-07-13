@@ -1,5 +1,17 @@
 import type { Tool, ToolSet } from "ai";
 import type { PaybondAgentRun } from "../agent/run.js";
+import {
+  isProviderExecutedVercelTool,
+  paybondProviderExecutedToolDenialReason,
+} from "./provider-executed.js";
+
+export type PaybondVercelWrapToolsOptions = {
+  /**
+   * Fail closed on provider-executed tools (`isProviderExecuted: true`).
+   * When enabled, those tools cannot run — only locally executed registry tools are governed.
+   */
+  denyProviderExecutedTools?: boolean;
+};
 
 function isClientExecutedTool(tool: Tool): tool is Tool & {
   execute: NonNullable<Tool["execute"]>;
@@ -7,11 +19,21 @@ function isClientExecutedTool(tool: Tool): tool is Tool & {
   if (typeof tool !== "object" || tool === null) {
     return false;
   }
-  const record = tool as Record<string, unknown>;
-  if (record.isProviderExecuted === true) {
+  if (isProviderExecutedVercelTool(tool)) {
     return false;
   }
-  return typeof record.execute === "function";
+  return typeof (tool as Record<string, unknown>).execute === "function";
+}
+
+function denyProviderExecutedTool(tool: Tool, toolName: string): Tool {
+  return {
+    ...tool,
+    execute: async () => {
+      throw new Error(
+        `${paybondProviderExecutedToolDenialReason()} (tool=${toolName})`,
+      );
+    },
+  };
 }
 
 /**
@@ -23,10 +45,16 @@ function isClientExecutedTool(tool: Tool): tool is Tool & {
 export function paybondVercelWrapTools<TOOLS extends ToolSet>(
   run: PaybondAgentRun,
   tools: TOOLS,
+  options?: PaybondVercelWrapToolsOptions,
 ): TOOLS {
   const wrapped: Record<string, Tool> = {};
+  const denyProviderExecutedTools = options?.denyProviderExecutedTools === true;
 
   for (const [toolName, tool] of Object.entries(tools) as Array<[string, Tool]>) {
+    if (denyProviderExecutedTools && isProviderExecutedVercelTool(tool)) {
+      wrapped[toolName] = denyProviderExecutedTool(tool, toolName);
+      continue;
+    }
     if (!isClientExecutedTool(tool) || !run.registry.isSideEffecting(toolName)) {
       wrapped[toolName] = tool;
       continue;

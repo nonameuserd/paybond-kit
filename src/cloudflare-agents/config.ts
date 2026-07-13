@@ -26,8 +26,9 @@ export type PaybondCloudflareAgentsConfig<TOOLS extends ToolSet = ToolSet> = {
 export function paybondCloudflareAgentsWrapTools<TOOLS extends ToolSet>(
   run: PaybondAgentRun,
   tools: TOOLS,
+  options?: PaybondVercelAgentConfigOptions,
 ): TOOLS {
-  return paybondVercelWrapTools(run, tools);
+  return paybondVercelWrapTools(run, tools, options);
 }
 
 /**

@@ -197,6 +197,17 @@ export type PaybondRunGuard = {
   ): Promise<void>;
 };
 
+export type AgentReceiptComposeStatus = "composed" | "failed";
+
+/** Structured Gateway compose outcome attached to Harbor evidence responses when signing is configured. */
+export type AgentReceiptComposeResult = {
+  composeStatus: AgentReceiptComposeStatus;
+  receiptId?: string;
+  scope?: string;
+  warningCode?: string;
+  warningMessage?: string;
+};
+
 export type PaybondInterceptEvidenceResult = {
   submitted: true;
   intentId: string;
@@ -207,6 +218,11 @@ export type PaybondInterceptEvidenceResult = {
   payloadDigestSha256Hex?: string;
   /** sha256 hex digest of submitted evidence artifacts, when returned by Harbor. */
   artifactsDigestSha256Hex?: string;
+  /**
+   * Gateway agent-receipt compose outcome when `PAYBOND_AGENT_RECEIPT_SIGNING_KEY_HEX` is
+   * configured. `composeStatus: "failed"` is a structured warning — evidence still succeeded.
+   */
+  agentReceipt?: AgentReceiptComposeResult;
 };
 
 export type PaybondInterceptWrapExecuteResult<TResult> = {

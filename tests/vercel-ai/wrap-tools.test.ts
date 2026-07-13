@@ -120,7 +120,7 @@ describe("paybondVercelWrapTools", () => {
     expect(searchWebExecute).not.toHaveBeenCalled();
   });
 
-  it("passes approval tokens into wrapped execute verify", async () => {
+  it("passes stored approval tokens into wrapped execute verify", async () => {
     const guard = makeGuard();
     const run = await PaybondAgentRun.bind(makeHost(guard), {
       bootstrap: {
@@ -155,5 +155,44 @@ describe("paybondVercelWrapTools", () => {
     expect(guard.assertSpendAuthorized).toHaveBeenCalledWith(
       expect.objectContaining({ approvalToken: "operator-token-456" }),
     );
+  });
+
+  it("fail-closes provider-executed tools when denyProviderExecutedTools is enabled", async () => {
+    const guard = makeGuard();
+    const run = await PaybondAgentRun.bind(makeHost(guard), {
+      bootstrap: {
+        kind: "sandbox",
+        operation: "travel.book_hotel",
+        requestedSpendCents: 20_000,
+      },
+      registry: makeRegistry(),
+    });
+
+    const providerExecute = vi.fn(async () => ({ hits: ["provider"] }));
+    const wrapped = paybondVercelWrapTools(
+      run,
+      {
+        provider_search: tool({
+          description: "Provider web search",
+          inputSchema: jsonSchema<{ query: string }>({
+            type: "object",
+            properties: { query: { type: "string" } },
+            required: ["query"],
+          }),
+          execute: providerExecute,
+          isProviderExecuted: true,
+        }),
+      },
+      { denyProviderExecutedTools: true },
+    );
+
+    await expect(
+      wrapped.provider_search.execute!(
+        { query: "hotels" },
+        { toolCallId: "call-provider", messages: [] },
+      ),
+    ).rejects.toThrow(/Paybond governs only locally executed registry tools/);
+    expect(providerExecute).not.toHaveBeenCalled();
+    expect(guard.assertSpendAuthorized).not.toHaveBeenCalled();
   });
 });

@@ -8,6 +8,7 @@ import {
   type PaybondOpenAIAgentsAdapterOptions,
 } from "../openai-agents/index.js";
 import { PaybondPolicy, type PaybondPolicyLoadSource } from "../policy/load.js";
+import type { PaybondPolicyAdapterOptions } from "../policy/adapter-options.js";
 import type { PaybondPolicySandboxBootstrapOptions } from "../policy/sandbox-bootstrap.js";
 import type { PolicyValidatorOptions } from "../policy/validate.js";
 import { createPaybondVercelAgentConfig } from "../vercel-ai/config.js";
@@ -28,6 +29,11 @@ import {
   type MastraToolLike,
 } from "../mastra/config.js";
 import {
+  createPaybondGoogleAdkConfig,
+  type GoogleAdkFunctionToolLike,
+  type PaybondGoogleAdkConfig,
+} from "../google-adk/config.js";
+import {
   createPaybondGenericAgentConfig,
 } from "./generic-runner.js";
 import type { PaybondToolRegistry } from "./registry.js";
@@ -38,6 +44,7 @@ import type { PaybondAgentRunBindInput, PaybondRunBindingAttachInput } from "./t
 export type GuardedAgentFramework =
   | "generic"
   | "openai-agents"
+  | "google-adk"
   | "vercel-ai"
   | "langgraph"
   | "claude-agents"
@@ -75,6 +82,7 @@ export type CreateGuardedAgentResultBase = {
   openAIAgentsAdapter?: ReturnType<typeof createOpenAIAgentsAdapter>;
   runConfig?: ReturnType<typeof createOpenAIAgentsAdapter>["runConfig"];
   claudeAgentsConfig?: ClaudeAgentsConfig;
+  googleAdkConfig?: PaybondGoogleAdkConfig;
 };
 
 export type CreateGuardedAgentResult<TTools = unknown> = CreateGuardedAgentResultBase & {
@@ -136,6 +144,7 @@ export async function createGuardedAgent<TTools>(
   const run = await bindGuardedRun(paybond, policy, input);
   const base = { run, policy, registry };
   const framework = input.framework ?? "generic";
+  const adapterOptions = policy.toAdapterOptions();
 
   switch (framework) {
     case "generic": {
@@ -143,7 +152,7 @@ export async function createGuardedAgent<TTools>(
       return { ...base, framework: "generic", agentTools: config.tools } as CreateGuardedAgentResult<TTools>;
     }
     case "vercel-ai": {
-      const config = createPaybondVercelAgentConfig(run, input.tools as ToolSet);
+      const config = createPaybondVercelAgentConfig(run, input.tools as ToolSet, adapterOptions);
       return {
         ...base,
         framework: "vercel-ai",
@@ -164,6 +173,18 @@ export async function createGuardedAgent<TTools>(
         agentTools: config.tools,
         openAIAgentsAdapter: adapter,
         runConfig: config.runConfig,
+      } as CreateGuardedAgentResult<TTools>;
+    }
+    case "google-adk": {
+      const googleAdkConfig = createPaybondGoogleAdkConfig(
+        run,
+        input.tools as GoogleAdkFunctionToolLike[],
+      );
+      return {
+        ...base,
+        framework: "google-adk",
+        agentTools: googleAdkConfig.tools,
+        googleAdkConfig,
       } as CreateGuardedAgentResult<TTools>;
     }
     case "langgraph": {
@@ -200,6 +221,7 @@ export async function createGuardedAgent<TTools>(
       const config = createPaybondCloudflareAgentsConfig(
         run,
         input.tools as CloudflareAgentsToolSet,
+        adapterOptions,
       );
       return {
         ...base,

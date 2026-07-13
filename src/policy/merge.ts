@@ -1,6 +1,8 @@
 import {
   PaybondPolicyValidationError,
   PAYBOND_POLICY_SCHEMA_VERSION,
+  PaybondPolicyAdapterSection,
+  PaybondPolicyAdapterOverrideSection,
   type PaybondPolicyBinding,
   type PaybondPolicyBindingOverride,
   type PaybondPolicyDocument,
@@ -267,6 +269,42 @@ function intersectAllowedTools(
   return intersection;
 }
 
+function mergeAdapterSection(
+  base: PaybondPolicyAdapterSection | undefined,
+  overlay: PaybondPolicyAdapterSection | undefined,
+  override: PaybondPolicyAdapterOverrideSection | undefined,
+  denied: PolicyMergeDeniedWidening[],
+  report: PolicyMergeReport,
+): PaybondPolicyAdapterSection | undefined {
+  const values = [
+    base?.deny_provider_executed_tools,
+    overlay?.deny_provider_executed_tools,
+    override?.deny_provider_executed_tools,
+  ];
+  if (values.every((value) => value === undefined)) {
+    return undefined;
+  }
+
+  if (
+    base?.deny_provider_executed_tools === true &&
+    (overlay?.deny_provider_executed_tools === false ||
+      override?.deny_provider_executed_tools === false)
+  ) {
+    denied.push({
+      path: "adapter.deny_provider_executed_tools",
+      code: "policy.cannot_relax_provider_executed_deny",
+      message: "tenant cannot disable org-required deny_provider_executed_tools",
+    });
+  }
+
+  if (override?.deny_provider_executed_tools !== undefined) {
+    report.overrides_applied.push("overrides.adapter.deny_provider_executed_tools");
+  }
+
+  const deny = mergeStricterDefaultDeny(...values);
+  return deny ? { deny_provider_executed_tools: true } : { deny_provider_executed_tools: false };
+}
+
 function baseDocumentToEffectiveV1(
   document: PaybondPolicyDocumentV1 | PaybondPolicyDocumentV2,
 ): PaybondPolicyDocumentV1 {
@@ -278,6 +316,7 @@ function baseDocumentToEffectiveV1(
       Object.entries(document.tools).map(([toolName, entry]) => [toolName, cloneToolEntry(entry)]),
     ),
     intent: document.intent ? structuredClone(document.intent) : undefined,
+    adapter: document.adapter ? structuredClone(document.adapter) : undefined,
   };
 }
 
@@ -384,6 +423,14 @@ export function mergePaybondPolicies(
       effective.intent = structuredClone(base.intent);
     }
   }
+
+  effective.adapter = mergeAdapterSection(
+    base.adapter,
+    overlay.adapter,
+    overlay.overrides?.adapter,
+    denied,
+    report,
+  );
 
   if (options.approvedEvidencePresets) {
     const approved = new Set(options.approvedEvidencePresets);

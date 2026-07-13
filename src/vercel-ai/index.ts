@@ -8,7 +8,15 @@ export {
   paybondVercelToolApproval,
   type PaybondVercelToolApprovalOptions,
 } from "./tool-approval.js";
-export { paybondVercelWrapTools } from "./wrap-tools.js";
+export {
+  isProviderExecutedVercelTool,
+  paybondProviderExecutedToolDenialReason,
+  resolveVercelToolFromSet,
+} from "./provider-executed.js";
+export {
+  paybondVercelWrapTools,
+  type PaybondVercelWrapToolsOptions,
+} from "./wrap-tools.js";
 export {
   runVercelAiSandboxDemo,
   type RunVercelAiSandboxDemoInput,

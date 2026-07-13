@@ -5,7 +5,10 @@ import {
   paybondVercelToolApproval,
   type PaybondVercelToolApprovalOptions,
 } from "./tool-approval.js";
-import { paybondVercelWrapTools } from "./wrap-tools.js";
+import {
+  paybondVercelWrapTools,
+  type PaybondVercelWrapToolsOptions,
+} from "./wrap-tools.js";
 
 /** Vercel AI SDK runner config: guarded tools plus centralized `toolApproval`. */
 export type PaybondVercelAgentConfig<TOOLS extends ToolSet = ToolSet> = {
@@ -13,7 +16,8 @@ export type PaybondVercelAgentConfig<TOOLS extends ToolSet = ToolSet> = {
   toolApproval: ReturnType<typeof paybondVercelToolApproval<TOOLS>>;
 };
 
-export type PaybondVercelAgentConfigOptions = PaybondVercelToolApprovalOptions;
+export type PaybondVercelAgentConfigOptions = PaybondVercelToolApprovalOptions &
+  PaybondVercelWrapToolsOptions;
 
 /**
  * Framework runner helper for Vercel AI SDK `generateText` / `streamText`.
@@ -26,7 +30,7 @@ export function createPaybondVercelAgentConfig<TOOLS extends ToolSet>(
   options?: PaybondVercelAgentConfigOptions,
 ): PaybondVercelAgentConfig<TOOLS> {
   return {
-    tools: paybondVercelWrapTools(run, tools),
+    tools: paybondVercelWrapTools(run, tools, options),
     toolApproval: paybondVercelToolApproval(run, options),
   };
 }

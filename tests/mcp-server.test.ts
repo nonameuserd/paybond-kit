@@ -46,6 +46,8 @@ describe("PaybondMCPServer", () => {
     expect(names.has("paybond_import_agent_mandate_v1")).toBe(true);
     expect(names.has("paybond_get_settlement_receipt_v1")).toBe(true);
     expect(names.has("paybond_verify_protocol_receipt_v1")).toBe(true);
+    expect(names.has("paybond_get_agent_receipt_v1")).toBe(true);
+    expect(names.has("paybond_verify_agent_receipt_v1")).toBe(true);
     expect(names.has("paybond_authorize_agent_spend")).toBe(true);
     expect(names.has("paybond_get_budget_remaining")).toBe(true);
     expect(names.has("paybond_explain_policy")).toBe(true);
@@ -1756,5 +1758,59 @@ describe("PaybondMCPServer", () => {
     });
     expect(read?.error?.message).toMatch(/message digest mismatch/);
     expect(read?.result).toBeUndefined();
+  });
+
+  it("exposes get/verify agent receipt tools", async () => {
+    const conformanceReceipt = JSON.parse(
+      readFileSync(CONFORMANCE_RECEIPT_PATH, "utf8"),
+    ) as AgentReceiptV1;
+    const receiptId = conformanceReceipt.receipt_id;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/v1/auth/principal")) {
+        return new Response(
+          JSON.stringify({
+            tenant_id: conformanceReceipt.tenant_id,
+            roles: ["operator"],
+            subject: "svc",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (url.includes(`/protocol/v2/agent-receipts/${receiptId}`)) {
+        return new Response(JSON.stringify(conformanceReceipt), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const server = new PaybondMCPServer({
+      gatewayBaseUrl: "https://gateway.test",
+      apiKey: apiKey(),
+    });
+
+    const getResult = await server.callTool("paybond_get_agent_receipt_v1", {
+      receipt_id: receiptId,
+    });
+    expect(getResult.isError).toBeUndefined();
+    expect(getResult.structuredContent).toMatchObject({
+      receipt_id: receiptId,
+      tenant_id: conformanceReceipt.tenant_id,
+    });
+
+    const verifyResult = await server.callTool("paybond_verify_agent_receipt_v1", {
+      receipt: conformanceReceipt,
+    });
+    expect(verifyResult.isError).toBeUndefined();
+    expect(verifyResult.structuredContent).toMatchObject({
+      valid: true,
+      kind: "paybond.agent_receipt_v1",
+      receipt_id: receiptId,
+      tenant_id: conformanceReceipt.tenant_id,
+      validity_tier: "operational",
+    });
   });
 });

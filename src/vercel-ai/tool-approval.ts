@@ -2,6 +2,11 @@ import type { GenericToolApprovalFunction, ToolApprovalStatus, ToolSet } from "a
 import { createToolInputGuardAdapter } from "../agent/adapter.js";
 import type { PaybondAgentRun } from "../agent/run.js";
 import type { PaybondToolInputGuardDecision } from "../agent/types.js";
+import {
+  isProviderExecutedVercelTool,
+  paybondProviderExecutedToolDenialReason,
+  resolveVercelToolFromSet,
+} from "./provider-executed.js";
 
 /** Map a framework-neutral Paybond decision to Vercel AI SDK tool approval status. */
 export function mapPaybondDecisionToVercelToolApproval(
@@ -21,6 +26,11 @@ export function mapPaybondDecisionToVercelToolApproval(
 export type PaybondVercelToolApprovalOptions = {
   /** Override Paybond → Vercel approval status mapping (for example custom HITL labels). */
   mapDecision?: (decision: PaybondToolInputGuardDecision) => ToolApprovalStatus;
+  /**
+   * Fail closed on provider-executed tools (`isProviderExecuted: true`).
+   * When enabled, those tool calls are denied at approval time.
+   */
+  denyProviderExecutedTools?: boolean;
 };
 
 /**
@@ -38,11 +48,20 @@ export function paybondVercelToolApproval<TOOLS extends ToolSet = ToolSet>(
 
   const approve = async ({
     toolCall,
+    tools,
   }: {
     toolCall: { toolName: string; toolCallId: string; input: unknown };
+    tools?: TOOLS;
   }): Promise<ToolApprovalStatus> => {
     const toolName = toolCall.toolName;
     const toolCallId = toolCall.toolCallId;
+
+    if (options?.denyProviderExecutedTools === true) {
+      const toolDef = resolveVercelToolFromSet(tools, toolName);
+      if (toolDef !== undefined && isProviderExecutedVercelTool(toolDef)) {
+        return { type: "denied", reason: paybondProviderExecutedToolDenialReason() };
+      }
+    }
 
     if (!run.registry.isSideEffecting(toolName)) {
       const resolution = run.registry.resolveTool(toolName, {

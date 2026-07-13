@@ -13,6 +13,7 @@ import { runMcpSandboxDemo } from "../../mcp/sandbox-demo.js";
 import {
   loadRunClaudeAgentsSandboxDemo,
   loadRunCloudflareAgentsSandboxDemo,
+  loadRunGoogleAdkSandboxDemo,
   loadRunLangGraphSandboxDemo,
   loadRunMastraSandboxDemo,
   loadRunOpenAIAgentsSandboxDemo,
@@ -1665,6 +1666,69 @@ export async function handleAgentDemoMcpSmoke(
   });
 }
 
+export async function handleAgentDemoCrewaiSmoke(
+  _ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const productionFlag = consumeBooleanFlag(argv, "--production");
+  const runtimeFlag = consumeFlag(productionFlag.rest, "--runtime");
+  const operationFlag = consumeFlag(runtimeFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const presetFlag = consumeFlag(spendFlag.rest, "--evidence-preset");
+  if (!operationFlag.value || !spendFlag.value || !presetFlag.value) {
+    throw agentCliError(
+      "agent demo crewai smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+  throw agentCliError(
+    "agent demo crewai smoke is Python-only; install paybond-kit[crewai] and run: paybond agent demo crewai smoke",
+    { code: "cli.usage.unsupported_runtime", category: "usage" },
+  );
+}
+
+export async function handleAgentDemoPydanticAiSmoke(
+  _ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const productionFlag = consumeBooleanFlag(argv, "--production");
+  const runtimeFlag = consumeFlag(productionFlag.rest, "--runtime");
+  const operationFlag = consumeFlag(runtimeFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const presetFlag = consumeFlag(spendFlag.rest, "--evidence-preset");
+  if (!operationFlag.value || !spendFlag.value || !presetFlag.value) {
+    throw agentCliError(
+      "agent demo pydantic-ai smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+  throw agentCliError(
+    "agent demo pydantic-ai smoke is Python-only; install paybond-kit[pydantic-ai] and run: paybond agent demo pydantic-ai smoke",
+    { code: "cli.usage.unsupported_runtime", category: "usage" },
+  );
+}
+
+export async function handleAgentDemoMicrosoftAgentFrameworkSmoke(
+  _ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const productionFlag = consumeBooleanFlag(argv, "--production");
+  const runtimeFlag = consumeFlag(productionFlag.rest, "--runtime");
+  const operationFlag = consumeFlag(runtimeFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const presetFlag = consumeFlag(spendFlag.rest, "--evidence-preset");
+  if (!operationFlag.value || !spendFlag.value || !presetFlag.value) {
+    throw agentCliError(
+      "agent demo microsoft-agent-framework smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+  throw agentCliError(
+    "agent demo microsoft-agent-framework smoke is Python-only; install paybond-kit[microsoft-agent-framework] and run: paybond agent demo microsoft-agent-framework smoke",
+    { code: "cli.usage.unsupported_runtime", category: "usage" },
+  );
+}
+
 export async function handleAgentDemoOpenAIAgentsSmoke(
   ctx: CliContext,
   argv: string[],
@@ -1707,6 +1771,58 @@ export async function handleAgentDemoOpenAIAgentsSmoke(
       throw agentCliError("OpenAI Agents sandbox demo did not produce a paid tool result", {
         code: "cli.agent.tool_execute_failed",
         details: { execute: demo.execute },
+      });
+    }
+
+    return {
+      data: demo,
+      warnings: session.warnings,
+    };
+  });
+}
+
+export async function handleAgentDemoGoogleAdkSmoke(
+  ctx: CliContext,
+  argv: string[],
+): Promise<CommandResult> {
+  const productionFlag = consumeBooleanFlag(argv, "--production");
+  const operationFlag = consumeFlag(productionFlag.rest, "--operation");
+  const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
+  const presetFlag = consumeFlag(spendFlag.rest, "--evidence-preset");
+  if (!operationFlag.value || !spendFlag.value || !presetFlag.value) {
+    throw agentCliError(
+      "agent demo google-adk smoke requires --operation, --requested-spend-cents, and --evidence-preset",
+      { code: "cli.usage.missing_args", category: "usage" },
+    );
+  }
+
+  const requestedSpendCents = parseRequiredNonNegativeInt(
+    spendFlag.value,
+    "--requested-spend-cents",
+  );
+
+  return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
+    const runGoogleAdkSandboxDemo = await loadRunGoogleAdkSandboxDemo();
+    const demo = await runGoogleAdkSandboxDemo({
+      paybond: session.paybond,
+      operation: operationFlag.value,
+      requestedSpendCents,
+      evidencePreset: presetFlag.value,
+    });
+
+    if (!demo.evidence?.submitted) {
+      throw agentCliError("Google ADK sandbox demo did not submit evidence", {
+        code: "cli.agent.evidence_failed",
+        exitCode: 5,
+        category: "gateway",
+        details: { tool_result: demo.tool_result },
+      });
+    }
+
+    if (!demo.authorization.allow) {
+      throw agentCliError("Google ADK sandbox demo authorization was denied", {
+        code: "cli.agent.authorization_denied",
+        details: { tool_result: demo.tool_result },
       });
     }
 
@@ -1861,6 +1977,33 @@ export async function handleAgent(
     }
     return handleAgentDemoClaudeAgentsSmoke(ctx, argv.slice(1));
   }
+  if (group === "demo" && subcommand === "crewai") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent demo crewai requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentDemoCrewaiSmoke(ctx, argv.slice(1));
+  }
+  if (group === "demo" && subcommand === "pydantic-ai") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent demo pydantic-ai requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentDemoPydanticAiSmoke(ctx, argv.slice(1));
+  }
+  if (group === "demo" && subcommand === "microsoft-agent-framework") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent demo microsoft-agent-framework requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentDemoMicrosoftAgentFrameworkSmoke(ctx, argv.slice(1));
+  }
   if (group === "demo" && subcommand === "openai-agents") {
     if (argv[0] !== "smoke") {
       throw agentCliError("agent demo openai-agents requires smoke subcommand", {
@@ -1869,6 +2012,15 @@ export async function handleAgent(
       });
     }
     return handleAgentDemoOpenAIAgentsSmoke(ctx, argv.slice(1));
+  }
+  if (group === "demo" && subcommand === "google-adk") {
+    if (argv[0] !== "smoke") {
+      throw agentCliError("agent demo google-adk requires smoke subcommand", {
+        code: "cli.usage.unknown_command",
+        category: "usage",
+      });
+    }
+    return handleAgentDemoGoogleAdkSmoke(ctx, argv.slice(1));
   }
   if (group === "demo" && subcommand === "mcp") {
     if (argv[0] !== "smoke") {

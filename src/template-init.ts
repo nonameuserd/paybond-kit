@@ -9,12 +9,14 @@ export type TemplateId =
   | "travel-agent"
   | "mastra-travel-agent"
   | "vercel-shopping-agent"
+  | "cloudflare-shopping-agent"
   | "openai-agents-demo"
   | "openai-shopping-agent"
   | "claude-agents-demo"
   | "mcp-coding-agent"
   | "procurement-agent"
   | "invoice-agent"
+  | "crewai-procurement-agent"
   | "aws-operator"
   | "stripe-agent-demo"
   | "shopify-shopping-agent";
@@ -44,7 +46,9 @@ export type TemplateFramework =
   | "openai-agents"
   | "claude-agents"
   | "mcp"
-  | "mastra";
+  | "mastra"
+  | "cloudflare-agents"
+  | "crewai";
 
 const TEMPLATE_FRAMEWORK_ALIASES: Record<string, TemplateFramework> = {
   generic: "generic",
@@ -57,6 +61,8 @@ const TEMPLATE_FRAMEWORK_ALIASES: Record<string, TemplateFramework> = {
   "claude-agents": "claude-agents",
   mcp: "mcp",
   mastra: "mastra",
+  crewai: "crewai",
+  "cloudflare-agents": "cloudflare-agents",
 };
 
 /** Normalize CLI `--framework` values to bundled template framework ids. */
@@ -79,6 +85,8 @@ const TEMPLATE_ALIASES: Record<string, TemplateId> = {
   "paybond-mastra-travel-agent": "mastra-travel-agent",
   "vercel-shopping-agent": "vercel-shopping-agent",
   "paybond-vercel-shopping-agent": "vercel-shopping-agent",
+  "cloudflare-shopping-agent": "cloudflare-shopping-agent",
+  "paybond-cloudflare-shopping-agent": "cloudflare-shopping-agent",
   "openai-agents-demo": "openai-agents-demo",
   "paybond-openai-agents-demo": "openai-agents-demo",
   "openai-shopping-agent": "openai-shopping-agent",
@@ -90,6 +98,8 @@ const TEMPLATE_ALIASES: Record<string, TemplateId> = {
   "paybond-procurement-agent": "procurement-agent",
   "invoice-agent": "invoice-agent",
   "paybond-invoice-agent": "invoice-agent",
+  "crewai-procurement-agent": "crewai-procurement-agent",
+  "paybond-crewai-procurement-agent": "crewai-procurement-agent",
   "aws-operator": "aws-operator",
   "paybond-aws-operator": "aws-operator",
   "stripe-agent-demo": "stripe-agent-demo",
@@ -284,16 +294,18 @@ export function templateInitUsage(): string {
     "       paybond init [--solution ...] [--framework ...]  (wizard scaffold)",
     "",
     "Templates:",
-    "  travel-agent, mastra-travel-agent, vercel-shopping-agent, openai-agents-demo, openai-shopping-agent,",
-    "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, aws-operator, stripe-agent-demo,",
-    "  shopify-shopping-agent",
+    "  travel-agent, mastra-travel-agent, vercel-shopping-agent, cloudflare-shopping-agent, openai-agents-demo, openai-shopping-agent,",
+    "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, crewai-procurement-agent, aws-operator,",
+    "  stripe-agent-demo, shopify-shopping-agent",
     "",
-    "Frameworks (with --template): generic|langgraph|vercel-ai|openai|openai-agents|claude-agents|mcp|mastra",
+    "Frameworks (with --template): generic|langgraph|vercel-ai|openai|openai-agents|claude-agents|mcp|mastra|crewai",
     "",
     "Examples:",
     "  paybond init --template travel-agent --framework langgraph",
     "  paybond init --template mastra-travel-agent --framework mastra",
+    "  paybond init --template crewai-procurement-agent --framework crewai",
     "  paybond init --template paybond-vercel-shopping-agent --force",
+    "  paybond init --template paybond-cloudflare-shopping-agent --force",
     "  paybond init --solution travel --framework langgraph --non-interactive",
   ].join("\n");
 }

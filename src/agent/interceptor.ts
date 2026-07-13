@@ -65,12 +65,33 @@ function assertOperationAllowed(operation: string, allowedTools: readonly string
   }
 }
 
+function parseAgentReceiptComposeResult(
+  value: unknown,
+): import("./types.js").AgentReceiptComposeResult | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const composeStatus = record.compose_status;
+  if (composeStatus !== "composed" && composeStatus !== "failed") {
+    return undefined;
+  }
+  return {
+    composeStatus,
+    receiptId: typeof record.receipt_id === "string" ? record.receipt_id : undefined,
+    scope: typeof record.scope === "string" ? record.scope : undefined,
+    warningCode: typeof record.warning_code === "string" ? record.warning_code : undefined,
+    warningMessage: typeof record.warning_message === "string" ? record.warning_message : undefined,
+  };
+}
+
 function mapSandboxEvidenceResult(result: {
   intent_id: string;
   sandbox_lifecycle_status: string;
   predicate_passed?: boolean | null;
   payload_digest?: string;
   artifacts_digest?: string;
+  agent_receipt?: unknown;
 }): PaybondInterceptEvidenceResult {
   return {
     submitted: true,
@@ -79,6 +100,7 @@ function mapSandboxEvidenceResult(result: {
     sandboxLifecycleStatus: result.sandbox_lifecycle_status,
     payloadDigestSha256Hex: result.payload_digest?.trim().toLowerCase() || undefined,
     artifactsDigestSha256Hex: result.artifacts_digest?.trim().toLowerCase() || undefined,
+    agentReceipt: parseAgentReceiptComposeResult(result.agent_receipt),
   };
 }
 
@@ -630,6 +652,7 @@ export class PaybondToolInterceptor {
         predicatePassed,
         payloadDigestSha256Hex,
         artifactsDigestSha256Hex,
+        agentReceipt: parseAgentReceiptComposeResult(resultRecord.agent_receipt),
       };
     } catch (err) {
       if (err instanceof PaybondAutoEvidenceSubmitError) {

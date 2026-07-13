@@ -256,7 +256,35 @@ intent:
     max_spend_usd: 50
 `;
   }
-  if (entry.id === "procurement-agent") {
+  if (entry.id === "procurement-agent" || entry.id === "crewai-procurement-agent") {
+    if (entry.id === "crewai-procurement-agent") {
+      return `${policyHeader(entry)}version: 1
+name: procurement-agent-v1
+default_deny: true
+
+tools:
+  procurement.submit_po:
+    side_effecting: true
+    spend_from_args: amount_cents
+    evidence_preset: cost_and_completion
+
+  procurement.list_vendors:
+    side_effecting: false
+
+  procurement.get_quote:
+    side_effecting: false
+
+  procurement.search_catalog:
+    side_effecting: false
+
+intent:
+  allowed_tools:
+    - procurement.submit_po
+  budget:
+    currency: usd
+    max_spend_usd: 250
+`;
+    }
     return `${policyHeader(entry)}version: 1
 name: procurement-agent-v1
 default_deny: true
@@ -416,6 +444,89 @@ void main();
 }
 
 function pythonApp(entry) {
+  if (entry.framework === "crewai") {
+    return `"""${entry.title} — no live LLM required.
+
+Modes:
+  python app.py           # approve path (${entry.requested_spend_cents} cents, under intent budget)
+  python app.py --deny    # over-budget deny path
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import sys
+
+from crewai.tools import tool
+
+from paybond_config import create_paybond_client
+
+PRIMARY_OPERATION = "${entry.primary_operation}"
+APPROVE_SPEND_CENTS = ${entry.requested_spend_cents}
+DENY_SPEND_CENTS = 50000  # above intent budget
+
+
+@tool("procurement.search_catalog")
+def search_catalog(query: str) -> str:
+    """Search the procurement catalog (read-only; not side-effecting)."""
+    return json.dumps({"query": query, "items": [{"sku": "LAP-14", "vendor_id": "vendor-acme"}]})
+
+
+@tool("procurement.submit_po")
+def submit_po(vendor_id: str, amount_cents: int) -> str:
+    """Submit a purchase order. Paybond Harbor must approve before this runs."""
+    return json.dumps(
+        {
+            "status": "completed",
+            "vendor_id": vendor_id,
+            "cost_cents": amount_cents,
+            "po_id": f"po-{vendor_id}-{amount_cents}",
+        }
+    )
+
+
+async def main() -> None:
+    deny = "--deny" in sys.argv[1:]
+    amount_cents = DENY_SPEND_CENTS if deny else APPROVE_SPEND_CENTS
+    paybond = await create_paybond_client()
+    try:
+        result = await paybond.agent(
+            policy="./paybond.policy.yaml",
+            framework="crewai",
+            tools=[search_catalog, submit_po],
+            bootstrap={
+                "operation": PRIMARY_OPERATION,
+                "requested_spend_cents": amount_cents if not deny else APPROVE_SPEND_CENTS,
+                "completion_preset": "${entry.evidence_preset}",
+            },
+        )
+        guarded = next(
+            (entry for entry in result.tools if getattr(entry, "name", None) == PRIMARY_OPERATION),
+            result.tools[0],
+        )
+        raw = guarded.run(vendor_id="vendor-acme", amount_cents=amount_cents)
+        print(
+            json.dumps(
+                {
+                    "mode": "deny" if deny else "approve",
+                    "run_id": result.run.run_id,
+                    "intent_id": str(result.run.intent_id),
+                    "tool_result": raw,
+                },
+                indent=2,
+                default=str,
+            )
+        )
+    finally:
+        await paybond.aclose()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+`;
+  }
+
   return `"""${entry.title} — LangGraph sandbox demo (no live LLM)."""
 
 from __future__ import annotations
@@ -446,6 +557,127 @@ if __name__ == "__main__":
 `;
 }
 
+function crewaiCrew(entry) {
+  return `"""CrewAI procurement crew with Paybond spend gates on tool calls.
+
+Requires OPENAI_API_KEY (or your CrewAI LLM provider env) for a live kickoff.
+For Harbor authorize + evidence without an LLM, use \`python app.py\` instead.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import os
+
+from crewai import Agent, Crew, Process, Task
+from crewai.tools import tool
+
+from paybond_config import create_paybond_client
+
+
+@tool("procurement.search_catalog")
+def search_catalog(query: str) -> str:
+    """Search the procurement catalog (read-only; not side-effecting)."""
+    return json.dumps(
+        {
+            "query": query,
+            "items": [
+                {"sku": "LAP-14", "vendor_id": "vendor-acme", "unit_cents": 12000},
+                {"sku": "MON-27", "vendor_id": "vendor-north", "unit_cents": 8900},
+            ],
+        }
+    )
+
+
+@tool("procurement.submit_po")
+def submit_po(vendor_id: str, amount_cents: int) -> str:
+    """Submit a purchase order. Paybond Harbor must approve before this runs."""
+    return json.dumps(
+        {
+            "status": "completed",
+            "vendor_id": vendor_id,
+            "cost_cents": amount_cents,
+            "po_id": f"po-{vendor_id}-{amount_cents}",
+        }
+    )
+
+
+async def build_crew() -> Crew:
+    paybond = await create_paybond_client()
+    result = await paybond.agent(
+        policy="./paybond.policy.yaml",
+        framework="crewai",
+        tools=[search_catalog, submit_po],
+    )
+    guarded_tools = result.tools
+
+    buyer = Agent(
+        role="Procurement buyer",
+        goal="Find a catalog item and submit a purchase order within policy limits",
+        backstory="You buy hardware for an engineering team and never exceed approved spend.",
+        tools=guarded_tools,
+        verbose=True,
+        allow_delegation=False,
+    )
+    reviewer = Agent(
+        role="Spend reviewer",
+        goal="Confirm the PO amount stays under the Harbor budget and summarize the receipt",
+        backstory="You enforce corporate spend controls and call out denials or approval holds.",
+        verbose=True,
+        allow_delegation=False,
+    )
+
+    find_item = Task(
+        description=(
+            "Search the catalog for a 14-inch laptop. "
+            "Then submit a PO for vendor-acme at 12000 cents using procurement.submit_po."
+        ),
+        expected_output="JSON PO confirmation or a clear Paybond deny/hold message",
+        agent=buyer,
+    )
+    review = Task(
+        description=(
+            "Review the buyer result. If Paybond denied or held spend, explain why. "
+            "If approved, summarize vendor_id, cost_cents, and po_id."
+        ),
+        expected_output="Short spend-control summary for an operator",
+        agent=reviewer,
+        context=[find_item],
+    )
+
+    crew = Crew(
+        agents=[buyer, reviewer],
+        tasks=[find_item, review],
+        process=Process.sequential,
+        verbose=True,
+    )
+    # Keep the Paybond client alive for the crew lifetime via closure.
+    crew._paybond_client = paybond  # type: ignore[attr-defined]
+    return crew
+
+
+async def main() -> None:
+    if not os.environ.get("OPENAI_API_KEY", "").strip():
+        raise SystemExit(
+            "OPENAI_API_KEY is required for crew kickoff. "
+            "Use \`python app.py\` for a no-LLM Harbor smoke, or set your LLM key."
+        )
+    crew = await build_crew()
+    try:
+        output = crew.kickoff()
+        print(output)
+    finally:
+        paybond = getattr(crew, "_paybond_client", None)
+        if paybond is not None:
+            await paybond.aclose()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+`;
+}
+
 function readme(entry, smoke) {
   const install =
     entry.language === "python"
@@ -465,6 +697,52 @@ paybond mcp verify-config --host claude
 \`\`\`
 
 Read-only tools pass through; side-effecting tools require Harbor authorization.
+`
+      : "";
+  const crewaiBlock =
+    entry.framework === "crewai"
+      ? `
+## What this crew shows
+
+Paybond wraps CrewAI \`@tool\` / \`BaseTool\` handlers at the execution boundary:
+
+| Path | What happens |
+| --- | --- |
+| **Approve** | Harbor verifies spend → \`procurement.submit_po\` runs → auto-evidence |
+| **Deny** | Over-budget / hard deny → tool body never runs (error string returned) |
+| **Approval hold** | Operator approves in the tenant console, then retry with \`approvalToken\` |
+
+No-LLM Harbor smoke:
+
+\`\`\`bash
+python app.py          # approve (~$${entry.requested_spend_cents / 100})
+python app.py --deny   # over-budget deny
+\`\`\`
+
+CrewAI adapter smoke (optional):
+
+\`\`\`bash
+paybond agent demo crewai smoke \\
+  --operation ${entry.primary_operation} \\
+  --requested-spend-cents ${entry.requested_spend_cents} \\
+  --evidence-preset ${entry.evidence_preset} \\
+  --format json
+\`\`\`
+
+Live CrewAI kickoff (needs an LLM key):
+
+\`\`\`bash
+export OPENAI_API_KEY=sk-...
+python crew.py
+\`\`\`
+
+## CrewAI Marketplace
+
+This repo is structured for [marketplace.crewai.com](https://marketplace.crewai.com) listing:
+
+- Clear spend-gate story on a procurement PO tool
+- Sandbox-first quickstart (\`paybond login\`)
+- Apache-2.0 license
 `
       : "";
 
@@ -488,7 +766,7 @@ npm run smoke   # or: ${smoke}
 \`\`\`bash
 ${run}
 \`\`\`
-${mcpBlock}
+${mcpBlock}${crewaiBlock}
 ## Policy
 
 Local \`paybond.policy.yaml\` is yours to edit. Bundled preset: **${entry.preset ?? "custom"}**.
@@ -497,7 +775,13 @@ Local \`paybond.policy.yaml\` is yours to edit. Bundled preset: **${entry.preset
 
 - [Agent quickstart](https://docs.paybond.ai/kit/quickstart-agent)
 - [Agent middleware](https://docs.paybond.ai/kit/agent-middleware)
-`;
+${
+    entry.framework === "crewai"
+      ? `- [CrewAI adapter](https://docs.paybond.ai/kit/crewai)
+- [CrewAI spend controls guide](https://docs.paybond.ai/guides/crewai-spend-controls)
+`
+      : ""
+  }`;
 }
 
 function packLocalKitTarball() {
@@ -548,6 +832,25 @@ async function refreshTemplatePackageLock(dir, consumerPackageJson) {
     return;
   }
 
+  // Fail fast with a clear message if a template depends on an unpublished
+  // @paybond/* wrapper (discoverability shims under kit/npm-wrappers). Prefer
+  // @paybond/kit/<subpath> until those packages are published to npm.
+  for (const [name, range] of Object.entries(consumerPackageJson.dependencies ?? {})) {
+    if (!name.startsWith("@paybond/") || name === "@paybond/kit") {
+      continue;
+    }
+    try {
+      execSync(`npm view ${name}@${String(range).replace(/^\^/, "")} version`, {
+        stdio: "pipe",
+      });
+    } catch {
+      throw new Error(
+        `${dir}: dependency ${name}@${range} is not on the npm registry. ` +
+          `Use @paybond/kit/<subpath> instead, or publish ${name} before regenerating template locks.`,
+      );
+    }
+  }
+
   if (isKitVersionOnRegistry(KIT_VERSION)) {
     execSync("npm install --package-lock-only", { cwd: dir, stdio: "inherit" });
     await stampKitLock(join(dir, "package-lock.json"), KIT_VERSION);
@@ -582,9 +885,54 @@ async function refreshTemplatePackageLock(dir, consumerPackageJson) {
   }
 }
 
+/** Templates with custom sources that must not be wiped by scaffold regeneration. */
+const HAND_MAINTAINED_TEMPLATE_IDS = new Set([
+  "stripe-agent-demo",
+  // Custom Workers/DO getTools scaffold in src/agent.ts
+  "cloudflare-shopping-agent",
+]);
+
+/**
+ * Refresh pins for hand-maintained templates without deleting custom sources.
+ * Keeps @paybond/kit + typescript aligned with the monorepo kit toolchain.
+ * @param {{ id: string, repo: string }} entry
+ */
+async function refreshHandMaintainedTemplate(entry) {
+  const dir = join(TEMPLATES_DIR, entry.repo);
+  const packageJsonPath = join(dir, "package.json");
+  const existing = JSON.parse(await readFile(packageJsonPath, "utf8"));
+  let changed = false;
+
+  if (existing.dependencies?.["@paybond/kit"]) {
+    existing.dependencies["@paybond/kit"] = `^${KIT_VERSION}`;
+    changed = true;
+  }
+  // Templates must depend on published packages only. Prefer @paybond/kit/<subpath>
+  // over unpublished @paybond/<framework> wrapper packages (npm discoverability shims).
+  for (const dep of Object.keys(existing.dependencies ?? {})) {
+    if (dep.startsWith("@paybond/") && dep !== "@paybond/kit") {
+      delete existing.dependencies[dep];
+      changed = true;
+    }
+  }
+  if (existing.devDependencies && typeof existing.devDependencies === "object") {
+    if (existing.devDependencies.typescript !== "^7.0.2") {
+      existing.devDependencies.typescript = "^7.0.2";
+      changed = true;
+    }
+  }
+
+  if (changed || existing.dependencies?.["@paybond/kit"]) {
+    await refreshTemplatePackageLock(dir, existing);
+  }
+  console.log(
+    `skip ${entry.repo} sources (hand-maintained); refreshed @paybond/kit@${KIT_VERSION} + typescript lock`,
+  );
+}
+
 async function writeTemplate(entry) {
-  if (entry.id === "stripe-agent-demo") {
-    console.log(`skip ${entry.repo} (hand-maintained stripe-commerce template)`);
+  if (HAND_MAINTAINED_TEMPLATE_IDS.has(entry.id)) {
+    await refreshHandMaintainedTemplate(entry);
     return;
   }
   const dir = join(TEMPLATES_DIR, entry.repo);
@@ -603,7 +951,20 @@ async function writeTemplate(entry) {
     await mkdir(join(dir, "src"), { recursive: true }).catch(() => {});
     await writeFile(join(dir, "paybond_config.py"), PAYBOND_CONFIG_PY);
     await writeFile(join(dir, "app.py"), pythonApp(entry));
-    const deps = Object.entries(entry.python_dependencies)
+    if (entry.framework === "crewai") {
+      await writeFile(join(dir, "crew.py"), crewaiCrew(entry));
+    }
+    // Pin paybond-kit to the monorepo kit version so requirements stay in sync
+    // with published releases (avoids CI drift against stale lower bounds).
+    const pythonDependencies = Object.fromEntries(
+      Object.entries(entry.python_dependencies).map(([pkg, ver]) => {
+        if (pkg === "paybond-kit" || pkg.startsWith("paybond-kit[")) {
+          return [pkg, `>=${KIT_VERSION}`];
+        }
+        return [pkg, ver];
+      }),
+    );
+    const deps = Object.entries(pythonDependencies)
       .map(([pkg, ver]) => `${pkg}${ver.startsWith(">=") ? ver : `>=${ver}`}`)
       .join("\n");
     await writeFile(join(dir, "requirements.txt"), `${deps}\n`);
@@ -622,6 +983,14 @@ async function writeTemplate(entry) {
   await writeFile(join(dir, "tsconfig.json"), TS_CONFIG);
   await writeFile(join(dir, "src/paybond.config.ts"), PAYBOND_CONFIG_TS);
   await writeFile(join(dir, "src/index.ts"), tsIndexDemo(entry));
+  // Always pin @paybond/kit to the monorepo kit version. Lock stamping writes
+  // ^KIT_VERSION into package-lock.json; package.json must match or npm ci fails.
+  const dependencies = {
+    ...entry.dependencies,
+    ...(entry.dependencies?.["@paybond/kit"]
+      ? { "@paybond/kit": `^${KIT_VERSION}` }
+      : {}),
+  };
   const consumerPackageJson = {
     name: entry.repo,
     private: false,
@@ -631,10 +1000,10 @@ async function writeTemplate(entry) {
       start: "node dist/index.js",
       smoke,
     },
-    dependencies: entry.dependencies,
+    dependencies,
     devDependencies: {
       "@types/node": "^22.10.1",
-      typescript: "^5.7.2",
+      typescript: "^7.0.2",
     },
     engines: { node: ">=22" },
   };
