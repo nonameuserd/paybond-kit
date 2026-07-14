@@ -120,6 +120,25 @@ describe("normalizeAgentMandateV1", () => {
     authorization.kind = "tenant";
     expect(() => normalizeAgentMandateV1(mandate)).toThrow(/tenant-scoped mandates/);
   });
+
+  it("accepts adyen_manual_capture settlement rail", () => {
+    const mandate = testAgentMandate("2030-01-02T03:04:05Z");
+    const settlement = mandate.settlement as Record<string, unknown>;
+    settlement.default_rail = "adyen_manual_capture";
+    settlement.allowed_rails = ["adyen_manual_capture", "stripe_connect"];
+
+    const normalized = normalizeAgentMandateV1(mandate);
+    expect(normalized.settlement.default_rail).toBe("adyen_manual_capture");
+    expect(normalized.settlement.allowed_rails).toEqual(["adyen_manual_capture", "stripe_connect"]);
+  });
+
+  it("rejects unknown settlement rails", () => {
+    const mandate = testAgentMandate("2030-01-02T03:04:05Z");
+    const settlement = mandate.settlement as Record<string, unknown>;
+    settlement.allowed_rails = ["stripe_connect", "not_a_rail"];
+
+    expect(() => normalizeAgentMandateV1(mandate)).toThrow(/unknown settlement rail/);
+  });
 });
 
 describe("verifySignedAgentMandateV1", () => {

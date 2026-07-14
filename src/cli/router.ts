@@ -38,6 +38,7 @@ import {
   handlePolicyValidateTools,
 } from "./commands/policy.js";
 import { handleAgent } from "./commands/agent.js";
+import { handleAdyen } from "./commands/adyen.js";
 import { handleDev } from "./commands/dev.js";
 import { handleShopify } from "./commands/shopify.js";
 import {
@@ -271,6 +272,9 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
       canonical = commandPath(["shopify", second, third, fourth].filter(Boolean) as string[]);
       const argvStart = isPaymentsSessionShow ? 4 : third ? 3 : 2;
       result = await handleShopify(ctx, second, third, fourth, command.slice(argvStart));
+    } else if (head === "adyen" && second) {
+      canonical = commandPath(["adyen", second]);
+      result = await handleAdyen(ctx, second, command.slice(2));
     } else if (head === "dev" && second) {
       canonical = commandPath(["dev", second]);
       result = await handleDev(ctx, second, tail);
@@ -404,8 +408,11 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
         canonical === "shopify doctor" ||
         canonical === "shopify checkout smoke" ||
         canonical === "shopify capture ready" ||
+        canonical === "shopify payments doctor" ||
         canonical === "shopify dev" ||
-        canonical === "shopify link") &&
+        canonical === "shopify link" ||
+        canonical === "adyen ready" ||
+        canonical === "adyen doctor") &&
       Array.isArray(result.data.checklist_lines)
     ) {
       if (canonical === "dev loop" && Array.isArray(result.data.banner_lines)) {

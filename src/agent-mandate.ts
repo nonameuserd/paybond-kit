@@ -34,6 +34,7 @@ const SETTLEMENT_RAILS = new Set([
   "stripe_connect",
   "stripe_ach_debit",
   "stripe_mpp",
+  "adyen_manual_capture",
   "x402_usdc_base",
 ]);
 

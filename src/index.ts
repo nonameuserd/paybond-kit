@@ -2398,7 +2398,13 @@ type GatewayFraudClientOptions = {
 };
 
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
-const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>(["stripe_connect", "stripe_ach_debit", "stripe_mpp", "x402_usdc_base"]);
+const SETTLEMENT_RAIL_VALUES = new Set<SettlementRail>([
+  "stripe_connect",
+  "stripe_ach_debit",
+  "stripe_mpp",
+  "adyen_manual_capture",
+  "x402_usdc_base",
+]);
 const FRAUD_REVIEW_EVENT_TYPES = new Set<string>([
   "review_open_requested",
   "appeal_requested",
