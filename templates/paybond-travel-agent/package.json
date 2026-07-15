@@ -8,7 +8,7 @@
     "smoke": "paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation travel.book_hotel --requested-spend-cents 18700 --result-body '{\"status\":\"completed\",\"cost_cents\":18700}' --format json"
   },
   "dependencies": {
-    "@paybond/kit": "^0.12.7",
+    "@paybond/kit": "^0.12.8",
     "@langchain/core": "^1.2.1",
     "@langchain/langgraph": "^1.4.7",
     "zod": "^4.2.0"

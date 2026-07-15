@@ -8,7 +8,7 @@
     "smoke": "paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation payments.charge_customer --requested-spend-cents 2500 --result-body '{\"payment_intent_id\":\"pi_smoke\",\"charge_id\":\"ch_smoke\",\"cost_cents\":2500,\"status\":\"succeeded\"}' --format json"
   },
   "dependencies": {
-    "@paybond/kit": "^0.12.7"
+    "@paybond/kit": "^0.12.8"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
