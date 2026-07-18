@@ -1,5 +1,5 @@
-# Reference policy for CLI smoke (`npm run smoke`).
-# Runtime spend for app.py / crew.py is resolved in paybond_wiring.py from the
+# Reference policy for CLI smoke (`npm run smoke`) — aligned with the CrewAI procurement starter.
+# Runtime spend for app.py / agent.py is resolved in paybond_wiring.py from the
 # catalog (SKU × quantity) — not from an agent-supplied amount_cents field.
 
 version: 1

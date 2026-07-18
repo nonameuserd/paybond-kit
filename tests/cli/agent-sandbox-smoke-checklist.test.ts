@@ -8,6 +8,9 @@ const globals: GlobalOptions = {
   envFile: ".env.local",
   format: "table",
   color: "never",
+  requestId: "test-request-id",
+  yes: false,
+  noOpen: false,
 };
 
 describe("formatAgentSandboxSmokeChecklist", () => {
@@ -18,7 +21,7 @@ describe("formatAgentSandboxSmokeChecklist", () => {
         intent_id: "intent-1",
         operation: "travel.book_hotel",
         completion_preset: "cost_and_completion",
-        requested_spend_cents: 18700,
+        requested_spend_cents: 20000,
       },
       execute: {
         authorization: { allow: true },
@@ -32,7 +35,8 @@ describe("formatAgentSandboxSmokeChecklist", () => {
       "✓ Policy loaded (travel)",
       "✓ Sandbox intent created",
       "✓ Tool call: travel.book_hotel",
-      "✓ Spend approved ($187.00)",
+      "✓ Spend authorized up to $200.00 (20,000 cents)",
+      "✓ Reported cost $187.00 (18,700 cents)",
       "✓ Evidence validated (cost_and_completion)",
       "✓ Settlement simulated",
       "Success",

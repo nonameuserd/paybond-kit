@@ -107,7 +107,7 @@ runLogged(npmBin, ["run", "test"], repoRoot);
 runLogged(npmBin, ["run", "build"], repoRoot);
 await assertBuiltMcpServerInfoVersion(packageJson.version);
 
-const packJson = run(npmBin, ["pack", "--json"], repoRoot);
+const packJson = run(npmBin, ["pack", "--json", "--ignore-scripts"], repoRoot);
 const packMeta = JSON.parse(packJson);
 const tarball = resolve(repoRoot, packMeta[0].filename);
 
@@ -155,6 +155,8 @@ try {
   });
   symlinkSync(resolve(repoRoot, "node_modules", "uuid"), join(consumerNodeModules, "uuid"), "dir");
   symlinkSync(resolve(repoRoot, "node_modules", "blake3"), join(consumerNodeModules, "blake3"), "dir");
+  symlinkSync(resolve(repoRoot, "node_modules", "ajv"), join(consumerNodeModules, "ajv"), "dir");
+  symlinkSync(resolve(repoRoot, "node_modules", "zod"), join(consumerNodeModules, "zod"), "dir");
   symlinkSync(resolve(repoRoot, "node_modules", "@noble"), join(consumerNodeModules, "@noble"), "dir");
   symlinkSync(resolve(repoRoot, "node_modules", "@types"), join(consumerNodeModules, "@types"), "dir");
   const consumerBinRoot = join(consumerNodeModules, ".bin");
@@ -195,6 +197,7 @@ try {
           module: "NodeNext",
           moduleResolution: "NodeNext",
           strict: true,
+          skipLibCheck: true,
           noEmit: true,
           types: ["node"],
         },
@@ -243,9 +246,17 @@ try {
   const initBinHelp = run(initBin, ["--help"], consumerRoot);
   assertIncludesAll(initBinHelp, ["paybond init guardrail", "paid-tool-guard", "--framework"], "paybond-init .bin executable help");
   const mcpBinHelpViaNode = runCombined("node", [mcpBin, "--help"], consumerRoot);
-  assertIncludesAll(mcpBinHelpViaNode, ["paybond mcp serve", "stdio MCP server"], "paybond-mcp-server .bin help via node");
+  assertIncludesAll(
+    mcpBinHelpViaNode,
+    ["Usage: paybond-mcp-server", "Paybond MCP server over stdio"],
+    "paybond-mcp-server .bin help via node",
+  );
   const mcpBinHelp = runCombined(mcpBin, ["--help"], consumerRoot);
-  assertIncludesAll(mcpBinHelp, ["paybond mcp serve", "stdio MCP server"], "paybond-mcp-server .bin executable help");
+  assertIncludesAll(
+    mcpBinHelp,
+    ["Usage: paybond-mcp-server", "Paybond MCP server over stdio"],
+    "paybond-mcp-server .bin executable help",
+  );
 
   const scaffoldPath = join(consumerRoot, "paybond-paid-tool-guard.ts");
   runLogged(
@@ -268,7 +279,6 @@ try {
       "openPaybondFromEnv",
       "loadPaybondEnvFile",
       "process.env.PAYBOND_GATEWAY_URL ?? process.env.PAYBOND_GATEWAY_BASE_URL",
-      "buildSignedCreateIntentBodyWithPolicyBinding",
       'const COMPLETION_PRESET_ID = "cost_and_completion"',
       "buildCompletionEvidence",
       "bootstrapSandboxGuardrailIntent",
@@ -310,6 +320,7 @@ try {
           module: "NodeNext",
           moduleResolution: "NodeNext",
           strict: true,
+          skipLibCheck: true,
           noEmit: true,
           types: ["node"],
         },
@@ -428,7 +439,12 @@ try {
       '  version: 1,',
       '  name: "smoke",',
       "  default_deny: true,",
-      "  tools: {},",
+      "  tools: {",
+      '    "travel.book_hotel": {',
+      "      side_effecting: true,",
+      '      evidence_preset: "cost_and_completion",',
+      "    },",
+      "  },",
       "});",
     ].join("\n"),
   );

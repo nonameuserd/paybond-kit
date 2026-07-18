@@ -4,8 +4,9 @@
  * Run from repository root: node kit/ts/scripts/generate-templates.mjs
  */
 import { cp, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { execSync } from "node:child_process";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -21,7 +22,7 @@ const TEMPLATES_DIR = join(KIT_TS_DIR, "templates");
 const REPO_ROOT = join(KIT_TS_DIR, "../..");
 const ROOT_TEMPLATES = join(REPO_ROOT, "templates");
 const POLICY_PRESETS = join(REPO_ROOT, "kit/policy/presets");
-const KIT_PACK_DIR = join(KIT_TS_DIR, ".template-pack");
+const KIT_PACK_DIR = mkdtempSync(join(tmpdir(), "paybond-kit-template-pack-"));
 /** @type {string | undefined} */
 let sharedPrepublishTarballPath;
 
@@ -890,6 +891,10 @@ const HAND_MAINTAINED_TEMPLATE_IDS = new Set([
   "stripe-agent-demo",
   // Custom Workers/DO getTools scaffold in src/agent.ts
   "cloudflare-shopping-agent",
+  // Catalog-backed spend (SKU×qty); function middleware sample for MAF
+  "microsoft-agent-framework-procurement-agent",
+  // Catalog-backed spend (SKU×qty); CrewAI @tool wrap
+  "crewai-procurement-agent",
 ]);
 
 /**
@@ -1073,3 +1078,4 @@ console.log(`synced ${manifest.templates.length} templates to ${PYTHON_TEMPLATES
 if (sharedPrepublishTarballPath) {
   await unlink(sharedPrepublishTarballPath).catch(() => {});
 }
+await rm(KIT_PACK_DIR, { force: true, recursive: true });

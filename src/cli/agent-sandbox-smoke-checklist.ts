@@ -7,6 +7,10 @@ function formatUsdFromCents(cents: number): string {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+function formatCentsCount(cents: number): string {
+  return `${cents.toLocaleString("en-US")} cents`;
+}
+
 function evidencePresetFromBind(bind: Record<string, unknown>): string | undefined {
   const preset = bind.completion_preset;
   return typeof preset === "string" && preset.trim() ? preset.trim() : undefined;
@@ -48,14 +52,24 @@ export function formatAgentSandboxSmokeChecklist(options: {
 
   const authorization = options.execute.authorization as Record<string, unknown> | undefined;
   if (authorization?.allow) {
-    const costCents =
-      typeof options.resultBody.cost_cents === "number"
-        ? options.resultBody.cost_cents
-        : typeof options.bind.requested_spend_cents === "number"
-          ? options.bind.requested_spend_cents
-          : undefined;
-    const spendLabel = costCents !== undefined ? formatUsdFromCents(costCents) : "approved";
-    lines.push(mark(`✓ Spend approved (${spendLabel})`));
+    const authorizedCents =
+      typeof options.bind.requested_spend_cents === "number"
+        ? options.bind.requested_spend_cents
+        : undefined;
+    lines.push(
+      mark(
+        authorizedCents === undefined
+          ? "✓ Spend authorized"
+          : `✓ Spend authorized up to ${formatUsdFromCents(authorizedCents)} (${formatCentsCount(authorizedCents)})`,
+      ),
+    );
+    if (typeof options.resultBody.cost_cents === "number") {
+      lines.push(
+        mark(
+          `✓ Reported cost ${formatUsdFromCents(options.resultBody.cost_cents)} (${formatCentsCount(options.resultBody.cost_cents)})`,
+        ),
+      );
+    }
   }
 
   const evidence = options.execute.evidence as Record<string, unknown> | undefined;

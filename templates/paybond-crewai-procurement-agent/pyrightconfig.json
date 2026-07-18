@@ -1,0 +1,8 @@
+{
+  "include": ["."],
+  "extraPaths": ["."],
+  "venvPath": "../../../python",
+  "venv": ".venv",
+  "pythonVersion": "3.11",
+  "reportMissingImports": "error"
+}

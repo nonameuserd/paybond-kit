@@ -434,6 +434,13 @@ export class PaybondToolInterceptor {
           evidenceId,
           presetId: resolved.entry.evidencePreset,
           evidencePreset: resolved.entry.evidencePreset,
+          reportedCostCents:
+            typeof toolResult === "object" &&
+            toolResult !== null &&
+            "cost_cents" in toolResult &&
+            typeof toolResult.cost_cents === "number"
+              ? toolResult.cost_cents
+              : undefined,
           sandboxLifecycleStatus: evidence.sandboxLifecycleStatus,
           predicatePassed: evidence.predicatePassed,
           externalAttestations,

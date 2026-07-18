@@ -1,6 +1,6 @@
 {
   "name": "@paybond/kit",
-  "version": "0.12.8",
+  "version": "0.12.9",
   "mcpName": "io.github.nonameuserd/paybond",
   "description": "Paybond Kit for TypeScript: agent spend governance for paid tool calls with spend authorization, evidence receipts, refunds, disputes, hosted Gateway sessions, and settlement.",
   "license": "Apache-2.0",
@@ -123,7 +123,8 @@
   },
   "scripts": {
     "clean": "node ./scripts/clean-dist.mjs",
-    "build": "npm run clean && tsc -p tsconfig.json && node ../scripts/sync-completion-catalog.mjs && node ../scripts/sync-policy-presets.mjs && node ../scripts/sync-dev-trace-ui.mjs && node ./scripts/generate-templates.mjs",
+    "build:package": "npm run clean && tsc -p tsconfig.json && node ../scripts/sync-completion-catalog.mjs && node ../scripts/sync-policy-presets.mjs && node ../scripts/sync-dev-trace-ui.mjs",
+    "build": "npm run build:package && node ./scripts/generate-templates.mjs",
     "cli": "node dist/cli.js",
     "cli:dev": "npm run build --silent && node dist/cli.js",
     "generate:cli-contract": "node ../cli-parity/generate.mjs",
@@ -131,7 +132,7 @@
     "pack:dry-run": "npm pack --dry-run",
     "verify:release": "node ./scripts/verify-release.mjs",
     "verify:template-locks": "node ./scripts/verify-template-lock-integrity.mjs",
-    "prepack": "npm run build"
+    "prepack": "npm run build:package"
   },
   "peerDependencies": {
     "@anthropic-ai/claude-agent-sdk": ">=0.2.100",

@@ -1,8 +1,11 @@
 """Procurement crew (CrewAI + Paybond spend gates) — no live LLM required.
 
 Modes:
-  python app.py           # approve path (12000 cents, under intent budget)
-  python app.py --deny    # over-budget deny path
+  python app.py           # approve path (LAP-14 @ $120 from catalog)
+  python app.py --deny    # over-budget deny (RACK-1U @ $500 — tool body never runs)
+
+Cost is not chosen by the agent: Harbor prices the call from ``catalog`` via the
+spend resolver (SKU × quantity) before ``procurement.submit_po`` runs.
 """
 
 from __future__ import annotations
@@ -10,61 +13,70 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from typing import Any
 
 from crewai.tools import tool
 
+from catalog import lookup, search, spend_cents_for
 from paybond_config import create_paybond_client
-
-PRIMARY_OPERATION = "procurement.submit_po"
-APPROVE_SPEND_CENTS = 12000
-DENY_SPEND_CENTS = 50000  # above intent budget
+from paybond_wiring import PRIMARY_OPERATION, bind_procurement_run, crewai_config_for_run
 
 
 @tool("procurement.search_catalog")
 def search_catalog(query: str) -> str:
     """Search the procurement catalog (read-only; not side-effecting)."""
-    return json.dumps({"query": query, "items": [{"sku": "LAP-14", "vendor_id": "vendor-acme"}]})
+    return json.dumps({"query": query, "items": search(query)})
 
 
 @tool("procurement.submit_po")
-def submit_po(vendor_id: str, amount_cents: int) -> str:
-    """Submit a purchase order. Paybond Harbor must approve before this runs."""
+def submit_po(sku: str, quantity: int = 1) -> str:
+    """Submit a PO. Unit price comes from the catalog — callers do not pass dollars."""
+    item = lookup(sku)
+    cost_cents = spend_cents_for(sku, quantity)
     return json.dumps(
         {
             "status": "completed",
-            "vendor_id": vendor_id,
-            "cost_cents": amount_cents,
-            "po_id": f"po-{vendor_id}-{amount_cents}",
+            "sku": item["sku"],
+            "vendor_id": item["vendor_id"],
+            "quantity": quantity,
+            "cost_cents": cost_cents,
+            "po_id": f"po-{item['sku']}-x{quantity}",
         }
     )
 
 
 async def main() -> None:
+    """Bind a sandbox run, then invoke the guarded ``procurement.submit_po`` tool."""
     deny = "--deny" in sys.argv[1:]
-    amount_cents = DENY_SPEND_CENTS if deny else APPROVE_SPEND_CENTS
+    sku = "RACK-1U" if deny else "LAP-14"
+    quantity = 1
+
     paybond = await create_paybond_client()
     try:
-        result = await paybond.agent(
-            policy="./paybond.policy.yaml",
-            framework="crewai",
-            tools=[search_catalog, submit_po],
-            bootstrap={
-                "operation": PRIMARY_OPERATION,
-                "requested_spend_cents": amount_cents if not deny else APPROVE_SPEND_CENTS,
-                "completion_preset": "cost_and_completion",
-            },
-        )
+        run = await bind_procurement_run(paybond)
+        config = crewai_config_for_run(run, [search_catalog, submit_po])
         guarded = next(
-            (entry for entry in result.tools if getattr(entry, "name", None) == PRIMARY_OPERATION),
-            result.tools[0],
+            (
+                entry
+                for entry in config.tools
+                if getattr(entry, "name", None) == PRIMARY_OPERATION
+            ),
+            config.tools[0],
         )
-        raw = guarded.run(vendor_id="vendor-acme", amount_cents=amount_cents)
+        raw: Any = guarded.run(sku=sku, quantity=quantity)
+        denied = isinstance(raw, str) and "Paybond" in raw and (
+            "denied" in raw.lower() or "approval" in raw.lower()
+        )
         print(
             json.dumps(
                 {
                     "mode": "deny" if deny else "approve",
-                    "run_id": result.run.run_id,
-                    "intent_id": str(result.run.intent_id),
+                    "sku": sku,
+                    "catalog_unit_cents": lookup(sku)["unit_cents"],
+                    "run_id": run.run_id,
+                    "tenant_id": run.tenant_id,
+                    "intent_id": str(run.intent_id),
+                    "authorized": not denied,
                     "tool_result": raw,
                 },
                 indent=2,

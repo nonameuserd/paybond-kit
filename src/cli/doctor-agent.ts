@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import type { Writable } from "node:stream";
 
 import {
   defaultMcpInstallFormat,
@@ -29,6 +30,22 @@ export function packageVersion(): string {
 export function encodeMcpMessage(payload: Record<string, unknown>): Buffer {
   const body = JSON.stringify(payload);
   return Buffer.from(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n${body}`, "utf8");
+}
+
+async function writeMcpMessage(stream: Writable, payload: Record<string, unknown>): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error | null): void => {
+      if (settled) return;
+      settled = true;
+      stream.off("error", onError);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onError = (error: Error): void => finish(error);
+    stream.once("error", onError);
+    stream.write(encodeMcpMessage(payload), finish);
+  });
 }
 
 function consumeMcpMessages(raw: Buffer): { messages: Array<Record<string, unknown>>; remainder: Buffer } {
@@ -241,8 +258,9 @@ export async function runAgentMcpChecks(input: {
           ok: true,
           message: `launched ${command.join(" ")}`,
         });
-        child.stdin.write(
-          encodeMcpMessage({
+        await writeMcpMessage(
+          child.stdin,
+          {
             jsonrpc: "2.0",
             id: 1,
             method: "initialize",
@@ -251,7 +269,7 @@ export async function runAgentMcpChecks(input: {
               capabilities: {},
               clientInfo: { name: "paybond-doctor", version: packageVersion() },
             },
-          }),
+          },
         );
         const initResponse = await readMcpMessage(child.stdout, timeoutMs, rawStdout);
         if (initResponse.error) {
@@ -292,19 +310,21 @@ export async function runAgentMcpChecks(input: {
           return;
         }
 
-        child.stdin.write(
-          encodeMcpMessage({
+        await writeMcpMessage(
+          child.stdin,
+          {
             jsonrpc: "2.0",
             method: "notifications/initialized",
-          }),
+          },
         );
-        child.stdin.write(
-          encodeMcpMessage({
+        await writeMcpMessage(
+          child.stdin,
+          {
             jsonrpc: "2.0",
             id: 2,
             method: "tools/list",
             params: {},
-          }),
+          },
         );
         const toolsResponse = await readMcpMessage(child.stdout, timeoutMs, rawStdout);
         if (toolsResponse.error) {

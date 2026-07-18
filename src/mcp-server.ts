@@ -72,7 +72,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.8";
+const SERVER_VERSION = "0.12.9";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";

@@ -1,0 +1,4 @@
+paybond-kit[microsoft-agent-framework]>=0.12.8
+# Live LLM kickoff (agent.py) only — the no-LLM smoke in app.py does not need these:
+agent-framework>=1.0
+azure-identity>=1.19

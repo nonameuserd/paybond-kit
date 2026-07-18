@@ -2,49 +2,33 @@
 
 Procurement crew (CrewAI + Paybond spend gates). Clone, log in to Paybond sandbox, and run smoke in under a minute.
 
+**Sandbox demo only.** Spend for `procurement.submit_po` is priced from `catalog.py` (SKU × quantity) — the agent must not invent `amount_cents`.
+
 ## Quickstart (60 seconds)
 
 ```bash
 git clone https://github.com/nonameuserd/paybond-crewai-procurement-agent.git
 cd paybond-crewai-procurement-agent
 cp .env.example .env.local
-paybond-kit-login
+paybond login
 pip install -r requirements.txt
-npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation procurement.submit_po --requested-spend-cents 12000 --result-body '{"status":"completed","cost_cents":12000}' --format json
+npm run smoke
 ```
 
 ## Run the demo
 
 ```bash
-python app.py
+python app.py          # approve — LAP-14 @ $120 from catalog
+python app.py --deny   # deny — RACK-1U @ $500 (over intent budget; tool never runs)
 ```
 
 ## What this crew shows
 
-Paybond wraps CrewAI `@tool` / `BaseTool` handlers at the execution boundary:
-
 | Path | What happens |
 | --- | --- |
-| **Approve** | Harbor verifies spend → `procurement.submit_po` runs → auto-evidence |
-| **Deny** | Over-budget / hard deny → tool body never runs (error string returned) |
+| **Approve** | Harbor verifies catalog-derived spend → `procurement.submit_po` runs → auto-evidence |
+| **Deny** | Over-budget SKU → tool body never runs |
 | **Approval hold** | Operator approves in the tenant console, then retry with `approvalToken` |
-
-No-LLM Harbor smoke:
-
-```bash
-python app.py          # approve (~$120)
-python app.py --deny   # over-budget deny
-```
-
-CrewAI adapter smoke (optional):
-
-```bash
-paybond agent demo crewai smoke \
-  --operation procurement.submit_po \
-  --requested-spend-cents 12000 \
-  --evidence-preset cost_and_completion \
-  --format json
-```
 
 Live CrewAI kickoff (needs an LLM key):
 
@@ -53,17 +37,9 @@ export OPENAI_API_KEY=sk-...
 python crew.py
 ```
 
-## CrewAI Marketplace
-
-This repo is structured for [marketplace.crewai.com](https://marketplace.crewai.com) listing:
-
-- Clear spend-gate story on a procurement PO tool
-- Sandbox-first quickstart (`paybond login`)
-- Apache-2.0 license
-
 ## Policy
 
-Local `paybond.policy.yaml` is yours to edit. Bundled preset: **custom**.
+Local `paybond.policy.yaml` is yours to edit. Bundled intent budget: **$250**.
 
 ## Docs
 
@@ -71,3 +47,7 @@ Local `paybond.policy.yaml` is yours to edit. Bundled preset: **custom**.
 - [Agent middleware](https://docs.paybond.ai/kit/agent-middleware)
 - [CrewAI adapter](https://docs.paybond.ai/kit/crewai)
 - [CrewAI spend controls guide](https://docs.paybond.ai/guides/crewai-spend-controls)
+
+## License
+
+Apache-2.0

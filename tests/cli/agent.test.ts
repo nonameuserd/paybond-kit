@@ -88,6 +88,8 @@ describe("paybond agent CLI commands", () => {
         "smoke",
         "--preset",
         "travel",
+        "--requested-spend-cents",
+        "20000",
         "--result-body",
         '{"status":"completed","cost_cents":18700}',
       ],
@@ -102,7 +104,8 @@ describe("paybond agent CLI commands", () => {
       expect.stringContaining("Policy loaded (travel)"),
       "✓ Sandbox intent created",
       "✓ Tool call: travel.book_hotel",
-      "✓ Spend approved ($187.00)",
+      "✓ Spend authorized up to $200.00 (20,000 cents)",
+      "✓ Reported cost $187.00 (18,700 cents)",
       "✓ Evidence validated (cost_and_completion)",
       "✓ Settlement simulated",
       expect.stringMatching(/^✓ Trace → http:\/\/localhost:9477\/runs\/.+/),
@@ -141,6 +144,8 @@ describe("paybond agent CLI commands", () => {
         "smoke",
         "--preset",
         "travel",
+        "--requested-spend-cents",
+        "20000",
         "--result-body",
         '{"status":"completed","cost_cents":18700}',
       ],
@@ -151,7 +156,8 @@ describe("paybond agent CLI commands", () => {
     const output = stdout.chunks.join("");
     expect(output).toContain("Policy loaded (travel)");
     expect(output).toContain("Tool call: travel.book_hotel");
-    expect(output).toContain("Spend approved ($187.00)");
+    expect(output).toContain("Spend authorized up to $200.00 (20,000 cents)");
+    expect(output).toContain("Reported cost $187.00 (18,700 cents)");
     expect(output).toContain("Evidence validated (cost_and_completion)");
     expect(output).toContain("Settlement simulated");
     expect(output).toContain("Success");

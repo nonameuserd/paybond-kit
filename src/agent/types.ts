@@ -368,6 +368,8 @@ export type PaybondTraceEvidenceSubmittedEvent = {
   presetId: string;
   /** @deprecated Use {@link PaybondTraceEvidenceSubmittedEvent.presetId}. */
   evidencePreset?: string;
+  /** Cost reported by tool-result evidence, in the currency's minor unit (cents for USD). */
+  reportedCostCents?: number;
   sandboxLifecycleStatus?: string;
   predicatePassed?: boolean | null;
   externalAttestations?: AgentReceiptExternalAttestationV1[];

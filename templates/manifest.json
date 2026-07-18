@@ -300,6 +300,29 @@
       },
       "demo_import": "paybond_kit.crewai",
       "demo_export": "run_crewai_sandbox_demo"
+    },
+    {
+      "id": "microsoft-agent-framework-procurement-agent",
+      "repo": "paybond-microsoft-agent-framework-procurement-agent",
+      "title": "Procurement agent (Microsoft Agent Framework + Paybond spend gates)",
+      "language": "python",
+      "framework": "microsoft-agent-framework",
+      "preset": null,
+      "policy_file": "paybond.policy.yaml",
+      "primary_operation": "procurement.submit_po",
+      "requested_spend_cents": 12000,
+      "evidence_preset": "cost_and_completion",
+      "smoke_result_body": {
+        "status": "completed",
+        "cost_cents": 12000
+      },
+      "python_dependencies": {
+        "paybond-kit[microsoft-agent-framework]": ">=0.12.8",
+        "agent-framework": ">=1.0",
+        "azure-identity": ">=1.19"
+      },
+      "demo_import": "paybond_kit.microsoft_agent_framework",
+      "demo_export": "run_microsoft_agent_framework_sandbox_demo"
     }
   ]
 }

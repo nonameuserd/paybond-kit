@@ -60,6 +60,10 @@ describe("agent run trace store", () => {
     });
     expect(lines[0]).toBe("run_id: run-1");
     expect(lines.some((line) => line.includes("Tool call: paid-tool"))).toBe(true);
-    expect(lines.some((line) => line.includes("Paybond approved"))).toBe(true);
+    expect(
+      lines.some((line) =>
+        line.includes("Paybond authorized up to $1.00 (100 cents)"),
+      ),
+    ).toBe(true);
   });
 });

@@ -162,6 +162,7 @@ export async function appendDevAuditLog(
 
 export function devTraceStepsFromEvents(events: readonly PaybondTraceEvent[]): DevTraceStep[] {
   const steps: DevTraceStep[] = [];
+  let authorizedCeilingCents: number | undefined;
 
   for (const event of events) {
     switch (event.type) {
@@ -174,9 +175,10 @@ export function devTraceStepsFromEvents(events: readonly PaybondTraceEvent[]): D
         });
         break;
       case "spend_authorized":
+        authorizedCeilingCents = event.amountCents;
         steps.push({
           phase: "authorize",
-          label: `Paybond approved $${(event.amountCents / 100).toFixed(2)}`,
+          label: `Paybond authorized up to $${(event.amountCents / 100).toFixed(2)} (${event.amountCents.toLocaleString("en-US")} cents)`,
           recorded_at: event.recordedAt,
           detail: {
             audit_id: event.auditId,
@@ -209,28 +211,64 @@ export function devTraceStepsFromEvents(events: readonly PaybondTraceEvent[]): D
           detail: { duration_ms: event.durationMs },
         });
         break;
-      case "evidence_submitted":
+      case "evidence_submitted": {
+        const evidenceOutcome =
+          event.predicatePassed === false ? "predicate failed" : "predicate evaluated";
+        const reportedCost =
+          event.reportedCostCents === undefined
+            ? undefined
+            : `$${(event.reportedCostCents / 100).toFixed(2)} (${event.reportedCostCents.toLocaleString("en-US")} cents)`;
         steps.push({
           phase: "evidence",
-          label: event.predicatePassed === false ? "Evidence submitted (predicate failed)" : "Evidence submitted",
+          label: reportedCost
+            ? `Evidence submitted (reported cost ${reportedCost}; ${evidenceOutcome})`
+            : event.predicatePassed === false
+              ? "Evidence submitted (predicate failed)"
+              : "Evidence submitted",
           recorded_at: event.recordedAt,
           detail: {
             evidence_id: event.evidenceId,
             preset_id: event.presetId,
             evidence_preset: event.evidencePreset ?? event.presetId,
+            reported_cost_cents: event.reportedCostCents,
             sandbox_lifecycle_status: event.sandboxLifecycleStatus,
             predicate_passed: event.predicatePassed,
           },
         });
         if (event.sandboxLifecycleStatus) {
+          // Variable-cost settlement resizes to the validated reported cost: capture the reported
+          // cost and release the unused authorization. A failed predicate releases the full
+          // authorization. Absent reported cost or ceiling preserves fixed-price wording.
+          const capturedCents =
+            authorizedCeilingCents === undefined
+              ? undefined
+              : event.predicatePassed === false
+                ? 0
+                : event.reportedCostCents === undefined
+                  ? undefined
+                  : Math.min(event.reportedCostCents, authorizedCeilingCents);
+          const unusedCents =
+            authorizedCeilingCents === undefined || capturedCents === undefined
+              ? undefined
+              : authorizedCeilingCents - capturedCents;
+          const breakdown =
+            capturedCents === undefined || unusedCents === undefined
+              ? undefined
+              : ` — captured $${(capturedCents / 100).toFixed(2)} (${capturedCents.toLocaleString("en-US")} cents); unused $${(unusedCents / 100).toFixed(2)} (${unusedCents.toLocaleString("en-US")} cents) released`;
           steps.push({
             phase: "result",
-            label: `Settlement: ${event.sandboxLifecycleStatus}`,
+            label: `Settlement: ${event.sandboxLifecycleStatus}${breakdown ?? ""}`,
             recorded_at: event.recordedAt,
-            detail: { sandbox_lifecycle_status: event.sandboxLifecycleStatus },
+            detail: {
+              sandbox_lifecycle_status: event.sandboxLifecycleStatus,
+              authorized_amount_cents: authorizedCeilingCents,
+              captured_released_amount_cents: capturedCents,
+              unused_authorization_cents: unusedCents,
+            },
           });
         }
         break;
+      }
       case "spend_finalized":
         if (event.status === "consumed") {
           steps.push({
@@ -416,6 +454,10 @@ export function recordSmokeTraceEvent(
               evidenceId: `evidence:${String(input.bind.intent_id ?? "smoke")}:smoke-1`,
               presetId: input.preset,
               evidencePreset: input.preset,
+              reportedCostCents:
+                typeof input.resultBody.cost_cents === "number"
+                  ? input.resultBody.cost_cents
+                  : undefined,
               sandboxLifecycleStatus:
                 typeof input.execute.sandbox_lifecycle_status === "string"
                   ? input.execute.sandbox_lifecycle_status

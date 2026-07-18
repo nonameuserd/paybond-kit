@@ -29,7 +29,7 @@ describe("dev trace buffer", () => {
         run_id: "run-test-1",
         operation: "travel.book_hotel",
         intent_id: "intent-1",
-        requested_spend_cents: 18_700,
+        requested_spend_cents: 20_000,
       },
       execute: {
         evidence_submitted: true,
@@ -42,6 +42,13 @@ describe("dev trace buffer", () => {
     expect(event.operation).toBe("travel.book_hotel");
     expect(event.authorized).toBe(true);
     expect(event.evidence_submitted).toBe(true);
+    expect(event.steps?.map((step) => step.label)).toEqual(
+      expect.arrayContaining([
+        "Paybond authorized up to $200.00 (20,000 cents)",
+        "Evidence submitted (reported cost $187.00 (18,700 cents); predicate evaluated)",
+        "Settlement: released — captured $187.00 (18,700 cents); unused $13.00 (1,300 cents) released",
+      ]),
+    );
     expect(listDevTraceEvents().length).toBe(before + 1);
     expect(listDevTraceEvents().at(-1)?.id).toBe("run-test-1");
   });
@@ -96,7 +103,7 @@ describe("dev trace buffer", () => {
       toolCallId: "call-1",
       operation: "travel.book_hotel",
       auditId: "audit-1",
-      amountCents: 18_700,
+      amountCents: 20_000,
       recordedAt: "2026-07-01T12:00:01.000Z",
     });
     sink?.({
@@ -112,7 +119,10 @@ describe("dev trace buffer", () => {
       runId: "run-collector-1",
       toolCallId: "call-1",
       operation: "travel.book_hotel",
+      evidenceId: "evidence-1",
+      presetId: "travel",
       sandboxLifecycleStatus: "released",
+      reportedCostCents: 18_700,
       recordedAt: "2026-07-01T12:00:03.000Z",
     });
 
@@ -126,6 +136,13 @@ describe("dev trace buffer", () => {
       "result",
     ]);
     expect(devTraceStepsFromEvents(event?.trace_events ?? []).length).toBeGreaterThan(0);
+    expect(event?.steps?.map((step) => step.label)).toEqual(
+      expect.arrayContaining([
+        "Paybond authorized up to $200.00 (20,000 cents)",
+        "Evidence submitted (reported cost $187.00 (18,700 cents); predicate evaluated)",
+        "Settlement: released — captured $187.00 (18,700 cents); unused $13.00 (1,300 cents) released",
+      ]),
+    );
   });
 
   it("persists trace events to .paybond/dev-trace.jsonl for cross-process dev trace", async () => {
