@@ -358,6 +358,19 @@ export type SandboxGuardrailEvidenceResult = {
     drift_kinds: string[];
   };
   simulator_event?: unknown;
+  /**
+   * Structured Agent Receipt Standard compose outcome for this evidence submission's
+   * action-scope receipt (`compose_status` is `"composed"`/`"failed"`), or `undefined` when
+   * agent-receipt signing is not configured on the Gateway. Mirrors the shape the production
+   * Harbor evidence-forward path returns under the same key so sandbox and production callers
+   * can share parsing.
+   */
+  agent_receipt?: unknown;
+  /**
+   * Structured compose outcome for the intent-terminal receipt, present only once Harbor
+   * reports a protocol-terminal state (released/refunded/resolved_split/escalated_external).
+   */
+  agent_receipt_intent_terminal?: unknown;
 };
 
 export const DEFAULT_PAYBOND_GATEWAY_BASE_URL = "https://api.paybond.ai";
@@ -2560,6 +2573,8 @@ function parseSandboxGuardrailEvidenceResponse(
     artifacts_digest: sandboxGuardrailOptionalString(body.artifacts_digest),
     schema_validation: readSchemaValidationReport(body.schema_validation),
     simulator_event: body.simulator_event,
+    agent_receipt: body.agent_receipt,
+    agent_receipt_intent_terminal: body.agent_receipt_intent_terminal,
   };
 }
 

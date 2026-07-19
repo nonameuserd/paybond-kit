@@ -389,11 +389,14 @@ export const COMMAND_EXAMPLES: Record<string, string[]> = {
   ],
   "receipts get": [
     "paybond receipts get receipt-123",
-    "paybond receipts get sha256:abc... --kind agent --format json"
+    "paybond receipts get sha256:abc... --kind agent --format json",
+    "paybond receipts get --kind agent --intent-id 550e8400-e29b-41d4-a716-446655440000 --tool-call-id call_1",
+    "paybond receipts get --kind agent --intent-id 550e8400-e29b-41d4-a716-446655440000"
   ],
   "receipts verify": [
     "paybond receipts verify receipt-123",
-    "paybond receipts verify sha256:abc... --kind agent --format json"
+    "paybond receipts verify sha256:abc... --kind agent --format json",
+    "paybond receipts verify --kind agent --intent-id 550e8400-e29b-41d4-a716-446655440000 --tool-call-id call_1"
   ],
   "mandates verify": [
     "paybond mandates verify --body mandate.json"

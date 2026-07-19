@@ -223,6 +223,12 @@ export type PaybondInterceptEvidenceResult = {
    * configured. `composeStatus: "failed"` is a structured warning — evidence still succeeded.
    */
   agentReceipt?: AgentReceiptComposeResult;
+  /**
+   * Compose outcome for the intent-terminal Agent Receipt, present only once the intent
+   * reaches a protocol-terminal Harbor state (released/refunded/resolved_split/
+   * escalated_external) on this evidence submission, for both sandbox and production.
+   */
+  agentReceiptIntentTerminal?: AgentReceiptComposeResult;
 };
 
 export type PaybondInterceptWrapExecuteResult<TResult> = {

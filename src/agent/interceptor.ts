@@ -92,6 +92,7 @@ function mapSandboxEvidenceResult(result: {
   payload_digest?: string;
   artifacts_digest?: string;
   agent_receipt?: unknown;
+  agent_receipt_intent_terminal?: unknown;
 }): PaybondInterceptEvidenceResult {
   return {
     submitted: true,
@@ -101,6 +102,7 @@ function mapSandboxEvidenceResult(result: {
     payloadDigestSha256Hex: result.payload_digest?.trim().toLowerCase() || undefined,
     artifactsDigestSha256Hex: result.artifacts_digest?.trim().toLowerCase() || undefined,
     agentReceipt: parseAgentReceiptComposeResult(result.agent_receipt),
+    agentReceiptIntentTerminal: parseAgentReceiptComposeResult(result.agent_receipt_intent_terminal),
   };
 }
 
@@ -660,6 +662,9 @@ export class PaybondToolInterceptor {
         payloadDigestSha256Hex,
         artifactsDigestSha256Hex,
         agentReceipt: parseAgentReceiptComposeResult(resultRecord.agent_receipt),
+        agentReceiptIntentTerminal: parseAgentReceiptComposeResult(
+          resultRecord.agent_receipt_intent_terminal,
+        ),
       };
     } catch (err) {
       if (err instanceof PaybondAutoEvidenceSubmitError) {

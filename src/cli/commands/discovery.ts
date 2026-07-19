@@ -37,25 +37,61 @@ export async function handleSignal(ctx: CliContext, subcommand: string, argv: st
 
 export async function handleReceipts(ctx: CliContext, subcommand: string, argv: string[]): Promise<CommandResult> {
   return withGateway(ctx, async (gateway) => {
-    const kindFlag = consumeFlag(argv, "--kind");
+    // <receipt_id> is a positional SHA-256 digest the caller must already have. Most callers only
+    // know the intent_id and (for action receipts) tool_call_id from their own request, so agent
+    // receipts also resolve by --intent-id [--tool-call-id] without forcing callers to derive the
+    // digest themselves (Gateway's GET /protocol/v2/agent-receipts query endpoint).
+    const hasReceiptId = argv.length > 0 && !argv[0].startsWith("-");
+    const receiptId = hasReceiptId ? argv[0] : undefined;
+    const flagArgv = hasReceiptId ? argv.slice(1) : argv;
+    const kindFlag = consumeFlag(flagArgv, "--kind");
     const kind = (kindFlag.value ?? "protocol").trim().toLowerCase();
-    const receiptId = argv[0];
-    if (!receiptId) {
-      throw new CliError(`receipts ${subcommand} requires <receipt_id>`, { category: "usage", code: "cli.usage.missing_receipt_id" });
+    const intentIdFlag = consumeFlag(kindFlag.rest, "--intent-id");
+    const toolCallIdFlag = consumeFlag(intentIdFlag.rest, "--tool-call-id");
+    const intentId = intentIdFlag.value;
+    const toolCallId = toolCallIdFlag.value;
+
+    if (toolCallId && !intentId) {
+      throw new CliError(`receipts ${subcommand} --tool-call-id requires --intent-id`, {
+        category: "usage",
+        code: "cli.usage.tool_call_id_requires_intent_id",
+      });
     }
+    if (!receiptId && !intentId) {
+      throw new CliError(`receipts ${subcommand} requires <receipt_id> or --intent-id <id>`, {
+        category: "usage",
+        code: "cli.usage.missing_receipt_id",
+      });
+    }
+    if (intentId && kind !== "agent") {
+      throw new CliError(`receipts ${subcommand} --intent-id is only supported with --kind agent`, {
+        category: "usage",
+        code: "cli.usage.intent_id_requires_agent_kind",
+      });
+    }
+
     if (kind === "agent") {
+      let path: string;
+      if (receiptId) {
+        path = `/protocol/v2/agent-receipts/${encodeURIComponent(receiptId)}`;
+      } else {
+        path = `/protocol/v2/agent-receipts?intent_id=${encodeURIComponent(intentId as string)}`;
+        if (toolCallId) {
+          path += `&tool_call_id=${encodeURIComponent(toolCallId)}`;
+        }
+      }
       if (subcommand === "get") {
-        const body = await gateway.getJson(`/protocol/v2/agent-receipts/${encodeURIComponent(receiptId)}`);
+        const body = await gateway.getJson(path);
         return { data: body };
       }
       if (subcommand === "verify") {
-        const fetched = await gateway.getJson(`/protocol/v2/agent-receipts/${encodeURIComponent(receiptId)}`);
+        const fetched = await gateway.getJson(path);
         const body = await gateway.postJson("/protocol/v2/agent-receipts/verify", fetched);
         return { data: body };
       }
     }
     if (subcommand === "get") {
-      const body = await gateway.getJson(`/protocol/v2/receipts/${encodeURIComponent(receiptId)}`);
+      const body = await gateway.getJson(`/protocol/v2/receipts/${encodeURIComponent(receiptId as string)}`);
       return { data: body };
     }
     if (subcommand === "verify") {

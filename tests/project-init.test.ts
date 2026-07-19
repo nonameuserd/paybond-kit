@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -133,5 +133,49 @@ describe("paybond init wizard", () => {
         force: false,
       }),
     ).rejects.toThrow("already exists");
+  });
+
+  it("overwrites an existing scaffold with --force", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-project-init-overwrite-"));
+    await runProjectInit({
+      cwd,
+      solution: "travel",
+      nonInteractive: true,
+      force: false,
+    });
+
+    await runProjectInit({
+      cwd,
+      solution: "saas",
+      maxSpendUsd: 100,
+      nonInteractive: true,
+      force: true,
+    });
+
+    const policyText = await readFile(join(cwd, "paybond.policy.yaml"), "utf8");
+    expect(policyText).toContain("name: saas");
+    expect(policyText).toContain("max_spend_usd: 100");
+  });
+
+  it("confirms policy overwrite in the interactive wizard", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-project-init-confirm-"));
+    const policyFile = join(cwd, "paybond.policy.yaml");
+    await writeFile(policyFile, "name: existing\n", "utf8");
+    const prompts: string[] = [];
+
+    await runProjectInit({
+      cwd,
+      solution: "saas",
+      maxSpendUsd: 100,
+      framework: "generic",
+      language: "typescript",
+      prompt: async (question: string): Promise<string> => {
+        prompts.push(question);
+        return "yes";
+      },
+    });
+
+    expect(prompts).toEqual([`${policyFile} already exists. Overwrite it? [y/N] `]);
+    await expect(readFile(policyFile, "utf8")).resolves.toContain("name: saas");
   });
 });

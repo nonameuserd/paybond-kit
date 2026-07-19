@@ -301,7 +301,9 @@ async function resolveInteractiveOptions(
   options: ProjectInitOptions,
 ): Promise<Required<Pick<ProjectInitOptions, "solution" | "maxSpendUsd" | "framework" | "language">>> {
   const prompt = options.prompt ?? defaultPrompt;
-  const interactive = !options.nonInteractive && input.isTTY === true && output.isTTY === true;
+  const interactive =
+    !options.nonInteractive &&
+    (options.prompt !== undefined || (input.isTTY === true && output.isTTY === true));
   const language = options.language ?? (await detectLanguage(options.cwd));
 
   let solution = options.solution;
@@ -969,6 +971,10 @@ export async function runProjectInit(options: ProjectInitOptions): Promise<Proje
   const resolved = await resolveInteractiveOptions(options);
   const presetId = presetIdForSolution(resolved.solution);
   const policyFile = `${options.cwd}/paybond.policy.yaml`;
+  let force = options.force ?? false;
+  const interactive =
+    !options.nonInteractive &&
+    (options.prompt !== undefined || (input.isTTY === true && output.isTTY === true));
   const configFile =
     resolved.language === "python"
       ? `${options.cwd}/paybond.config.py`
@@ -980,18 +986,34 @@ export async function runProjectInit(options: ProjectInitOptions): Promise<Proje
   const envExampleFile = `${options.cwd}/.env.example`;
   const files: string[] = [];
 
+  if (!force && interactive) {
+    try {
+      await access(policyFile, constants.F_OK);
+      const prompt = options.prompt ?? defaultPrompt;
+      const answer = await prompt(`${policyFile} already exists. Overwrite it? [y/N] `);
+      if (!["y", "yes"].includes(answer.trim().toLowerCase())) {
+        throw new Error(`${policyFile} already exists; not overwritten`);
+      }
+      force = true;
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("already exists")) {
+        throw err;
+      }
+    }
+  }
+
   await scaffoldPolicyFromPreset({
     out: policyFile,
     presetId,
     maxSpendUsd: resolved.maxSpendUsd,
-    force: options.force,
+    force,
   });
   files.push("paybond.policy.yaml");
 
   await writeFileIfAllowed(
     configFile,
     resolved.language === "python" ? pythonConfigTemplate() : typescriptConfigTemplate(),
-    options.force ?? false,
+    force,
   );
   files.push(resolved.language === "python" ? "paybond.config.py" : "paybond.config.ts");
 
@@ -1000,13 +1022,13 @@ export async function runProjectInit(options: ProjectInitOptions): Promise<Proje
     resolved.language === "python"
       ? pythonInstrumentTemplate(resolved.solution, resolved.framework, resolved.maxSpendUsd)
       : typescriptInstrumentTemplate(resolved.solution, resolved.framework, resolved.maxSpendUsd),
-    options.force ?? false,
+    force,
   );
   files.push(
     resolved.language === "python" ? "paybond.instrument.py" : "paybond.instrument.ts",
   );
 
-  await writeFileIfAllowed(envExampleFile, envExampleBody(), options.force ?? false);
+  await writeFileIfAllowed(envExampleFile, envExampleBody(), force);
   files.push(".env.example");
 
   const smokeCommand = smokeCommandFor(presetId);
@@ -1014,7 +1036,7 @@ export async function runProjectInit(options: ProjectInitOptions): Promise<Proje
     const packageJsonPath = await upsertPackageJsonSmokeScript(
       options.cwd,
       smokeCommand,
-      options.force ?? false,
+      force,
     );
     if (packageJsonPath) {
       files.push("package.json");

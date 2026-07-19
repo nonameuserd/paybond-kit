@@ -43,6 +43,8 @@ type SandboxGuardrailEvidenceResult = {
   predicate_passed?: boolean | null;
   payload_digest?: string;
   artifacts_digest?: string;
+  agent_receipt?: unknown;
+  agent_receipt_intent_terminal?: unknown;
 };
 
 export type PaybondSubmitProductionEvidenceInput = {

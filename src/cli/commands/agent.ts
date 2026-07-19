@@ -6,6 +6,7 @@ import {
   PaybondAutoEvidenceSubmitError,
   PaybondToolRegistryValidationError,
   PaybondUnregisteredSideEffectingToolError,
+  type AgentReceiptComposeResult,
 } from "../../agent/types.js";
 import { resolveCliGatewayErrorMessage } from "../http-error-message.js";
 import { runGenericSandboxDemo } from "../../agent/generic-sandbox-demo.js";
@@ -731,6 +732,27 @@ export async function handleAgentRunReloadPolicy(
   });
 }
 
+/**
+ * Serializes an `AgentReceiptComposeResult` for `--format json` CLI output. Mirrors the
+ * Gateway's `agent_receipt`/`agent_receipt_intent_terminal` wire shape (`compose_status`,
+ * `receipt_id`, `scope`, `warning_code`, `warning_message`) so downstream tooling can resolve a
+ * receipt by ID without deriving its SHA-256 digest.
+ */
+function agentReceiptComposeResultWire(
+  result: AgentReceiptComposeResult | undefined,
+): Record<string, unknown> | undefined {
+  if (!result) {
+    return undefined;
+  }
+  return {
+    compose_status: result.composeStatus,
+    receipt_id: result.receiptId,
+    scope: result.scope,
+    warning_code: result.warningCode,
+    warning_message: result.warningMessage,
+  };
+}
+
 export async function handleAgentToolExecute(ctx: CliContext, argv: string[]): Promise<CommandResult> {
   const productionFlag = consumeBooleanFlag(argv, "--production");
   const runIdFlag = consumeFlag(productionFlag.rest, "--run-id");
@@ -793,6 +815,10 @@ export async function handleAgentToolExecute(ctx: CliContext, argv: string[]): P
                 intent_state: wrapped.evidence.intentState,
                 predicate_passed: wrapped.evidence.predicatePassed,
                 sandbox_lifecycle_status: wrapped.evidence.sandboxLifecycleStatus,
+                agent_receipt: agentReceiptComposeResultWire(wrapped.evidence.agentReceipt),
+                agent_receipt_intent_terminal: agentReceiptComposeResultWire(
+                  wrapped.evidence.agentReceiptIntentTerminal,
+                ),
               }
             : undefined,
         },
