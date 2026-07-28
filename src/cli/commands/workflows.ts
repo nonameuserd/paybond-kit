@@ -151,7 +151,7 @@ export async function handleIntents(ctx: CliContext, subcommand: string, argv: s
 }
 
 async function handleIntentsCreate(ctx: CliContext, argv: string[]): Promise<CommandResult> {
-  const flags = parseHarborMutationFlags(argv);
+  const flags = await parseHarborMutationFlags(argv, ctx.cwd);
   const { payload } = await resolveJsonBody(flags.restArgv, {
     missingMessage: "intents create requires --body <json-file> or --stdin",
   });
@@ -181,7 +181,7 @@ async function handleIntentsEvidence(
   intentId: string,
   argv: string[],
 ): Promise<CommandResult> {
-  const flags = parseHarborMutationFlags(argv);
+  const flags = await parseHarborMutationFlags(argv, ctx.cwd);
   const { payload } = await resolveJsonBody(flags.restArgv, {
     missingMessage: "intents evidence requires --body <json-file> or --stdin",
   });
@@ -212,7 +212,7 @@ async function handleIntentsFund(
   intentId: string,
   argv: string[],
 ): Promise<CommandResult> {
-  const flags = parseHarborMutationFlags(argv);
+  const flags = await parseHarborMutationFlags(argv, ctx.cwd);
   const paymentSignatureFlag = consumeFlag(flags.restArgv, "--payment-signature");
   let paymentSignature = paymentSignatureFlag.value?.trim() || undefined;
   const deprecationWarnings: string[] = [];
@@ -252,7 +252,7 @@ async function handleIntentsSettlementConfirm(
   intentId: string,
   argv: string[],
 ): Promise<CommandResult> {
-  const flags = parseHarborMutationFlags(argv);
+  const flags = await parseHarborMutationFlags(argv, ctx.cwd);
   const { payload } = await resolveJsonBody(flags.restArgv, { required: false });
 
   return withPaybondCli(ctx, async (session) => {

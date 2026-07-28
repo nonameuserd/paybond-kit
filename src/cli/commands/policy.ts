@@ -829,6 +829,8 @@ export async function handlePolicyImportX402Receipt(ctx: CliContext, argv: strin
   let rest = argv;
   const receiptFlag = consumeFlag(rest, "--receipt-file");
   rest = receiptFlag.rest;
+  const expectedSignerFlag = consumeFlag(rest, "--expected-signer");
+  rest = expectedSignerFlag.rest;
   const writeFlag = consumeFlag(rest, "--write-evidence-file");
   rest = writeFlag.rest;
 
@@ -844,11 +846,18 @@ export async function handlePolicyImportX402Receipt(ctx: CliContext, argv: strin
       { category: "usage", code: "cli.usage.missing_args" },
     );
   }
+  const expectedSigner = expectedSignerFlag.value?.trim();
+  if (!expectedSigner) {
+    throw new CliError(
+      "policy import-x402-receipt requires --expected-signer to pin the receipt issuer (EIP-712 address or JWS RFC 7638 thumbprint / OKP x)",
+      { category: "usage", code: "cli.usage.missing_args" },
+    );
+  }
 
   const receipt = await readJsonFile(receiptFlag.value);
   let evidence;
   try {
-    evidence = mapX402ReceiptToArtifactAttestedEvidence(receipt);
+    evidence = mapX402ReceiptToArtifactAttestedEvidence(receipt, { expectedSigner });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     throw new CliError(message, { category: "usage", code: "cli.usage.invalid_receipt" });

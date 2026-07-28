@@ -99,14 +99,23 @@ function base64Url(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64url");
 }
 
+// Stable per-process signing key so fixtures can expose the matching issuer pin.
+const { privateKey: X402_FIXTURE_PRIVATE_KEY, publicKey: X402_FIXTURE_PUBLIC_KEY } =
+  generateKeyPairSync("ed25519");
+const X402_FIXTURE_JWK = X402_FIXTURE_PUBLIC_KEY.export({ format: "jwk" }) as JsonWebKey;
+
+/**
+ * The `expectedSigner` pin (raw base64url OKP `x`) matching {@link signedJwsX402Receipt}.
+ * Pass this to x402 verify/map entry points to authenticate the fixture issuer.
+ */
+export const X402_FIXTURE_EXPECTED_SIGNER = X402_FIXTURE_JWK.x as string;
+
 export function signedJwsX402Receipt(payload: Record<string, unknown>): Record<string, unknown> {
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-  const jwk = publicKey.export({ format: "jwk" }) as JsonWebKey;
-  const header = { alg: "EdDSA", jwk };
+  const header = { alg: "EdDSA", jwk: X402_FIXTURE_JWK };
   const headerB64 = base64Url(new TextEncoder().encode(JSON.stringify(header)));
   const payloadB64 = base64Url(new TextEncoder().encode(JSON.stringify(payload)));
   const signingInput = `${headerB64}.${payloadB64}`;
-  const signatureB64 = base64Url(cryptoSign(null, Buffer.from(signingInput), privateKey));
+  const signatureB64 = base64Url(cryptoSign(null, Buffer.from(signingInput), X402_FIXTURE_PRIVATE_KEY));
   return {
     extensions: {
       "offer-receipt": {

@@ -71,7 +71,7 @@ import {
 } from "./policy/load-effective.js";
 import { paybondPolicyPresets } from "./policy/policy-api.js";
 import { paybondSolutionPresets } from "./solutions/api.js";
-import { requireSecureGatewayUrl } from "./gateway-url.js";
+import { isLoopbackGatewayHost, requireSecureGatewayUrl } from "./gateway-url.js";
 import {
   executeFundWithX402,
   type FundRequestEnvelope,
@@ -128,12 +128,19 @@ export type PaybondSpendAuthorizationInput = {
   idempotencyKey?: string;
   /**
    * Agent Receipt Standard context (Phase 1): forwarded to Gateway `/verify` on every call for
-   * audit correlation. See `go/gateway/internal/spendauth/types.go` `VerifyRequest`.
+   * audit correlation. See `go/gateway/internal/spend/spendauth/types.go` `VerifyRequest`.
    */
   modelFamily?: string;
   configHashHex?: string;
   promptHashHex?: string;
 };
+
+function requireJsonBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw new Error(`${field} must be a JSON boolean`);
+  }
+  return value;
+}
 
 function parseVerifyCapabilityBody(
   body: Record<string, unknown>,
@@ -169,7 +176,7 @@ function parseVerifyCapabilityBody(
     reasonCodes?.includes("anomaly_cap_proximity") ||
     false;
   return {
-    allow: Boolean(body.allow),
+    allow: requireJsonBoolean(body.allow, "allow"),
     auditId: String(body.audit_id ?? ""),
     tenant,
     intentId,
@@ -1218,7 +1225,9 @@ export class PaybondSpendGuard {
   ): Promise<void> {
     const complete = this.harbor.completeSpendDecision;
     if (!complete) {
-      return;
+      throw new Error(
+        "spend decision finalization required but harbor.completeSpendDecision is unavailable",
+      );
     }
     await complete.call(this.harbor, { decisionId, outcome });
   }
@@ -1366,7 +1375,14 @@ export type PaybondOpenOptions = {
 type HarborClientOptions = {
   harborBearerSupplier?: HarborBearerSupplier;
   staticHarborBearerToken?: string;
+  /**
+   * Allow unauthenticated Harbor calls only when the Harbor base is loopback.
+   * `x-tenant-id` is never authorization — production and remote Harbor require a bearer.
+   */
+  allowUnauthenticatedLocal?: boolean;
   maxRetries?: number;
+  /** Per-attempt fetch timeout in milliseconds (default 30s). */
+  requestTimeoutMs?: number;
 };
 
 /**
@@ -1379,11 +1395,13 @@ export class HarborClient {
   readonly tenantId: string;
   private readonly bearerSupplier?: HarborBearerSupplier;
   private readonly staticBearer?: string;
+  private readonly allowUnauthenticatedLocal: boolean;
   private readonly maxRetries: number;
+  private readonly requestTimeoutMs: number;
 
   /**
    * @param harborBase - Harbor origin, e.g. `https://harbor.example.com` (trailing slash optional)
-   * @param tenantId - Tenant realm; sent as `x-tenant-id` on every request
+   * @param tenantId - Tenant realm; sent as `x-tenant-id` on every request (not authorization)
    */
   constructor(harborBase: string, tenantId: string, options?: HarborClientOptions) {
     if (options?.harborBearerSupplier && options?.staticHarborBearerToken) {
@@ -1393,7 +1411,25 @@ export class HarborClient {
     this.tenantId = tenantId.trim();
     this.bearerSupplier = options?.harborBearerSupplier;
     this.staticBearer = options?.staticHarborBearerToken?.trim();
+    this.allowUnauthenticatedLocal = options?.allowUnauthenticatedLocal === true;
     this.maxRetries = Math.max(1, options?.maxRetries ?? 3);
+    this.requestTimeoutMs = Math.max(1, options?.requestTimeoutMs ?? 30_000);
+
+    const hasBearerConfig = Boolean(this.staticBearer || this.bearerSupplier);
+    if (!hasBearerConfig) {
+      let hostname = "";
+      try {
+        hostname = new URL(this.base).hostname;
+      } catch {
+        hostname = "";
+      }
+      if (!(this.allowUnauthenticatedLocal && isLoopbackGatewayHost(hostname))) {
+        throw new Error(
+          "HarborClient requires harborBearerSupplier or staticHarborBearerToken; " +
+            "x-tenant-id is not authorization. For loopback only, pass allowUnauthenticatedLocal: true",
+        );
+      }
+    }
   }
 
   private async authHeader(): Promise<Record<string, string>> {
@@ -1405,8 +1441,16 @@ export class HarborClient {
       if (tok && String(tok).trim()) {
         return { authorization: `Bearer ${String(tok).trim()}` };
       }
+      throw new Error("harborBearerSupplier returned an empty Harbor bearer token");
     }
     return {};
+  }
+
+  private fetchInitSignal(init?: RequestInit): AbortSignal | undefined {
+    if (init?.signal) {
+      return init.signal;
+    }
+    return AbortSignal.timeout(this.requestTimeoutMs);
   }
 
   /**
@@ -1435,7 +1479,11 @@ export class HarborClient {
         for (const [k, v] of Object.entries(auth)) {
           headers.set(k, v);
         }
-        res = await fetch(url, { method: "GET", headers });
+        res = await fetch(url, {
+          method: "GET",
+          headers,
+          signal: this.fetchInitSignal(),
+        });
       } catch (e) {
         lastErr = e;
         if (attempt + 1 >= this.maxRetries) throw e;
@@ -1484,7 +1532,11 @@ export class HarborClient {
         for (const value of appendAuthorization ?? []) {
           headers.append("authorization", value);
         }
-        res = await fetch(url, { ...init, headers });
+        res = await fetch(url, {
+          ...init,
+          headers,
+          signal: this.fetchInitSignal(init),
+        });
       } catch (e) {
         lastErr = e;
         if (attempt + 1 >= this.maxRetries) throw e;
@@ -1700,7 +1752,7 @@ export class HarborClient {
       settlementRail: readSettlementRailValue(body.settlement_rail, "fund settlement_rail"),
       currency: body.currency,
       amountCents,
-      funded: Boolean(body.funded),
+      funded: requireJsonBoolean(body.funded, "funded"),
       capabilityToken:
         typeof body.capability_token === "string" && body.capability_token.trim()
           ? body.capability_token
@@ -1753,6 +1805,17 @@ export class HarborClient {
       state: string;
       predicate_passed?: boolean;
     };
+    // Defense in depth: reject a response that binds evidence to a different
+    // tenant or intent than the one this client is scoped to (parity with
+    // fundIntent / ledger reads).
+    const tenant = String(body.tenant ?? "");
+    if (tenant !== this.tenantId) {
+      throw new Error(`evidence tenant mismatch: client=${this.tenantId} harbor=${tenant}`);
+    }
+    const echoedIntentId = String(body.intent_id ?? "");
+    if (echoedIntentId !== intentId) {
+      throw new Error(`evidence intent mismatch: requested=${intentId} harbor=${echoedIntentId}`);
+    }
     return {
       intentId: body.intent_id,
       tenant: body.tenant,
@@ -2496,7 +2559,7 @@ function parseFundIntentResponse(
     settlementRail: readSettlementRailValue(body.settlement_rail, "fund settlement_rail"),
     currency: body.currency,
     amountCents,
-    funded: Boolean(body.funded),
+    funded: requireJsonBoolean(body.funded, "funded"),
     capabilityToken:
       typeof body.capability_token === "string" && body.capability_token.trim()
         ? body.capability_token
@@ -4676,6 +4739,39 @@ export {
   signAgentMandateV1,
   verifySignedAgentMandateV1,
 } from "./agent-mandate.js";
+// Operator/backend-only Plaid Auth bank helpers. Exported from the backend
+// surface only: never from `@paybond/kit/agent`, the MCP server, or templates.
+export {
+  FORBIDDEN_PLAID_PUBLIC_FIELDS,
+  OperatorPlaidBankClient,
+  PLAID_READINESS_REASONS,
+  PlaidBankNotFoundError,
+  PlaidBankNotReadyError,
+  PlaidCredentialError,
+  PlaidOperatorError,
+  PlaidOperatorHttpError,
+  PlaidSecretMaterialError,
+  PlaidTenantBindingError,
+  ServiceAccountPlaidSession,
+  assertNoPlaidSecretFields,
+  fundAchWithPlaidBank,
+  listPlaidBanks,
+  plaidAchFundingResultToPublicJSON,
+  plaidBankAccountToPublicJSON,
+  plaidBankInventoryToPublicJSON,
+  plaidBankReadinessMessage,
+  plaidReadinessMessage,
+  readyPlaidBankAccounts,
+  type FundAchIntentWithPlaidBankInput,
+  type FundAchWithPlaidBankInit,
+  type ListPlaidBanksInit,
+  type OperatorPlaidBankClientOptions,
+  type PlaidAchFundingResult,
+  type PlaidBankAccount,
+  type PlaidBankInventory,
+  type PlaidReadinessReason,
+  type ServiceAccountPlaidSessionInit,
+} from "./plaid.js";
 export {
   PROTOCOL_AUTHORIZATION_RECEIPT_KIND_V1,
   PROTOCOL_RECEIPT_SCHEMA_VERSION,

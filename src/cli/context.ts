@@ -23,14 +23,21 @@ export function gatewayUrl(base: string, path: string): string {
 
 function parseGatewayErrorBody(body: GatewayJson, status: number): CliError {
   const nested = body.error;
-  const gatewayCode =
-    nested && typeof nested === "object" && !Array.isArray(nested)
-      ? String((nested as GatewayJson).code ?? "")
-      : String(body.code ?? "");
-  const gatewayMessage =
-    nested && typeof nested === "object" && !Array.isArray(nested)
-      ? String((nested as GatewayJson).message ?? "")
-      : String(body.message ?? body.error_description ?? "gateway request failed");
+  let gatewayCode: string;
+  let gatewayMessage: string;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    // Nested envelope: {"error": {"code": ..., "message": ...}}.
+    gatewayCode = String((nested as GatewayJson).code ?? "");
+    gatewayMessage = String((nested as GatewayJson).message ?? "");
+  } else if (typeof nested === "string" && nested.trim()) {
+    // Flat envelope used by writeJSONError: {"error": "<code>", "message": "..."}.
+    gatewayCode = nested.trim();
+    gatewayMessage = String(body.message ?? body.error_description ?? "");
+  } else {
+    gatewayCode = String(body.code ?? "");
+    gatewayMessage = String(body.message ?? body.error_description ?? "");
+  }
+  gatewayMessage = gatewayMessage || "gateway request failed";
   const mapped = exitCodeForHttpStatus(status);
   return new CliError(gatewayMessage || `Gateway HTTP ${status}`, {
     category: mapped.category,

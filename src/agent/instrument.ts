@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type { PaybondPolicy, PaybondPolicyLoadSource } from "../policy/load.js";
 import { PaybondPolicy as PaybondPolicyClass } from "../policy/load.js";
 import type { PaybondPolicyDocumentV1 } from "../policy/schema.js";
@@ -20,6 +22,7 @@ import {
 import {
   createPaybondGenericInputGuard,
 } from "./generic-runner.js";
+import { createPaybondLangGraphHooks } from "../langgraph/config.js";
 import { paybondVercelToolApproval } from "../vercel-ai/tool-approval.js";
 import {
   toPaybondAgentResult,
@@ -38,6 +41,16 @@ import {
   resolveAttachContextFromEnv,
   type PaybondAttachEnvRecord,
 } from "./attach-bundle.js";
+
+/** Max retained lazy-context runtimes per instrumented agent (LRU). */
+const RUNTIME_CACHE_MAX_ENTRIES = 64;
+/** Capability-token-aligned TTL for cached attach runtimes. */
+const RUNTIME_CACHE_TTL_MS = 15 * 60 * 1000;
+
+type RuntimeCacheEntry<TTools> = {
+  runtime: PaybondInstrumentRuntime<TTools>;
+  storedAtMs: number;
+};
 
 /** Production attach from console env vars or an explicit funded-intent binding. */
 export type PaybondInstrumentAttachInput = PaybondRunBindingAttachInput | "env";
@@ -262,8 +275,13 @@ function isContextProvider(
   return typeof value === "function";
 }
 
+/**
+ * Hash intent/capability material so the cache key never retains raw capability tokens.
+ */
 function runtimeCacheKey(context: PaybondInstrumentContext): string {
-  return `${context.intentId}\0${context.capabilityToken}\0${context.userId ?? ""}`;
+  return createHash("sha256")
+    .update(`${context.intentId}\0${context.capabilityToken}\0${context.userId ?? ""}`, "utf8")
+    .digest("hex");
 }
 
 function assertInstrumentContext(context: PaybondInstrumentContext): void {
@@ -356,6 +374,8 @@ function wrapToolsForFramework<TTools>(
   guarded?: CreateGuardedAgentResult<TTools>,
   adapterOptions?: ReturnType<PaybondPolicy["toAdapterOptions"]>,
 ): TTools {
+  // LangGraph is wrapped at ToolNode / awrapToolCall — not per-tool. Callers must
+  // use hooks.createToolNode / hooks.awrapToolCall from the attach path.
   if (framework === "langgraph") {
     return rawTools;
   }
@@ -371,6 +391,12 @@ function hooksForAttachedFramework(
   adapterOptions?: ReturnType<PaybondPolicy["toAdapterOptions"]>,
 ): PaybondAgentHooks {
   const hooks: PaybondAgentHooks = {};
+  if (framework === "langgraph") {
+    const langgraph = createPaybondLangGraphHooks(run);
+    hooks.awrapToolCall = langgraph.awrapToolCall;
+    hooks.createToolNode = langgraph.createToolNode;
+    return hooks;
+  }
   if (framework === "generic") {
     hooks.inputGuard = createPaybondGenericInputGuard(run);
     return hooks;
@@ -410,8 +436,19 @@ export class PaybondInstrumentRuntime<TTools = unknown> {
     return this.binding;
   }
 
-  /** Release hooks for this runtime (no-op today; reserved for long-lived sessions). */
-  close(): void {}
+  private disposer?: () => void;
+
+  /** Register a one-shot disposer (e.g. drop this runtime from a parent LRU cache). */
+  setDisposer(disposer: () => void): void {
+    this.disposer = disposer;
+  }
+
+  /** Release cache entries and hooks for this runtime. */
+  close(): void {
+    const dispose = this.disposer;
+    this.disposer = undefined;
+    dispose?.();
+  }
 }
 
 /**
@@ -428,7 +465,7 @@ export class PaybondInstrumented<TTools = unknown> {
   private readonly framework: GuardedAgentFramework;
   private readonly contextProvider?: PaybondInstrumentContextProvider;
   private readonly traceSink?: PaybondTraceSink;
-  private readonly runtimeCache = new Map<string, PaybondInstrumentRuntime<TTools>>();
+  private readonly runtimeCache = new Map<string, RuntimeCacheEntry<TTools>>();
 
   constructor(
     paybond: PaybondAgentRunHost,
@@ -454,12 +491,34 @@ export class PaybondInstrumented<TTools = unknown> {
     return this.binding;
   }
 
+  private evictExpiredRuntimes(nowMs: number = Date.now()): void {
+    for (const [key, entry] of this.runtimeCache) {
+      if (nowMs - entry.storedAtMs > RUNTIME_CACHE_TTL_MS) {
+        this.runtimeCache.delete(key);
+      }
+    }
+  }
+
+  private evictOverflowRuntimes(): void {
+    while (this.runtimeCache.size > RUNTIME_CACHE_MAX_ENTRIES) {
+      const oldest = this.runtimeCache.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.runtimeCache.delete(oldest);
+    }
+  }
+
   private async resolveRuntime(context: PaybondInstrumentContext): Promise<PaybondInstrumentRuntime<TTools>> {
     assertInstrumentContext(context);
     const key = runtimeCacheKey(context);
+    this.evictExpiredRuntimes();
     const cached = this.runtimeCache.get(key);
     if (cached) {
-      return cached;
+      // Refresh LRU order.
+      this.runtimeCache.delete(key);
+      this.runtimeCache.set(key, cached);
+      return cached.runtime;
     }
     const runtime = await createBoundRuntime(
       this.paybond,
@@ -470,7 +529,11 @@ export class PaybondInstrumented<TTools = unknown> {
       "attach",
       this.traceSink,
     );
-    this.runtimeCache.set(key, runtime);
+    runtime.setDisposer(() => {
+      this.runtimeCache.delete(key);
+    });
+    this.runtimeCache.set(key, { runtime, storedAtMs: Date.now() });
+    this.evictOverflowRuntimes();
     return runtime;
   }
 

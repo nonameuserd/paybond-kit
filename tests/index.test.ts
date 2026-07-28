@@ -45,7 +45,7 @@ describe("HarborClient", () => {
           ),
       ),
     );
-    const c = new HarborClient("https://harbor.test", "tenant-a");
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     await expect(
       c.verifyCapability({
         intentId: intent,
@@ -55,12 +55,58 @@ describe("HarborClient", () => {
     ).rejects.toThrow(/tenant mismatch/);
   });
 
+  it("rejects submitEvidence responses echoing a different tenant", async () => {
+    const intent = "550e8400-e29b-41d4-a716-446655440000";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              intent_id: intent,
+              tenant: "other-tenant",
+              state: "evidence_submitted",
+              predicate_passed: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
+    await expect(c.submitEvidence(intent, { payload: { ok: true } })).rejects.toThrow(
+      /evidence tenant mismatch/,
+    );
+  });
+
+  it("rejects submitEvidence responses echoing a different intent", async () => {
+    const intent = "550e8400-e29b-41d4-a716-446655440000";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              intent_id: "550e8400-e29b-41d4-a716-4466554400ff",
+              tenant: "tenant-a",
+              state: "evidence_submitted",
+              predicate_passed: true,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
+    await expect(c.submitEvidence(intent, { payload: { ok: true } })).rejects.toThrow(
+      /evidence intent mismatch/,
+    );
+  });
+
   it("surfaces HarborHttpError with status for 401", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response("nope", { status: 401 })),
     );
-    const c = new HarborClient("https://harbor.test", "tenant-a");
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     try {
       await c.verifyCapability({
         intentId: "550e8400-e29b-41d4-a716-446655440000",
@@ -112,7 +158,7 @@ describe("HarborClient", () => {
           ),
       ),
     );
-    const c = new HarborClient("https://harbor.test", "tenant-a");
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     await expect(c.fundIntent(intent)).resolves.toMatchObject({
       statusCode: 402,
       paymentRequired: "x402-requirements",
@@ -165,7 +211,7 @@ describe("HarborClient", () => {
           ),
       ),
     );
-    const c = new HarborClient("https://harbor.test", "tenant-a");
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     await expect(c.fundIntent(intent)).resolves.toMatchObject({
       statusCode: 202,
       settlementRail: "stripe_ach_debit",
@@ -205,7 +251,7 @@ describe("HarborClient", () => {
           ),
       ),
     );
-    const c = new HarborClient("https://harbor.test", "tenant-a");
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     await expect(c.getLedgerTip()).rejects.toThrow(/ledger tenant mismatch/);
   });
 
@@ -225,7 +271,7 @@ describe("HarborClient", () => {
       );
     });
     vi.stubGlobal("fetch", fetchMock);
-    const c = new HarborClient("https://harbor.test", "tenant-a");
+    const c = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     await c.getLedgerEvents({ afterSeq: 7, limit: 999 });
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -238,7 +284,7 @@ describe("PaybondIntents", () => {
 
   it("defaults evidence artifacts and submitted-at timestamp", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     const submitEvidence = vi
       .spyOn(harbor, "submitEvidence")
       .mockResolvedValue({
@@ -265,7 +311,7 @@ describe("PaybondIntents", () => {
   });
 
   it("exposes createSpendIntent as an alias for create", async () => {
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     const create = vi
       .spyOn(PaybondIntents.prototype, "create")
       .mockResolvedValue({
@@ -295,7 +341,7 @@ describe("PaybondIntents", () => {
 
   it("confirmSettlement defaults body to {} and delegates to harbor", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     const confirmSettlement = vi
       .spyOn(harbor, "confirmSettlement")
       .mockResolvedValue({ intent_id: intentId, state: "released" });
@@ -325,7 +371,7 @@ describe("PaybondSpendGuard", () => {
 
   it("guards a tool after spend authorization allows", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
       allow: true,
       auditId: "550e8400-e29b-41d4-a716-446655440001",
@@ -349,7 +395,7 @@ describe("PaybondSpendGuard", () => {
 
   it("does not call the tool when spend authorization denies", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
       allow: false,
       auditId: "550e8400-e29b-41d4-a716-446655440001",
@@ -372,7 +418,7 @@ describe("PaybondSpendGuard", () => {
 
   it("raises approval-required separately from hard denial", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
       allow: false,
       auditId: "550e8400-e29b-41d4-a716-446655440001",
@@ -400,7 +446,7 @@ describe("PaybondSpendGuard", () => {
 
   it("runtime adapter raises approval-required separately from hard denial", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
       allow: false,
       auditId: "550e8400-e29b-41d4-a716-446655440001",
@@ -428,7 +474,7 @@ describe("PaybondSpendGuard", () => {
 
   it("adapts generic runtime tool-call objects", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     const verify = vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
       allow: true,
       auditId: "550e8400-e29b-41d4-a716-446655440001",
@@ -461,7 +507,7 @@ describe("PaybondSpendGuard", () => {
 
   it("lets runtime adapters map denial to framework-specific output", async () => {
     const intentId = "550e8400-e29b-41d4-a716-446655440000";
-    const harbor = new HarborClient("https://harbor.test", "tenant-a");
+    const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
     vi.spyOn(harbor, "verifyCapability").mockResolvedValue({
       allow: false,
       auditId: "550e8400-e29b-41d4-a716-446655440001",

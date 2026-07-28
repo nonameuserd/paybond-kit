@@ -5,6 +5,7 @@ import { writeAtomicFileAsync } from "../automation.js";
 import { CliError } from "../types.js";
 
 import type { PersistedProductionEvidence } from "./production-evidence.js";
+import { assertPathInsideDir, assertValidAgentRunId } from "./run-id.js";
 
 export type PersistedAgentRunContext = {
   run_id: string;
@@ -37,7 +38,9 @@ export function agentRunsDir(cwd: string): string {
 }
 
 export function agentRunFilePath(cwd: string, runId: string): string {
-  return join(agentRunsDir(cwd), `${runId.trim()}.json`);
+  const safeId = assertValidAgentRunId(runId);
+  const runsDir = agentRunsDir(cwd);
+  return assertPathInsideDir(runsDir, join(runsDir, `${safeId}.json`));
 }
 
 export async function persistAgentRunContext(

@@ -73,6 +73,11 @@ function bytesToBase64(bytes: Uint8Array): string {
 function hexToBytes(hex: string): Uint8Array {
   const s = hex.trim();
   if (s.length % 2 !== 0) throw new Error("bad hex");
+  if (!/^[0-9a-fA-F]*$/.test(s)) {
+    // Reject non-hex input: Number.parseInt would coerce invalid pairs to NaN
+    // (stored as 0x00), silently producing a wrong-but-valid signature.
+    throw new Error("bad hex: expected hexadecimal characters only");
+  }
   const out = new Uint8Array(s.length / 2);
   for (let i = 0; i < out.length; i++) {
     out[i] = Number.parseInt(s.slice(i * 2, i * 2 + 2), 16);

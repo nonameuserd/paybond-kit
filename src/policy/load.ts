@@ -91,7 +91,7 @@ export class PaybondPolicy {
 
   /** Whether provider-executed AI SDK tools should fail closed (Vercel AI / Cloudflare Agents). */
   get denyProviderExecutedTools(): boolean {
-    return this.document.adapter?.deny_provider_executed_tools === true;
+    return this.toAdapterOptions().denyProviderExecutedTools === true;
   }
 
   /** Map policy adapter settings to framework runner options. */

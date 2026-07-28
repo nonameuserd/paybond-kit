@@ -665,10 +665,12 @@ tools:
         "--production",
         "--attach-intent-id",
         ATTACH_INTENT_ID,
-        "--capability-token",
-        "cap-prod-1",
       ],
-      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+      {
+        cwd,
+        fetch: fetch as typeof fetch,
+        env: { PAYBOND_API_KEY: LIVE_RAW_KEY, PAYBOND_CAPABILITY_TOKEN: "cap-prod-1" },
+      },
     );
     expect(code).toBe(1);
     expect(payload.error.code).toBe("cli.agent.production_evidence_incomplete");
@@ -685,18 +687,21 @@ tools:
         "--production",
         "--attach-intent-id",
         ATTACH_INTENT_ID,
-        "--capability-token",
-        "cap-prod-1",
         "--payee-did",
         PRODUCTION_ATTACH_SEEDS.payeeDid,
-        "--payee-signing-seed-hex",
-        PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
         "--agent-recognition-key-id",
         PRODUCTION_ATTACH_SEEDS.agentRecognitionKeyId,
-        "--agent-recognition-signing-seed-hex",
-        PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
       ],
-      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+      {
+        cwd,
+        fetch: fetch as typeof fetch,
+        env: {
+          PAYBOND_API_KEY: LIVE_RAW_KEY,
+          PAYBOND_CAPABILITY_TOKEN: "cap-prod-1",
+          APP_PAYEE_SEED_HEX: PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
+          APP_AGENT_RECOGNITION_SEED_HEX: PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
+        },
+      },
     );
     expect(code).toBe(0);
     const runId = payload.data.run_id as string;
@@ -720,24 +725,27 @@ tools:
         "smoke",
         "--attach-intent-id",
         ATTACH_INTENT_ID,
-        "--capability-token",
-        "cap-prod-1",
         "--operation",
         "paid-tool",
         "--requested-spend-cents",
         "100",
         "--payee-did",
         PRODUCTION_ATTACH_SEEDS.payeeDid,
-        "--payee-signing-seed-hex",
-        PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
         "--agent-recognition-key-id",
         PRODUCTION_ATTACH_SEEDS.agentRecognitionKeyId,
-        "--agent-recognition-signing-seed-hex",
-        PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
         "--result-body",
         '{"status":"ok","cost_cents":100}',
       ],
-      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+      {
+        cwd,
+        fetch: fetch as typeof fetch,
+        env: {
+          PAYBOND_API_KEY: LIVE_RAW_KEY,
+          PAYBOND_CAPABILITY_TOKEN: "cap-prod-1",
+          APP_PAYEE_SEED_HEX: PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
+          APP_AGENT_RECOGNITION_SEED_HEX: PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
+        },
+      },
     );
     expect(code).toBe(0);
     expect(payload.ok).toBe(true);
@@ -783,16 +791,20 @@ tools:
         ATTACH_INTENT_ID,
         "--payee-did",
         PRODUCTION_ATTACH_SEEDS.payeeDid,
-        "--payee-signing-seed-hex",
-        PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
         "--agent-recognition-key-id",
         PRODUCTION_ATTACH_SEEDS.agentRecognitionKeyId,
-        "--agent-recognition-signing-seed-hex",
-        PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
         "--result-body",
         '{"status":"ok","cost_cents":100}',
       ],
-      { cwd, fetch: fetch as typeof fetch, env: { PAYBOND_API_KEY: LIVE_RAW_KEY } },
+      {
+        cwd,
+        fetch: fetch as typeof fetch,
+        env: {
+          PAYBOND_API_KEY: LIVE_RAW_KEY,
+          APP_PAYEE_SEED_HEX: PRODUCTION_ATTACH_SEEDS.payeeSigningSeedHex,
+          APP_AGENT_RECOGNITION_SEED_HEX: PRODUCTION_ATTACH_SEEDS.agentRecognitionSigningSeedHex,
+        },
+      },
     );
     expect(code).toBe(0);
     expect(payload.ok).toBe(true);

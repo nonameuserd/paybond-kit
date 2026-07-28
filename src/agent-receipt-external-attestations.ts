@@ -118,12 +118,27 @@ export function sep2828RecordsToExternalAttestations(
 
 /**
  * Converts a verified x402 signed delivery receipt into one external attestation entry.
+ *
+ * SECURITY: `options.expectedSigner` is **required** and pins the receipt to a
+ * known issuer key. An x402 receipt embeds its own verification key, so a valid
+ * signature only proves self-consistency; without a pin an attacker could forge
+ * a self-consistent "delivery receipt" attestation. This function fails closed
+ * when `expectedSigner` is missing or empty (see {@link verifySignedX402Receipt}).
+ *
+ * @param receiptInput - Wire envelope or receipt containing the signed x402 artifact.
+ * @param options - Must supply a non-empty `expectedSigner` (EIP-712 address, or
+ *   JWS RFC 7638 thumbprint / OKP raw `x`).
+ * @returns One external attestation entry for the verified receipt.
+ * @throws {Error} If `expectedSigner` is missing/empty or verification fails.
  */
 export function x402ReceiptToExternalAttestations(
   receiptInput: Record<string, unknown>,
+  options: { expectedSigner: string },
 ): AgentReceiptExternalAttestationV1[] {
   const signed = extractSignedX402Receipt(receiptInput);
-  const verifiedPayload = verifySignedX402Receipt(signed);
+  const verifiedPayload = verifySignedX402Receipt(signed, {
+    expectedSigner: options.expectedSigner,
+  });
   const payload = buildX402ReceiptDigestPayload(verifiedPayload);
   return [
     {
@@ -195,7 +210,7 @@ export function protocolSettlementReceiptToExternalAttestations(
 
 export type PaybondExternalAttestationInput =
   | { kind: "sep2828"; decision: Record<string, unknown>; outcome: Record<string, unknown> }
-  | { kind: "x402"; receipt: Record<string, unknown> }
+  | { kind: "x402"; receipt: Record<string, unknown>; expectedSigner: string }
   | {
       kind: "ap2_mandate";
       signedMandate: Record<string, unknown>;
@@ -220,7 +235,11 @@ export function resolveExternalAttestations(
       continue;
     }
     if (input.kind === "x402") {
-      out.push(...x402ReceiptToExternalAttestations(input.receipt));
+      out.push(
+        ...x402ReceiptToExternalAttestations(input.receipt, {
+          expectedSigner: input.expectedSigner,
+        }),
+      );
       continue;
     }
     if (input.kind === "ap2_mandate") {

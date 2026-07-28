@@ -27,8 +27,24 @@ describe("policyToAdapterOptions", () => {
     expect(policyToAdapterOptions(doc)).toEqual({ denyProviderExecutedTools: true });
   });
 
-  it("returns empty options when adapter flag is omitted", () => {
+  it("returns empty options when adapter flag is omitted and default_deny is false", () => {
+    const doc = parsePaybondPolicyDocument({
+      ...TRAVEL_POLICY,
+      default_deny: false,
+    });
+    expect(policyToAdapterOptions(doc)).toEqual({});
+  });
+
+  it("inherits denyProviderExecutedTools from default_deny when adapter flag is omitted", () => {
     const doc = parsePaybondPolicyDocument(TRAVEL_POLICY);
+    expect(policyToAdapterOptions(doc)).toEqual({ denyProviderExecutedTools: true });
+  });
+
+  it("allows explicit adapter opt-out even when default_deny is true", () => {
+    const doc = parsePaybondPolicyDocument({
+      ...TRAVEL_POLICY,
+      adapter: { deny_provider_executed_tools: false },
+    });
     expect(policyToAdapterOptions(doc)).toEqual({});
   });
 });
@@ -41,6 +57,12 @@ describe("PaybondPolicy adapter accessors", () => {
         adapter: { deny_provider_executed_tools: true },
       }),
     );
+    expect(policy.denyProviderExecutedTools).toBe(true);
+    expect(policy.toAdapterOptions()).toEqual({ denyProviderExecutedTools: true });
+  });
+
+  it("treats default_deny as denyProviderExecutedTools when adapter flag is unset", () => {
+    const policy = PaybondPolicy.fromDocument(parsePaybondPolicyDocument(TRAVEL_POLICY));
     expect(policy.denyProviderExecutedTools).toBe(true);
     expect(policy.toAdapterOptions()).toEqual({ denyProviderExecutedTools: true });
   });

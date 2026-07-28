@@ -23,26 +23,41 @@ function makeCtx(cwd: string): CliContext {
 }
 
 describe("intents harbor mutation helpers", () => {
-  it("parseHarborMutationFlags extracts recognition and idempotency flags", () => {
-    const flags = parseHarborMutationFlags([
-      "--agent-recognition-key-id",
-      "kid-1",
-      "--agent-recognition-signing-seed-hex",
-      AGENT_SEED_HEX,
-      "--idempotency-key",
-      "idem-1",
-      "--body",
-      "payload.json",
-    ]);
+  it("parseHarborMutationFlags extracts recognition and idempotency flags", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "paybond-harbor-mutation-"));
+    try {
+      writeFileSync(join(dir, "seed.hex"), AGENT_SEED_HEX, "utf8");
+      const flags = await parseHarborMutationFlags([
+        "--agent-recognition-key-id",
+        "kid-1",
+        "--agent-recognition-signing-seed-file",
+        "seed.hex",
+        "--idempotency-key",
+        "idem-1",
+        "--body",
+        "payload.json",
+      ], dir);
 
-    expect(flags.recognitionKeyId).toBe("kid-1");
-    expect(flags.recognitionSeedHex).toBe(AGENT_SEED_HEX);
-    expect(flags.idempotencyKey).toBe("idem-1");
-    expect(flags.restArgv).toEqual(["--body", "payload.json"]);
+      expect(flags.recognitionKeyId).toBe("kid-1");
+      expect(flags.recognitionSeedHex).toBe(AGENT_SEED_HEX);
+      expect(flags.idempotencyKey).toBe("idem-1");
+      expect(flags.restArgv).toEqual(["--body", "payload.json"]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  it("parseHarborMutationFlags leaves unrecognized args in restArgv", () => {
-    const flags = parseHarborMutationFlags(["intent-123", "--body", "payload.json"]);
+  it("rejects secret signing seed on argv", async () => {
+    await expect(
+      parseHarborMutationFlags([
+        "--agent-recognition-signing-seed-hex",
+        AGENT_SEED_HEX,
+      ], "/tmp"),
+    ).rejects.toMatchObject({ code: "cli.secret.argv_rejected" });
+  });
+
+  it("parseHarborMutationFlags leaves unrecognized args in restArgv", async () => {
+    const flags = await parseHarborMutationFlags(["intent-123", "--body", "payload.json"], "/tmp");
     expect(flags.recognitionKeyId).toBeUndefined();
     expect(flags.recognitionSeedHex).toBeUndefined();
     expect(flags.idempotencyKey).toBeUndefined();

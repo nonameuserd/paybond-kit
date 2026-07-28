@@ -88,6 +88,9 @@ import {
   parseOptionalNonNegativeInt,
   parseRequiredNonNegativeInt,
 } from "../globals.js";
+import {
+  resolveSecretFromFileOrEnv,
+} from "../secret-argv.js";
 import { CliError, type CommandResult } from "../types.js";
 
 declare const process: { stdin: NodeJS.ReadableStream; env: Record<string, string | undefined> };
@@ -238,17 +241,34 @@ async function attachAgentRunFromStore(
   return run;
 }
 
-function parseProductionSigningSeedFlags(argv: string[]): {
+async function parseProductionSigningSeedFlags(
+  argv: string[],
+  cwd: string,
+): Promise<{
   payeeSigningSeedHex?: string;
   agentRecognitionSigningSeedHex?: string;
   rest: string[];
-} {
-  const payeeFlag = consumeFlag(argv, "--payee-signing-seed-hex");
-  const agentFlag = consumeFlag(payeeFlag.rest, "--agent-recognition-signing-seed-hex");
+}> {
+  const payee = await resolveSecretFromFileOrEnv({
+    argv,
+    cwd,
+    rejectedFlag: "--payee-signing-seed-hex",
+    fileFlag: "--payee-signing-seed-file",
+    envName: "APP_PAYEE_SEED_HEX",
+    alternatives: "--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+  });
+  const agent = await resolveSecretFromFileOrEnv({
+    argv: payee.rest,
+    cwd,
+    rejectedFlag: "--agent-recognition-signing-seed-hex",
+    fileFlag: "--agent-recognition-signing-seed-file",
+    envName: "APP_AGENT_RECOGNITION_SEED_HEX",
+    alternatives: "--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+  });
   return {
-    payeeSigningSeedHex: payeeFlag.value,
-    agentRecognitionSigningSeedHex: agentFlag.value,
-    rest: agentFlag.rest,
+    payeeSigningSeedHex: payee.value,
+    agentRecognitionSigningSeedHex: agent.value,
+    rest: agent.rest,
   };
 }
 
@@ -344,21 +364,42 @@ export async function handleAgentRunBind(ctx: CliContext, argv: string[]): Promi
   const registryFlag = consumeFlag(presetFlag.rest, "--registry-file");
   const runIdFlag = consumeFlag(registryFlag.rest, "--run-id");
   const attachIntentFlag = consumeFlag(runIdFlag.rest, "--attach-intent-id");
-  const capabilityFlag = consumeFlag(attachIntentFlag.rest, "--capability-token");
-  const payeeDidFlag = consumeFlag(capabilityFlag.rest, "--payee-did");
-  const payeeSeedFlag = consumeFlag(payeeDidFlag.rest, "--payee-signing-seed-hex");
-  const recognitionKeyFlag = consumeFlag(payeeSeedFlag.rest, "--agent-recognition-key-id");
-  const recognitionSeedFlag = consumeFlag(recognitionKeyFlag.rest, "--agent-recognition-signing-seed-hex");
-  const writeEnvFlag = consumeBooleanFlag(recognitionSeedFlag.rest, "--write-env");
+  const capabilityResolved = await resolveSecretFromFileOrEnv({
+    argv: attachIntentFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--capability-token",
+    fileFlag: "--capability-token-file",
+    envName: PAYBOND_CAPABILITY_TOKEN_ENV,
+    alternatives: `--capability-token-file or ${PAYBOND_CAPABILITY_TOKEN_ENV}`,
+  });
+  const payeeDidFlag = consumeFlag(capabilityResolved.rest, "--payee-did");
+  const payeeSeedResolved = await resolveSecretFromFileOrEnv({
+    argv: payeeDidFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--payee-signing-seed-hex",
+    fileFlag: "--payee-signing-seed-file",
+    envName: "APP_PAYEE_SEED_HEX",
+    alternatives: "--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+  });
+  const recognitionKeyFlag = consumeFlag(payeeSeedResolved.rest, "--agent-recognition-key-id");
+  const recognitionSeedResolved = await resolveSecretFromFileOrEnv({
+    argv: recognitionKeyFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--agent-recognition-signing-seed-hex",
+    fileFlag: "--agent-recognition-signing-seed-file",
+    envName: "APP_AGENT_RECOGNITION_SEED_HEX",
+    alternatives: "--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+  });
+  const writeEnvFlag = consumeBooleanFlag(recognitionSeedResolved.rest, "--write-env");
   const envOutFlag = consumeFlag(writeEnvFlag.rest, "--env-file");
   const watchFlag = consumeBooleanFlag(envOutFlag.rest, "--watch");
 
   const attachIntentId = attachIntentFlag.value?.trim();
-  const capabilityToken = capabilityFlag.value?.trim();
+  const capabilityToken = capabilityResolved.value?.trim();
   const hasAttach = Boolean(attachIntentId || capabilityToken);
   if (hasAttach && (!attachIntentId || !capabilityToken)) {
     throw agentCliError(
-      "attach requires both --attach-intent-id and --capability-token",
+      `attach requires both --attach-intent-id and a capability token (--capability-token-file or ${PAYBOND_CAPABILITY_TOKEN_ENV})`,
       { code: "cli.agent.attach_incomplete", category: "usage" },
     );
   }
@@ -423,7 +464,7 @@ export async function handleAgentRunBind(ctx: CliContext, argv: string[]): Promi
     } else if (!hasAttach) {
       if (!operationFlag.value) {
         throw agentCliError(
-          "agent run bind requires --operation, --policy-file, or --attach-intent-id with --capability-token",
+          "agent run bind requires --operation, --policy-file, or --attach-intent-id with a capability token",
           { code: "cli.usage.missing_args", category: "usage" },
         );
       }
@@ -448,9 +489,9 @@ export async function handleAgentRunBind(ctx: CliContext, argv: string[]): Promi
         cwd: ctx.cwd,
         envFile: envOutFlag.value ?? ctx.globals.envFile,
         payeeDid: payeeDidFlag.value,
-        payeeSigningSeedHex: payeeSeedFlag.value,
+        payeeSigningSeedHex: payeeSeedResolved.value,
         agentRecognitionKeyId: recognitionKeyFlag.value,
-        agentRecognitionSigningSeedHex: recognitionSeedFlag.value,
+        agentRecognitionSigningSeedHex: recognitionSeedResolved.value,
       });
       persistedProductionEvidence = productionEvidenceToPersisted(productionEvidence);
       run = await PaybondAgentRun.bind(session.paybond, {
@@ -662,7 +703,7 @@ export async function handleAgentRunReloadPolicy(
   const remoteFlag = consumeBooleanFlag(policyFlag.rest, "--remote");
   const resolveInheritanceFlag = consumeBooleanFlag(remoteFlag.rest, "--resolve-inheritance");
   const allowLoosenFlag = consumeBooleanFlag(resolveInheritanceFlag.rest, "--allow-loosen");
-  const seedFlags = parseProductionSigningSeedFlags(allowLoosenFlag.rest);
+  const seedFlags = await parseProductionSigningSeedFlags(allowLoosenFlag.rest, ctx.cwd);
 
   if (!runIdFlag.value) {
     throw agentCliError("agent run reload-policy requires --run-id", {
@@ -775,7 +816,7 @@ export async function handleAgentToolExecute(ctx: CliContext, argv: string[]): P
     "--result-body",
     "--result-file",
   );
-  const seedFlags = parseProductionSigningSeedFlags(resultParsed.rest);
+  const seedFlags = await parseProductionSigningSeedFlags(resultParsed.rest, ctx.cwd);
   const args = argsParsed.payload;
   const resultBody = resultParsed.payload;
   if (Object.keys(resultBody).length === 0) {
@@ -852,7 +893,7 @@ export async function handleAgentToolValidate(ctx: CliContext, argv: string[]): 
     "--arguments",
     "--arguments-file",
   );
-  const seedFlags = parseProductionSigningSeedFlags(argsParsed.rest);
+  const seedFlags = await parseProductionSigningSeedFlags(argsParsed.rest, ctx.cwd);
   const args = argsParsed.payload;
 
   return withPaybondAgentCli(ctx, productionFlag.present, async (session) => {
@@ -1085,10 +1126,24 @@ export async function handleAgentHarborEvidenceSmoke(
 ): Promise<CommandResult> {
   const intentFlag = consumeFlag(argv, "--intent-id");
   const payeeDidFlag = consumeFlag(intentFlag.rest, "--payee-did");
-  const payeeSeedFlag = consumeFlag(payeeDidFlag.rest, "--payee-signing-seed-hex");
-  const recognitionKeyFlag = consumeFlag(payeeSeedFlag.rest, "--agent-recognition-key-id");
-  const recognitionSeedFlag = consumeFlag(recognitionKeyFlag.rest, "--agent-recognition-signing-seed-hex");
-  const idempotencyFlag = consumeFlag(recognitionSeedFlag.rest, "--idempotency-key");
+  const payeeSeedResolved = await resolveSecretFromFileOrEnv({
+    argv: payeeDidFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--payee-signing-seed-hex",
+    fileFlag: "--payee-signing-seed-file",
+    envName: "APP_PAYEE_SEED_HEX",
+    alternatives: "--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+  });
+  const recognitionKeyFlag = consumeFlag(payeeSeedResolved.rest, "--agent-recognition-key-id");
+  const recognitionSeedResolved = await resolveSecretFromFileOrEnv({
+    argv: recognitionKeyFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--agent-recognition-signing-seed-hex",
+    fileFlag: "--agent-recognition-signing-seed-file",
+    envName: "APP_AGENT_RECOGNITION_SEED_HEX",
+    alternatives: "--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+  });
+  const idempotencyFlag = consumeFlag(recognitionSeedResolved.rest, "--idempotency-key");
 
   const intentId =
     intentFlag.value?.trim() ||
@@ -1119,9 +1174,9 @@ export async function handleAgentHarborEvidenceSmoke(
       cwd: ctx.cwd,
       envFile: ctx.globals.envFile,
       payeeDid: payeeDidFlag.value,
-      payeeSigningSeedHex: payeeSeedFlag.value,
+      payeeSigningSeedHex: payeeSeedResolved.value,
       agentRecognitionKeyId: recognitionKeyFlag.value,
-      agentRecognitionSigningSeedHex: recognitionSeedFlag.value,
+      agentRecognitionSigningSeedHex: recognitionSeedResolved.value,
     });
     const tenantId = session.paybond.harbor.tenantId;
     const submittedAtRfc3339 = nowRfc3339Seconds();
@@ -1168,24 +1223,44 @@ export async function handleAgentProductionAttachSmoke(
   argv: string[],
 ): Promise<CommandResult> {
   const attachIntentFlag = consumeFlag(argv, "--attach-intent-id");
-  const capabilityFlag = consumeFlag(attachIntentFlag.rest, "--capability-token");
-  const operationFlag = consumeFlag(capabilityFlag.rest, "--operation");
+  const capabilityResolved = await resolveSecretFromFileOrEnv({
+    argv: attachIntentFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--capability-token",
+    fileFlag: "--capability-token-file",
+    envName: PAYBOND_CAPABILITY_TOKEN_ENV,
+    alternatives: `--capability-token-file or ${PAYBOND_CAPABILITY_TOKEN_ENV}`,
+  });
+  const operationFlag = consumeFlag(capabilityResolved.rest, "--operation");
   const spendFlag = consumeFlag(operationFlag.rest, "--requested-spend-cents");
   const policyFlag = consumeFlag(spendFlag.rest, "--policy-file");
   const payeeDidFlag = consumeFlag(policyFlag.rest, "--payee-did");
-  const payeeSeedFlag = consumeFlag(payeeDidFlag.rest, "--payee-signing-seed-hex");
-  const recognitionKeyFlag = consumeFlag(payeeSeedFlag.rest, "--agent-recognition-key-id");
-  const recognitionSeedFlag = consumeFlag(recognitionKeyFlag.rest, "--agent-recognition-signing-seed-hex");
+  const payeeSeedResolved = await resolveSecretFromFileOrEnv({
+    argv: payeeDidFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--payee-signing-seed-hex",
+    fileFlag: "--payee-signing-seed-file",
+    envName: "APP_PAYEE_SEED_HEX",
+    alternatives: "--payee-signing-seed-file or APP_PAYEE_SEED_HEX",
+  });
+  const recognitionKeyFlag = consumeFlag(payeeSeedResolved.rest, "--agent-recognition-key-id");
+  const recognitionSeedResolved = await resolveSecretFromFileOrEnv({
+    argv: recognitionKeyFlag.rest,
+    cwd: ctx.cwd,
+    rejectedFlag: "--agent-recognition-signing-seed-hex",
+    fileFlag: "--agent-recognition-signing-seed-file",
+    envName: "APP_AGENT_RECOGNITION_SEED_HEX",
+    alternatives: "--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+  });
 
   const attachIntentId =
     attachIntentFlag.value?.trim() ||
     process.env[PAYBOND_ATTACH_INTENT_ID_ENV]?.trim();
-  const capabilityToken =
-    capabilityFlag.value?.trim() ||
-    process.env[PAYBOND_CAPABILITY_TOKEN_ENV]?.trim();
+  const capabilityToken = capabilityResolved.value?.trim();
   if (!attachIntentId || !capabilityToken) {
     throw agentCliError(
-      "agent production attach smoke requires --attach-intent-id and --capability-token (or PAYBOND_ATTACH_INTENT_ID and PAYBOND_CAPABILITY_TOKEN)",
+      `agent production attach smoke requires --attach-intent-id and a capability token ` +
+        `(--capability-token-file or ${PAYBOND_ATTACH_INTENT_ID_ENV}/${PAYBOND_CAPABILITY_TOKEN_ENV})`,
       { code: "cli.usage.missing_args", category: "usage" },
     );
   }
@@ -1199,7 +1274,7 @@ export async function handleAgentProductionAttachSmoke(
   }
 
   const resultParsed = await parseInlineJson(
-    recognitionSeedFlag.rest,
+    recognitionSeedResolved.rest,
     "--result-body",
     "--result-file",
   );
@@ -1211,12 +1286,22 @@ export async function handleAgentProductionAttachSmoke(
     );
   }
 
+  // Propagate secrets via env for nested bind/execute (never re-put onto argv).
+  const prevCap = process.env[PAYBOND_CAPABILITY_TOKEN_ENV];
+  const prevPayeeSeed = process.env.APP_PAYEE_SEED_HEX;
+  const prevRecognitionSeed = process.env.APP_AGENT_RECOGNITION_SEED_HEX;
+  process.env[PAYBOND_CAPABILITY_TOKEN_ENV] = capabilityToken;
+  if (payeeSeedResolved.value?.trim()) {
+    process.env.APP_PAYEE_SEED_HEX = payeeSeedResolved.value.trim();
+  }
+  if (recognitionSeedResolved.value?.trim()) {
+    process.env.APP_AGENT_RECOGNITION_SEED_HEX = recognitionSeedResolved.value.trim();
+  }
+
   const bindArgv: string[] = [
     "--production",
     "--attach-intent-id",
     attachIntentId,
-    "--capability-token",
-    capabilityToken,
     "--operation",
     resolvedOperation,
   ];
@@ -1229,73 +1314,79 @@ export async function handleAgentProductionAttachSmoke(
   if (payeeDidFlag.value?.trim()) {
     bindArgv.push("--payee-did", payeeDidFlag.value.trim());
   }
-  if (payeeSeedFlag.value?.trim()) {
-    bindArgv.push("--payee-signing-seed-hex", payeeSeedFlag.value.trim());
-  }
   if (recognitionKeyFlag.value?.trim()) {
     bindArgv.push("--agent-recognition-key-id", recognitionKeyFlag.value.trim());
   }
-  if (recognitionSeedFlag.value?.trim()) {
-    bindArgv.push("--agent-recognition-signing-seed-hex", recognitionSeedFlag.value.trim());
-  }
-
-  const bindResult = await handleAgentRunBind(ctx, bindArgv);
-  const runId = String(bindResult.data.run_id ?? "");
-  const storedForExecute = await loadAgentRunContext(ctx.cwd, runId);
-  const executeArgv: string[] = [
-    "--production",
-    "--run-id",
-    runId,
-    "--operation",
-    resolvedOperation,
-    "--tool-call-id",
-    "prod-attach-smoke-1",
-    "--result-body",
-    JSON.stringify(resultBody),
-  ];
-  if (storedForExecute.requested_spend_cents != null) {
-    executeArgv.push(
-      "--requested-spend-cents",
-      String(storedForExecute.requested_spend_cents),
-    );
-  } else if (spendFlag.value?.trim()) {
-    executeArgv.push("--requested-spend-cents", spendFlag.value.trim());
-  }
-  if (payeeSeedFlag.value?.trim()) {
-    executeArgv.push("--payee-signing-seed-hex", payeeSeedFlag.value.trim());
-  }
-  if (recognitionSeedFlag.value?.trim()) {
-    executeArgv.push("--agent-recognition-signing-seed-hex", recognitionSeedFlag.value.trim());
-  }
 
   try {
-    const executeResult = await handleAgentToolExecute(ctx, executeArgv);
-    const checklistLines = formatAgentProductionAttachSmokeChecklist({
-      bind: bindResult.data,
-      execute: executeResult.data,
-      globals: ctx.globals,
-    });
-    return {
-      data: {
+    const bindResult = await handleAgentRunBind(ctx, bindArgv);
+    const runId = String(bindResult.data.run_id ?? "");
+    const storedForExecute = await loadAgentRunContext(ctx.cwd, runId);
+    const executeArgv: string[] = [
+      "--production",
+      "--run-id",
+      runId,
+      "--operation",
+      resolvedOperation,
+      "--tool-call-id",
+      "prod-attach-smoke-1",
+      "--result-body",
+      JSON.stringify(resultBody),
+    ];
+    if (storedForExecute.requested_spend_cents != null) {
+      executeArgv.push(
+        "--requested-spend-cents",
+        String(storedForExecute.requested_spend_cents),
+      );
+    } else if (spendFlag.value?.trim()) {
+      executeArgv.push("--requested-spend-cents", spendFlag.value.trim());
+    }
+
+    try {
+      const executeResult = await handleAgentToolExecute(ctx, executeArgv);
+      const checklistLines = formatAgentProductionAttachSmokeChecklist({
         bind: bindResult.data,
         execute: executeResult.data,
-        checklist_lines: checklistLines,
-      },
-      warnings: bindResult.warnings,
-    };
-  } catch (err) {
-    if (err instanceof CliError) {
-      throw new CliError(err.message, {
-        category: err.category,
-        code: err.code,
-        exitCode: err.exitCode,
-        details: {
-          ...(err.details ?? {}),
-          bind: bindResult.data,
-        },
+        globals: ctx.globals,
       });
+      return {
+        data: {
+          bind: bindResult.data,
+          execute: executeResult.data,
+          checklist_lines: checklistLines,
+        },
+        warnings: bindResult.warnings,
+      };
+    } catch (err) {
+      if (err instanceof CliError) {
+        throw new CliError(err.message, {
+          category: err.category,
+          code: err.code,
+          exitCode: err.exitCode,
+          details: {
+            ...(err.details ?? {}),
+            bind: bindResult.data,
+          },
+        });
+      }
+      throw err;
     }
-    throw err;
+  } finally {
+    if (prevCap === undefined) {
+      delete process.env[PAYBOND_CAPABILITY_TOKEN_ENV];
+    } else {
+      process.env[PAYBOND_CAPABILITY_TOKEN_ENV] = prevCap;
+    }
+    if (prevPayeeSeed === undefined) {
+      delete process.env.APP_PAYEE_SEED_HEX;
+    } else {
+      process.env.APP_PAYEE_SEED_HEX = prevPayeeSeed;
+    }
+    if (prevRecognitionSeed === undefined) {
+      delete process.env.APP_AGENT_RECOGNITION_SEED_HEX;
+    } else {
+      process.env.APP_AGENT_RECOGNITION_SEED_HEX = prevRecognitionSeed;
+    }
   }
 }
 

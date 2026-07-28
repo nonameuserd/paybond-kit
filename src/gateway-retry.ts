@@ -1,6 +1,9 @@
 /** Cap Cloudflare edge retry hints so CLI flows do not block for a full minute. */
 export const CLOUDFLARE_EDGE_MAX_RETRY_DELAY_MS = 8_000;
 
+/** Default per-attempt fetch deadline for gateway/Harbor HTTP clients. */
+export const DEFAULT_GATEWAY_FETCH_TIMEOUT_MS = 30_000;
+
 type JsonRecord = Record<string, unknown>;
 
 export function parseCloudflareRetryAfterMs(bodyText: string): number | null {
@@ -79,6 +82,16 @@ export function gatewayRetryDelayMs(
   return raSec != null ? raSec * 1000 : backoffMs(attempt);
 }
 
+function resolveFetchSignal(
+  init: RequestInit,
+  timeoutMs: number = DEFAULT_GATEWAY_FETCH_TIMEOUT_MS,
+): AbortSignal {
+  if (init.signal) {
+    return init.signal;
+  }
+  return AbortSignal.timeout(timeoutMs);
+}
+
 /**
  * Shared 429/5xx retry loop for Paybond gateway HTTP clients.
  * Skips retries on Cloudflare edge error bodies. Returns the response on success;
@@ -88,13 +101,15 @@ export async function fetchWithGatewayRetries(
   url: string,
   init: RequestInit,
   maxRetries: number,
+  options?: { timeoutMs?: number },
 ): Promise<Response> {
   let lastErr: unknown;
   let cloudflareRetries = 0;
+  const timeoutMs = options?.timeoutMs ?? DEFAULT_GATEWAY_FETCH_TIMEOUT_MS;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     let res: Response;
     try {
-      res = await fetch(url, init);
+      res = await fetch(url, { ...init, signal: resolveFetchSignal(init, timeoutMs) });
     } catch (e) {
       lastErr = e;
       if (attempt + 1 >= maxRetries) {

@@ -51,7 +51,9 @@ export function paybondVercelWrapTools<TOOLS extends ToolSet>(
   const denyProviderExecutedTools = options?.denyProviderExecutedTools === true;
 
   for (const [toolName, tool] of Object.entries(tools) as Array<[string, Tool]>) {
-    if (denyProviderExecutedTools && isProviderExecutedVercelTool(tool)) {
+    // Fail closed: when deny is on, anything that is not a local execute is denied
+    // (provider-executed markers, provider-defined type, or missing execute).
+    if (denyProviderExecutedTools && !isClientExecutedTool(tool)) {
       wrapped[toolName] = denyProviderExecutedTool(tool, toolName);
       continue;
     }

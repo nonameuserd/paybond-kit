@@ -7,6 +7,7 @@ import {
   PAYBOND_ATTACH_INTENT_ID_ENV,
   PAYBOND_CAPABILITY_TOKEN_ENV,
   productionEvidenceFromAttachBundle,
+  redactPaybondAttachBundle,
   resolveAttachContextFromEnv,
   sealPaybondAttachBundle,
   type PaybondAttachBundlePayloadV1,
@@ -45,6 +46,17 @@ describe("attach bundle", () => {
     expect(context.intentId).toBe("intent-123");
     expect(context.capabilityToken).toBe("cap-token");
     expect(context.productionEvidence.payeeDid).toBe(SAMPLE_PAYLOAD.payee_did);
+  });
+
+  it("redacts a bundle to a non-secret placeholder without leaking key/ciphertext", () => {
+    const bundle = sealPaybondAttachBundle(SAMPLE_PAYLOAD);
+    const redacted = redactPaybondAttachBundle(bundle);
+    expect(redacted).toBe("ab1.<redacted>");
+    expect(bundle).toContain(".");
+    // The redacted form must not contain any of the encoded envelope bytes.
+    expect(redacted).not.toContain(bundle.slice(4));
+    expect(redactPaybondAttachBundle("not-a-bundle")).toBe("<redacted>");
+    expect(redactPaybondAttachBundle("")).toBe("<redacted>");
   });
 
   it("formats a copy-paste env snippet", () => {

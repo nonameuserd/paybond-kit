@@ -51,6 +51,25 @@ describe("evidenceSignBytesV1 wire golden", () => {
   });
 });
 
+describe("signPayeeEvidenceBinding hex validation", () => {
+  it("rejects non-hex artifact hashes instead of silently coercing to zero bytes", () => {
+    const golden = loadEvidenceSignV1Golden();
+    ensureEd25519Sha512Sync();
+    expect(() =>
+      signPayeeEvidenceBinding({
+        tenantId: golden.input.tenant_id,
+        intentId: golden.input.intent_id,
+        payeeDid: golden.input.payee_did,
+        payload: golden.input.payload,
+        // 64 chars but not valid hex: previously coerced to 0x00 and produced a wrong-but-valid signature.
+        artifactsBlake3Hex: ["zz".repeat(32)],
+        submittedAtRfc3339: golden.input.submitted_at_rfc3339,
+        payeeSigningSeed: new Uint8Array(32).fill(9),
+      }),
+    ).toThrow(/hex/);
+  });
+});
+
 describe("signPayeeEvidenceBinding happy path", () => {
   it("sets artifacts to [] and signs EvidenceSignV1 bytes matching the wire golden", () => {
     ensureEd25519Sha512Sync();

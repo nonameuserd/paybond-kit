@@ -2,14 +2,46 @@ import { createDecipheriv, createCipheriv, randomBytes } from "node:crypto";
 
 import type { PaybondRunProductionEvidenceCredentials } from "./types.js";
 
-/** Attach bundle wire prefix (`ab1.`). */
+/**
+ * Attach bundle wire prefix (`ab1.`).
+ *
+ * SECURITY: The AES-256-GCM envelope embeds its own key (`k`) alongside the
+ * ciphertext (`c`). The entire `ab1.` string is therefore a **secret** — holding
+ * it is equivalent to holding the payee/recognition signing seeds in cleartext.
+ * Treat it like an API key or private key: never log it, never place it in a URL,
+ * query string, or error message, and store it only in a secrets manager. Use
+ * {@link redactPaybondAttachBundle} before writing anything derived from a bundle
+ * to logs or telemetry.
+ */
 export const PAYBOND_ATTACH_BUNDLE_PREFIX = "ab1.";
 
 export const PAYBOND_ATTACH_INTENT_ID_ENV = "PAYBOND_ATTACH_INTENT_ID";
 export const PAYBOND_CAPABILITY_TOKEN_ENV = "PAYBOND_CAPABILITY_TOKEN";
 export const PAYBOND_ATTACH_BUNDLE_ENV = "PAYBOND_ATTACH_BUNDLE";
 
-/** Cleartext credential payload sealed inside {@link PAYBOND_ATTACH_BUNDLE_ENV}. */
+/**
+ * Redacts an attach bundle for safe logging.
+ *
+ * Returns a non-secret placeholder that preserves only the `ab1.` prefix so log
+ * lines remain identifiable without leaking the embedded key/ciphertext. Use
+ * this anywhere a bundle value might otherwise reach logs, telemetry, or error
+ * strings; the raw `ab1.` string must never be emitted.
+ *
+ * @param bundle - A raw attach bundle string (or any value that may contain one).
+ * @returns `"ab1.<redacted>"` for bundle-shaped input, otherwise `"<redacted>"`.
+ */
+export function redactPaybondAttachBundle(bundle: string): string {
+  return typeof bundle === "string" && bundle.trim().startsWith(PAYBOND_ATTACH_BUNDLE_PREFIX)
+    ? `${PAYBOND_ATTACH_BUNDLE_PREFIX}<redacted>`
+    : "<redacted>";
+}
+
+/**
+ * Cleartext credential payload sealed inside {@link PAYBOND_ATTACH_BUNDLE_ENV}.
+ *
+ * SECURITY: These fields are raw Ed25519 signing seeds. Once opened, keep them in
+ * a trusted signer/KMS only and never log or serialize them.
+ */
 export type PaybondAttachBundlePayloadV1 = Readonly<{
   v: 1;
   payee_did: string;
@@ -46,7 +78,14 @@ function parseSeed32Hex(raw: string, field: string): Uint8Array {
   return out;
 }
 
-/** Seal production signing material into an opaque attach bundle for env injection. */
+/**
+ * Seal production signing material into an opaque attach bundle for env injection.
+ *
+ * SECURITY: The returned `ab1.` string embeds the AES-256-GCM key next to the
+ * ciphertext, so it is a bearer secret equivalent to the cleartext signing seeds.
+ * Deliver it only over a secure channel, store it in a secrets manager, and never
+ * log it (use {@link redactPaybondAttachBundle} for any diagnostics).
+ */
 export function sealPaybondAttachBundle(payload: PaybondAttachBundlePayloadV1): string {
   if (payload.v !== 1) {
     throw new Error("attach bundle payload version must be 1");
@@ -149,7 +188,13 @@ export function resolveAttachContextFromEnv(
   };
 }
 
-/** Format the console one-time env snippet for copy/paste into a secrets manager. */
+/**
+ * Format the console one-time env snippet for copy/paste into a secrets manager.
+ *
+ * SECURITY: The `PAYBOND_ATTACH_BUNDLE` line contains the bearer secret bundle.
+ * Treat the whole snippet as sensitive: paste it directly into a secrets manager,
+ * never echo it to shared logs, CI output, chat, or shell history.
+ */
 export function formatPaybondAttachEnvSnippet(input: {
   intentId: string;
   capabilityToken: string;

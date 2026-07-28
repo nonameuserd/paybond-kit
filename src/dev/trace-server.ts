@@ -1,6 +1,7 @@
 import { createServer, type Server } from "node:http";
 
 import { DEV_TRACE_DEFAULT_PORT, listDevTraceEvents, devTraceHasCredentials } from "./trace-buffer.js";
+import { isAllowedDevTraceHost } from "./trace-host.js";
 import { devTraceResponseHeaders } from "./trace-security-headers.js";
 import { loadDevTraceDashboardHtml } from "./trace-ui.js";
 
@@ -23,7 +24,23 @@ export async function startDevTraceServer(options: DevTraceServerOptions = {}): 
   const dashboardHtml = loadDevTraceDashboardHtml();
 
   const server = createServer((req, res) => {
-    const url = new URL(req.url ?? "/", `http://${host}:${port}`);
+    const bound = server.address();
+    const boundPort = bound && typeof bound === "object" ? bound.port : port;
+    if (!isAllowedDevTraceHost(req.headers.host, boundPort)) {
+      res.writeHead(403, devTraceResponseHeaders("text/plain; charset=utf-8"));
+      res.end("Forbidden host");
+      return;
+    }
+    if (req.method !== undefined && req.method !== "GET" && req.method !== "HEAD") {
+      res.writeHead(405, {
+        ...devTraceResponseHeaders("text/plain; charset=utf-8"),
+        allow: "GET, HEAD",
+      });
+      res.end("Method not allowed");
+      return;
+    }
+
+    const url = new URL(req.url ?? "/", `http://${host}:${boundPort}`);
     const events = listDevTraceEvents(cwd);
 
     if (url.pathname === "/api/events") {
@@ -55,7 +72,9 @@ export async function startDevTraceServer(options: DevTraceServerOptions = {}): 
     server.once("error", reject);
     server.listen(port, host, () => {
       server.off("error", reject);
-      options.onListen?.(`http://${host}:${port}`);
+      const address = server.address();
+      const listenPort = address && typeof address === "object" ? address.port : port;
+      options.onListen?.(`http://${host}:${listenPort}`);
       resolve();
     });
   });

@@ -1,6 +1,6 @@
 /** x402 Signed Offer & Receipt extension signature verification. */
 
-import { createPublicKey, verify as cryptoVerify, type JsonWebKey as NodeJsonWebKey } from "node:crypto";
+import { createHash, createPublicKey, verify as cryptoVerify, type JsonWebKey as NodeJsonWebKey } from "node:crypto";
 
 import { keccak_256 } from "@noble/hashes/sha3";
 import { Signature } from "@noble/secp256k1";
@@ -132,7 +132,55 @@ function recoverEip712Signer(digest: Uint8Array, signature: string): string {
   return `0x${Buffer.from(addressBytes).toString("hex")}`;
 }
 
-function verifyJwsCompactSignature(signature: string): Record<string, unknown> {
+/**
+ * RFC 7638 SHA-256 JWK thumbprint (base64url, no padding) over the required
+ * members only. Used to pin a JWS receipt to an expected signing key, since the
+ * signing key is embedded in the (attacker-controllable) JWS header.
+ */
+function jwkThumbprint(jwk: Record<string, unknown>): string {
+  const kty = typeof jwk.kty === "string" ? jwk.kty : undefined;
+  let canonical: string;
+  if (kty === "OKP") {
+    const crv = String(jwk.crv ?? "");
+    const x = String(jwk.x ?? "");
+    // Members in lexicographic order per RFC 7638: crv, kty, x.
+    canonical = JSON.stringify({ crv, kty: "OKP", x });
+  } else if (kty === "EC") {
+    const crv = String(jwk.crv ?? "");
+    const x = String(jwk.x ?? "");
+    const y = String(jwk.y ?? "");
+    // Members in lexicographic order per RFC 7638: crv, kty, x, y.
+    canonical = JSON.stringify({ crv, kty: "EC", x, y });
+  } else {
+    throw new Error("x402 JWS expectedSigner check requires an OKP or EC jwk");
+  }
+  return createHash("sha256").update(new TextEncoder().encode(canonical)).digest("base64url");
+}
+
+/**
+ * Enforce a caller-supplied `expectedSigner` against the JWS header's embedded
+ * key. Because the JWS carries its own verification key, a valid signature
+ * alone proves only that the token is internally self-consistent — not that it
+ * came from a trusted party. `expectedSigner` must equal either the RFC 7638
+ * JWK thumbprint (base64url SHA-256) or, for OKP keys, the raw base64url `x`.
+ */
+function assertJwsExpectedSigner(jwk: Record<string, unknown>, expectedSigner: string): void {
+  const expected = expectedSigner.trim();
+  if (!expected) {
+    return;
+  }
+  const thumbprint = jwkThumbprint(jwk);
+  const rawX = typeof jwk.x === "string" ? jwk.x.trim() : "";
+  if (expected === thumbprint || (rawX !== "" && expected === rawX)) {
+    return;
+  }
+  throw new Error("x402 JWS embedded key does not match expected signer");
+}
+
+function verifyJwsCompactSignature(
+  signature: string,
+  options?: { expectedSigner?: string },
+): Record<string, unknown> {
   const parts = signature.split(".");
   if (parts.length !== 3) {
     throw new Error("x402 JWS signature must use compact serialization");
@@ -142,20 +190,24 @@ function verifyJwsCompactSignature(signature: string): Record<string, unknown> {
   const payload = JSON.parse(Buffer.from(base64UrlToBytes(payloadB64)).toString("utf8")) as Record<string, unknown>;
   const signingInput = new TextEncoder().encode(`${headerB64}.${payloadB64}`);
   const signatureBytes = base64UrlToBytes(sigB64);
+  const expectedSigner = options?.expectedSigner?.trim();
 
   const alg = header.alg;
   if (alg === "EdDSA" || alg === "Ed25519") {
     const jwk = readObject(header.jwk);
     const x = jwk ? readString(jwk, "x") : undefined;
-    if (!x) {
+    if (!jwk || !x) {
       throw new Error("x402 JWS Ed25519 verification requires embedded jwk.x");
     }
     const publicKey = createPublicKey({
-      key: header.jwk as NodeJsonWebKey,
+      key: jwk as NodeJsonWebKey,
       format: "jwk",
     });
     if (!cryptoVerify(null, signingInput, publicKey, signatureBytes)) {
       throw new Error("x402 JWS Ed25519 signature verification failed");
+    }
+    if (expectedSigner) {
+      assertJwsExpectedSigner(jwk, expectedSigner);
     }
     return payload;
   }
@@ -171,6 +223,9 @@ function verifyJwsCompactSignature(signature: string): Record<string, unknown> {
     });
     if (!cryptoVerify("sha256", signingInput, publicKey, signatureBytes)) {
       throw new Error("x402 JWS ES256 signature verification failed");
+    }
+    if (expectedSigner) {
+      assertJwsExpectedSigner(jwk, expectedSigner);
     }
     return payload;
   }
@@ -224,14 +279,40 @@ export function extractSignedX402Receipt(input: Record<string, unknown>): Signed
   throw new Error("x402 receipt input missing signed offer-receipt artifact (format and signature required)");
 }
 
-/** Cryptographically verifies an x402 signed receipt before digest mapping. */
+/**
+ * Cryptographically verifies an x402 signed receipt before digest mapping.
+ *
+ * SECURITY: An x402 receipt carries its own verification key (the JWS embedded
+ * `jwk`, or the recoverable EIP-712 signer). A structurally valid signature
+ * therefore proves only that the artifact is internally self-consistent — it
+ * does NOT establish that the receipt was issued by any trusted party. This
+ * function therefore **requires** `options.expectedSigner` and fails closed
+ * when it is missing or empty; a receipt can only be trusted once it is pinned
+ * to a known issuer key:
+ *
+ * - `eip712`: a 0x-prefixed Ethereum address (checksum-insensitive).
+ * - `jws`: the RFC 7638 JWK thumbprint (base64url SHA-256) or, for OKP keys,
+ *   the raw base64url `x` coordinate.
+ *
+ * @param signed - The extracted signed x402 receipt (JWS or EIP-712).
+ * @param options - Must supply a non-empty `expectedSigner` to pin the issuer.
+ * @returns The verified receipt payload.
+ * @throws {Error} If `expectedSigner` is missing/empty, the signature is
+ *   invalid, or the recovered/embedded key does not match `expectedSigner`.
+ */
 export function verifySignedX402Receipt(
   signed: SignedX402Receipt,
-  options?: { expectedSigner?: string },
+  options: { expectedSigner: string },
 ): Record<string, unknown> {
+  const expectedSigner = options?.expectedSigner?.trim();
+  if (!expectedSigner) {
+    throw new Error(
+      "x402 receipt verification requires a non-empty expectedSigner to authenticate the issuer",
+    );
+  }
+
   if (signed.format === "jws") {
-    const payload = verifyJwsCompactSignature(signed.signature);
-    return payload;
+    return verifyJwsCompactSignature(signed.signature, { expectedSigner });
   }
 
   if (!signed.payload) {
@@ -239,11 +320,8 @@ export function verifySignedX402Receipt(
   }
   const digest = eip712ReceiptDigest(signed.payload);
   const recovered = recoverEip712Signer(digest, signed.signature);
-  if (options?.expectedSigner) {
-    const expected = options.expectedSigner.trim().toLowerCase();
-    if (recovered.toLowerCase() !== expected) {
-      throw new Error("x402 EIP-712 recovered signer does not match expected signer");
-    }
+  if (recovered.toLowerCase() !== expectedSigner.toLowerCase()) {
+    throw new Error("x402 EIP-712 recovered signer does not match expected signer");
   }
   return signed.payload;
 }

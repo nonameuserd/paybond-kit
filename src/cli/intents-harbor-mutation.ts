@@ -1,6 +1,7 @@
 import { resolveAgentRecognitionFromCli, type AgentRecognitionCredentials } from "./agent/production-evidence.js";
 import type { CliContext } from "./context.js";
 import { consumeFlag } from "./globals.js";
+import { resolveSecretFromFileOrEnv } from "./secret-argv.js";
 
 /** Parsed recognition and idempotency flags for Harbor intent mutation CLI commands. */
 export type HarborMutationFlags = {
@@ -11,13 +12,23 @@ export type HarborMutationFlags = {
 };
 
 /** Extract shared Harbor mutation flags from argv, leaving body and positional args in restArgv. */
-export function parseHarborMutationFlags(argv: string[]): HarborMutationFlags {
+export async function parseHarborMutationFlags(
+  argv: string[],
+  cwd: string,
+): Promise<HarborMutationFlags> {
   const recognitionKeyFlag = consumeFlag(argv, "--agent-recognition-key-id");
-  const recognitionSeedFlag = consumeFlag(recognitionKeyFlag.rest, "--agent-recognition-signing-seed-hex");
-  const idempotencyFlag = consumeFlag(recognitionSeedFlag.rest, "--idempotency-key");
+  const recognitionSeed = await resolveSecretFromFileOrEnv({
+    argv: recognitionKeyFlag.rest,
+    cwd,
+    rejectedFlag: "--agent-recognition-signing-seed-hex",
+    fileFlag: "--agent-recognition-signing-seed-file",
+    envName: "APP_AGENT_RECOGNITION_SEED_HEX",
+    alternatives: "--agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
+  });
+  const idempotencyFlag = consumeFlag(recognitionSeed.rest, "--idempotency-key");
   return {
     recognitionKeyId: recognitionKeyFlag.value,
-    recognitionSeedHex: recognitionSeedFlag.value,
+    recognitionSeedHex: recognitionSeed.value,
     idempotencyKey: idempotencyFlag.value,
     restArgv: idempotencyFlag.rest,
   };

@@ -81,11 +81,16 @@ function hasReceiptShape(record: Record<string, unknown>): boolean {
   );
 }
 
-function unwrapReceiptRecord(input: Record<string, unknown>): Record<string, unknown> {
+function unwrapReceiptRecord(
+  input: Record<string, unknown>,
+  options: { expectedSigner: string },
+): Record<string, unknown> {
   assertNotX402FundingArtifact(input);
 
   const signed = extractSignedX402Receipt(input);
-  const verifiedPayload = verifySignedX402Receipt(signed);
+  const verifiedPayload = verifySignedX402Receipt(signed, {
+    expectedSigner: options.expectedSigner,
+  });
   if (hasReceiptShape(verifiedPayload)) {
     return verifiedPayload;
   }
@@ -123,11 +128,26 @@ export function x402ReceiptPayloadDigestHex(payload: X402ReceiptPayloadV1): stri
 
 /**
  * Converts an x402 signed receipt artifact or payload into artifact_attested evidence fields.
+ *
+ * SECURITY: `options.expectedSigner` is **required** and pins the receipt to a
+ * known issuer key. Because an x402 receipt embeds (or lets you recover) its own
+ * verification key, a valid signature alone proves only self-consistency, not
+ * issuer authenticity. Submitting attacker-forged "attested" evidence would let
+ * an untrusted party satisfy completion predicates, so this mapper fails closed
+ * when `expectedSigner` is missing or empty (see {@link verifySignedX402Receipt}).
+ *
+ * @param receiptInput - Wire envelope or receipt containing the signed x402 artifact.
+ * @param options - Must supply a non-empty `expectedSigner` (EIP-712 address, or
+ *   JWS RFC 7638 thumbprint / OKP raw `x`).
+ * @returns Artifact-attested evidence fields for the verified receipt.
+ * @throws {Error} If `expectedSigner` is missing/empty, verification fails, or
+ *   the receipt shape/fields are invalid.
  */
 export function mapX402ReceiptToArtifactAttestedEvidence(
   receiptInput: Record<string, unknown>,
+  options: { expectedSigner: string },
 ): ArtifactAttestedEvidence {
-  const raw = unwrapReceiptRecord(receiptInput);
+  const raw = unwrapReceiptRecord(receiptInput, options);
   const payload = buildX402ReceiptDigestPayload(raw);
   return {
     artifact_blake3_hex: [x402ReceiptPayloadDigestHex(payload)],

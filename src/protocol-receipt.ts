@@ -4,7 +4,7 @@
  * Canonical JSON matches the Go gateway `protocolAuthorizationReceiptCanonicalV1` /
  * `protocolSettlementReceiptCanonicalV1` marshalers (fixed struct field order, signing
  * fields stripped, RFC3339Nano UTC timestamps, HTML-safe `\u` escapes), not Kit's generic
- * JCS-style `normalizeJson`. Ported from `go/gateway/internal/protocolv2/receipt.go`.
+ * JCS-style `normalizeJson`. Ported from `go/gateway/internal/protocol/protocolv2/receipt.go`.
  */
 
 import { getPublicKey, sign, verify as ed25519Verify } from "@noble/ed25519";

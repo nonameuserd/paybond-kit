@@ -180,6 +180,22 @@ describe("PaybondInstrumented", () => {
     expect(instrumented.binding).toEqual({ phase: "deferred" });
   });
 
+  it("wires langgraph hooks on production attach (not only sandbox)", async () => {
+    const host = makeHost();
+    const rawTools = [{ name: "travel.book_hotel" }];
+    const runtime = await instrumentPaybondAgent(host, {
+      policy: TRAVEL_POLICY,
+      framework: "langgraph",
+      tools: rawTools,
+      context: BIND_CONTEXT,
+    });
+
+    expect(runtime.binding.mode).toBe("attach");
+    expect(runtime.tools).toBe(rawTools);
+    expect(runtime.hooks.awrapToolCall).toBeTypeOf("function");
+    expect(runtime.hooks.createToolNode).toBeTypeOf("function");
+  });
+
   it("supports withContext as a deprecated alias for bind()", async () => {
     const host = makeHost();
     const instrumented = await instrumentPaybondAgent(host, {

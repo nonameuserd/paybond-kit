@@ -46,4 +46,20 @@ describe("redactSensitiveFields", () => {
       },
     });
   });
+
+  it("masks attach bundles", () => {
+    expect(
+      redactSensitiveFields({
+        attach_bundle: "ab1.secret-payload",
+        PAYBOND_ATTACH_BUNDLE: "ab1.other",
+        note: "ab1.inline-secret",
+        intent_id: "intent-1",
+      }),
+    ).toEqual({
+      attach_bundle: "ab1.<redacted>",
+      PAYBOND_ATTACH_BUNDLE: "ab1.<redacted>",
+      note: "ab1.<redacted>",
+      intent_id: "intent-1",
+    });
+  });
 });

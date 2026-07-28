@@ -1,4 +1,7 @@
+import { redactPaybondAttachBundle } from "../agent/attach-bundle.js";
+
 const SENSITIVE_SEED_EXACT_FIELDS = new Set(["payee_signing_seed", "agent_recognition_signing_seed"]);
+const ATTACH_BUNDLE_FIELDS = new Set(["attach_bundle", "paybond_attach_bundle"]);
 
 function isSensitiveSeedKey(key: string): boolean {
   const lowered = key.toLowerCase();
@@ -6,6 +9,17 @@ function isSensitiveSeedKey(key: string): boolean {
     return true;
   }
   return lowered.endsWith("_seed") || lowered.endsWith("_seed_hex");
+}
+
+function isAttachBundleKey(key: string): boolean {
+  return ATTACH_BUNDLE_FIELDS.has(key.toLowerCase());
+}
+
+function redactAttachBundleValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.trim() ? redactPaybondAttachBundle(value) : value;
+  }
+  return hasRedactableScalarContent(value) ? "[redacted]" : value;
 }
 
 function hasRedactableScalarContent(value: unknown): boolean {
@@ -54,6 +68,14 @@ export function redactSensitiveFields(value: unknown): unknown {
         out[key] = typeof child === "string" ? maskApiKey(child) : child;
         continue;
       }
+      if (isAttachBundleKey(key)) {
+        out[key] = redactAttachBundleValue(child);
+        continue;
+      }
+      if (typeof child === "string" && child.trim().startsWith("ab1.")) {
+        out[key] = redactPaybondAttachBundle(child);
+        continue;
+      }
       if (isSensitiveSeedKey(key)) {
         out[key] = hasRedactableScalarContent(child) ? "[redacted]" : child;
         continue;
@@ -75,6 +97,8 @@ const SENSITIVE_CONFIG_KEY_EXACT = new Set([
   "secret",
   "client_secret",
   "password",
+  "attach_bundle",
+  "paybond_attach_bundle",
 ]);
 
 const SENSITIVE_CONFIG_KEY_TOKEN_ALLOWLIST = new Set(["token_type", "token_endpoint"]);
@@ -96,6 +120,9 @@ export function isSensitiveConfigKey(key: string): boolean {
 export function redactConfigValue(key: string, value: string): string {
   if (!isSensitiveConfigKey(key)) {
     return value;
+  }
+  if (isAttachBundleKey(key) || value.trim().startsWith("ab1.")) {
+    return value.trim() ? redactPaybondAttachBundle(value) : "";
   }
   return value.trim() ? maskApiKey(value) : "";
 }

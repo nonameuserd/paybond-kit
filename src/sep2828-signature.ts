@@ -46,6 +46,11 @@ function hexToBytes(hex: string): Uint8Array {
   if (trimmed.length % 2 !== 0) {
     throw new Error("invalid hex length");
   }
+  if (!/^[0-9a-fA-F]*$/.test(trimmed)) {
+    // Reject non-hex input rather than letting Number.parseInt coerce invalid
+    // pairs to NaN (stored as 0x00), which would corrupt the digest/signature.
+    throw new Error("invalid hex characters");
+  }
   const out = new Uint8Array(trimmed.length / 2);
   for (let i = 0; i < out.length; i++) {
     out[i] = Number.parseInt(trimmed.slice(i * 2, i * 2 + 2), 16);

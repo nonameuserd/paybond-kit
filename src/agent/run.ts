@@ -106,12 +106,19 @@ type PolicyReloadEventMap = {
   policyReloadFailed: PaybondPolicyReloadFailedEvent;
 };
 
+const AGENT_RUN_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
 function newRunId(explicit?: string): string {
   const trimmed = explicit?.trim();
-  if (trimmed) {
-    return trimmed;
+  if (!trimmed) {
+    return globalThis.crypto.randomUUID();
   }
-  return globalThis.crypto.randomUUID();
+  if (!AGENT_RUN_ID_RE.test(trimmed) || trimmed === "." || trimmed === "..") {
+    throw new Error(
+      `invalid runId ${JSON.stringify(explicit)}; expected a UUID or slug matching [A-Za-z0-9][A-Za-z0-9._-]{0,127}`,
+    );
+  }
+  return trimmed;
 }
 
 function readAllowedTools(intent: Record<string, unknown>): string[] {
@@ -322,6 +329,7 @@ export class PaybondAgentRun {
   private reloadController?: PaybondPolicyReloadController;
 
   private readonly approvalTokens = new Map<string, string>();
+  private static readonly APPROVAL_TOKEN_CACHE_MAX = 256;
   private readonly listeners = new Map<
     keyof PolicyReloadEventMap,
     Set<(payload: PolicyReloadEventMap[keyof PolicyReloadEventMap]) => void>
@@ -476,11 +484,25 @@ export class PaybondAgentRun {
       throw new Error("approval token must be non-empty");
     }
     this.approvalTokens.set(id, value);
+    while (this.approvalTokens.size > PaybondAgentRun.APPROVAL_TOKEN_CACHE_MAX) {
+      const oldest = this.approvalTokens.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      this.approvalTokens.delete(oldest);
+    }
   }
 
   /** Read a stored approval token for a tool call retry. */
   getApprovalToken(toolCallId: string): string | undefined {
-    return this.approvalTokens.get(toolCallId.trim());
+    const id = toolCallId.trim();
+    const token = this.approvalTokens.get(id);
+    if (token === undefined) {
+      return undefined;
+    }
+    // Consume on read so tokens do not linger after the retry path uses them.
+    this.approvalTokens.delete(id);
+    return token;
   }
 
   /** Bind a run-scoped middleware context via sandbox bootstrap or attach. */

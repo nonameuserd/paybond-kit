@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, renameSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { CliError } from "./types.js";
@@ -313,12 +312,12 @@ export function writeAtomicFile(path: string, content: string | Uint8Array, mode
 }
 
 export async function writeAtomicFileAsync(path: string, content: string | Uint8Array, mode = 0o600): Promise<void> {
-  const { mkdir, writeFile, chmod, rename, rm } = await import("node:fs/promises");
+  const { mkdir, mkdtemp, writeFile, chmod, rename, rm } = await import("node:fs/promises");
   const dir = dirname(path);
   await mkdir(dir, { recursive: true });
-  const tempDir = await import("node:fs/promises").then((mod) =>
-    mod.mkdtemp(join(tmpdir(), "paybond-write-")),
-  );
+  // Stage beside the destination so rename stays atomic on the same filesystem
+  // (system tmpdir may be a different mount in containers).
+  const tempDir = await mkdtemp(join(dir, ".paybond-write-"));
   const tempFile = join(tempDir, "payload");
   try {
     await writeFile(tempFile, content);

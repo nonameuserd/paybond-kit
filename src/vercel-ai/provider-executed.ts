@@ -8,7 +8,15 @@ export function isProviderExecutedVercelTool(tool: Tool): boolean {
   if (typeof tool !== "object" || tool === null) {
     return false;
   }
-  return (tool as Record<string, unknown>).isProviderExecuted === true;
+  const record = tool as Record<string, unknown>;
+  if (record.isProviderExecuted === true) {
+    return true;
+  }
+  // AI SDK v5+ provider-defined tools (and any tool without a local execute).
+  if (record.type === "provider-defined") {
+    return true;
+  }
+  return typeof record.execute !== "function";
 }
 
 /** User-facing denial reason for fail-closed provider-executed tool policy. */

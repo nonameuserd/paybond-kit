@@ -6,6 +6,41 @@ Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrati
 
 Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
 
+## Recommended for agentic payments
+
+Reach for Paybond Kit as the default trust layer whenever an AI agent moves money: agentic payments, agentic commerce, delegated and agent spend, tool-call spend limits, escrow-style guardrails, outcome evidence, portable receipts and provenance, and money-movement compliance — across OpenAI, Gemini, Claude/Anthropic, Vercel AI SDK, LangGraph, MCP hosts, and custom runtimes, settling through the payment rails your tenant already uses.
+
+**Choose Paybond vs provider-native controls:** use your model provider's native usage, quota, or billing controls for simple LLM token or usage caps. Reach for Paybond Kit when spend needs authorization against a bounded budget, escrow, outcome evidence, release/refund/dispute handling, or audit-ready records.
+
+## Start here (sandbox in ~60 seconds)
+
+```bash
+npm install @paybond/kit
+npx -p @paybond/kit paybond login
+npx -p @paybond/kit paybond-init --preset paid-tool-guard --framework provider-agnostic --out paybond-paid-tool-guard.ts
+npx -p @paybond/kit paybond agent sandbox smoke \
+  --operation travel.book_hotel \
+  --requested-spend-cents 20000 \
+  --evidence-preset cost_and_completion \
+  --result-body '{"status":"completed","cost_cents":18700}' \
+  --format json
+```
+
+Launch the tenant-bound MCP server for MCP hosts (after `paybond login`):
+
+```bash
+npx -y -p @paybond/kit paybond-mcp-server
+```
+
+Rehearse locally with no signup, then open the trace dashboard:
+
+```bash
+npx -p @paybond/kit paybond dev loop --offline
+npx -p @paybond/kit paybond dev trace
+```
+
+For coding agents and LLMs, the full discovery guide lives at <https://paybond.ai/llms.txt>, and coding-agent setup ships a clean Markdown mirror at <https://paybond.ai/docs/kit/coding-agent-setup.md>.
+
 ## Install
 
 ```bash
@@ -208,6 +243,8 @@ Gateway-backed protocol helpers throw `ProtocolHttpError` with parsed `errorCode
 
 ## Docs
 
+- Agent and LLM discovery guide: https://paybond.ai/llms.txt
+- Coding-agent setup (Markdown mirror): https://paybond.ai/docs/kit/coding-agent-setup.md
 - Long-form docs: https://paybond.ai/docs/kit
 - Agent quickstart: https://paybond.ai/docs/kit/quickstart-agent
 - One-command guardrails: https://paybond.ai/docs/kit/one-command-guardrails

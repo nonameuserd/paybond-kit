@@ -12,6 +12,7 @@ declare const process: {
   argv: string[];
   cwd(): string;
   exitCode?: number;
+  pid?: number;
   platform: string;
   stderr: { write(chunk: string): boolean };
   stdout: { write(chunk: string): boolean };
@@ -93,6 +94,7 @@ type FetchInit = {
   method?: string;
   headers?: Record<string, string>;
   body?: string;
+  signal?: AbortSignal;
 };
 type FetchLike = (input: FetchInput, init?: FetchInit) => Promise<Response>;
 
@@ -433,6 +435,12 @@ export async function writeEnvFile(
 ): Promise<void> {
   let existing = "";
   try {
+    const st = await fs.lstat(envPath);
+    if (st.isSymbolicLink()) {
+      throw new PaybondLoginError(
+        `refusing to write credentials through symlink at ${envPath}`,
+      );
+    }
     existing = await fs.readFile(envPath, "utf8");
   } catch (err) {
     if (
@@ -443,11 +451,26 @@ export async function writeEnvFile(
         err.code === "ENOENT"
       )
     ) {
+      if (err instanceof PaybondLoginError) {
+        throw err;
+      }
       throw err;
     }
   }
   const next = replaceOrAppendEnvValue(existing, rawKey, force);
-  await fs.writeFile(envPath, next, { encoding: "utf8", mode: ENV_FILE_MODE });
+  const dir = path.dirname(envPath);
+  const tempPath = path.join(
+    dir,
+    `.paybond-env-${process.pid ?? "0"}-${Date.now()}.tmp`,
+  );
+  try {
+    await fs.writeFile(tempPath, next, { encoding: "utf8", mode: ENV_FILE_MODE });
+    await fs.chmod(tempPath, ENV_FILE_MODE);
+    await fs.rename(tempPath, envPath);
+  } catch (err) {
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
+    throw err;
+  }
   await fs.chmod(envPath, ENV_FILE_MODE);
 }
 
@@ -499,6 +522,7 @@ async function postGatewayJson(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   const parsed = await parseJsonResponse(response);
   if (response.ok) {

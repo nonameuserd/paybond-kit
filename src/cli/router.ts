@@ -41,6 +41,7 @@ import { handleAgent } from "./commands/agent.js";
 import { handleAdyen } from "./commands/adyen.js";
 import { handleFlutterwave } from "./commands/flutterwave.js";
 import { handlePaystack } from "./commands/paystack.js";
+import { handlePlaid, handlePlaidBanks } from "./commands/plaid.js";
 import { handleDev } from "./commands/dev.js";
 import { handleShopify } from "./commands/shopify.js";
 import {
@@ -283,6 +284,12 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "paystack" && second) {
       canonical = commandPath(["paystack", second]);
       result = await handlePaystack(ctx, second, command.slice(2));
+    } else if (head === "plaid" && second === "banks" && third) {
+      canonical = commandPath(["plaid", "banks", third]);
+      result = await handlePlaidBanks(ctx, third, command.slice(3));
+    } else if (head === "plaid" && second) {
+      canonical = commandPath(["plaid", second]);
+      result = await handlePlaid(ctx, second, command.slice(2));
     } else if (head === "dev" && second) {
       canonical = commandPath(["dev", second]);
       result = await handleDev(ctx, second, tail);
@@ -424,7 +431,9 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
         canonical === "flutterwave ready" ||
         canonical === "flutterwave doctor" ||
         canonical === "paystack ready" ||
-        canonical === "paystack doctor") &&
+        canonical === "paystack doctor" ||
+        canonical === "plaid ready" ||
+        canonical === "plaid doctor") &&
       Array.isArray(result.data.checklist_lines)
     ) {
       if (canonical === "dev loop" && Array.isArray(result.data.banner_lines)) {

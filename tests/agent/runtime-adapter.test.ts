@@ -10,7 +10,7 @@ function makeSource(
   verifyResult: VerifyCapabilityResult,
   completeSpendDecision = vi.fn(async () => {}),
 ): PaybondSpendGuardInit {
-  const harbor = new HarborClient("https://harbor.test", "tenant-a");
+  const harbor = new HarborClient("https://harbor.test", "tenant-a", { staticHarborBearerToken: "test-bearer" });
   vi.spyOn(harbor, "verifyCapability").mockResolvedValue(verifyResult);
   harbor.completeSpendDecision = completeSpendDecision;
   return {

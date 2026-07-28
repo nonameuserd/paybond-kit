@@ -80,6 +80,31 @@ describe("dev trace dashboard", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
+  it("rejects non-loopback Host headers (DNS rebinding defense)", async () => {
+    const server = await startDevTraceServer({ port: 0 });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected bound TCP port");
+    }
+
+    const status = await new Promise<number>((resolve, reject) => {
+      get(
+        {
+          hostname: "127.0.0.1",
+          port: address.port,
+          path: "/api/events",
+          headers: { Host: "evil.example:9477" },
+        },
+        (response) => {
+          response.resume();
+          resolve(response.statusCode ?? 0);
+        },
+      ).on("error", reject);
+    });
+    expect(status).toBe(403);
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
   it("reports has_credentials from env file when process env is unset", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "paybond-trace-"));
     await writeFile(join(cwd, ".env.local"), "PAYBOND_API_KEY=sk_test_from_file\n", "utf8");

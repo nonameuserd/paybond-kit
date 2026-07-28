@@ -82,7 +82,7 @@ export async function resolveProductionEvidenceFromCli(input: {
   }
   if (!payeeSigningSeedHex) {
     throw new CliError(
-      "production attach requires --payee-signing-seed-hex or APP_PAYEE_SEED_HEX",
+      "production attach requires --payee-signing-seed-file or APP_PAYEE_SEED_HEX",
       { category: "usage", code: "cli.agent.production_evidence_incomplete" },
     );
   }
@@ -94,7 +94,7 @@ export async function resolveProductionEvidenceFromCli(input: {
   }
   if (!agentRecognitionSigningSeedHex) {
     throw new CliError(
-      "production attach requires --agent-recognition-signing-seed-hex or APP_AGENT_RECOGNITION_SEED_HEX",
+      "production attach requires --agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
       { category: "usage", code: "cli.agent.production_evidence_incomplete" },
     );
   }
@@ -137,7 +137,7 @@ export async function resolveAgentRecognitionFromCli(input: {
   }
   if (!agentRecognitionSigningSeedHex) {
     throw new CliError(
-      "Harbor intent mutation requires --agent-recognition-signing-seed-hex or APP_AGENT_RECOGNITION_SEED_HEX",
+      "Harbor intent mutation requires --agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX",
       { category: "usage", code: "cli.agent.recognition_incomplete" },
     );
   }
@@ -188,13 +188,13 @@ export async function resolveProductionEvidenceForReattach(input: {
 
   if (!payeeSigningSeedHex) {
     throw new CliError(
-      `${command} requires --payee-signing-seed-hex or APP_PAYEE_SEED_HEX for production runs`,
+      `${command} requires --payee-signing-seed-file or APP_PAYEE_SEED_HEX for production runs`,
       { category: "usage", code: "cli.agent.production_signing_seed_required" },
     );
   }
   if (!agentRecognitionSigningSeedHex) {
     throw new CliError(
-      `${command} requires --agent-recognition-signing-seed-hex or APP_AGENT_RECOGNITION_SEED_HEX for production runs`,
+      `${command} requires --agent-recognition-signing-seed-file or APP_AGENT_RECOGNITION_SEED_HEX for production runs`,
       { category: "usage", code: "cli.agent.production_signing_seed_required" },
     );
   }

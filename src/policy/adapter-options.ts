@@ -8,15 +8,24 @@ export type PaybondPolicyAdapterOptions = Pick<
 >;
 
 /**
- * Map policy `adapter.deny_provider_executed_tools` to Vercel AI / Cloudflare Agents options.
- * Returns an empty object when the policy leaves the flag unset (adapter default applies).
+ * Map policy adapter / default_deny posture to Vercel AI / Cloudflare Agents options.
+ *
+ * Fail-closed alignment: when `default_deny` is true and the adapter flag is unset,
+ * provider-executed tools are denied (they never reach the interceptor). Explicit
+ * `adapter.deny_provider_executed_tools: false` opts out of that alignment.
  */
 export function policyToAdapterOptions(
   document: PaybondPolicyDocumentV1,
 ): PaybondPolicyAdapterOptions {
   const deny = document.adapter?.deny_provider_executed_tools;
-  if (deny !== true) {
+  if (deny === true) {
+    return { denyProviderExecutedTools: true };
+  }
+  if (deny === false) {
     return {};
   }
-  return { denyProviderExecutedTools: true };
+  if (document.default_deny === true) {
+    return { denyProviderExecutedTools: true };
+  }
+  return {};
 }

@@ -60,6 +60,7 @@ export {
   PAYBOND_ATTACH_INTENT_ID_ENV,
   PAYBOND_CAPABILITY_TOKEN_ENV,
   productionEvidenceFromAttachBundle,
+  redactPaybondAttachBundle,
   resolveAttachContextFromEnv,
   sealPaybondAttachBundle,
   type PaybondAttachBundlePayloadV1,

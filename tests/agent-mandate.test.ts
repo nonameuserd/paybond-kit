@@ -15,7 +15,7 @@ import {
 
 const FIXTURE_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
-  "../../../go/gateway/internal/protocolv2/testdata/agent_mandate_canonical_v1.json",
+  "../../../go/gateway/internal/protocol/protocolv2/testdata/agent_mandate_canonical_v1.json",
 );
 
 type AgentMandateCanonicalFixtureFile = {

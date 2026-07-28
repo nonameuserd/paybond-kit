@@ -9,13 +9,23 @@ import {
   protocolSettlementReceiptToExternalAttestations,
   resolveExternalAttestations,
   signedMandateToExternalAttestations,
+  x402ReceiptToExternalAttestations,
 } from "../src/agent-receipt-external-attestations.js";
 import {
   AP2_TEST_INTENT_ID,
   signedAp2Mandate,
+  signedJwsX402Receipt,
   signedProtocolAuthorizationReceipt,
   signedProtocolSettlementReceipt,
+  X402_FIXTURE_EXPECTED_SIGNER,
 } from "./helpers/evidence-fixtures.js";
+
+const X402_SAMPLE_RECEIPT = {
+  resourceUrl: "https://api.vendor.example/job/999",
+  payer: "0xabc123",
+  network: "eip155:84532",
+  issuedAt: 1710000000,
+};
 
 describe("agent-receipt-external-attestations", () => {
   it("partnerRecordDigestSha256Hex is stable for canonical JSON", () => {
@@ -47,6 +57,46 @@ describe("agent-receipt-external-attestations", () => {
     };
     const built = resolveExternalAttestations([prebuilt]);
     expect(built).toEqual([prebuilt]);
+  });
+
+  it("x402ReceiptToExternalAttestations maps a receipt whose issuer matches the pin", () => {
+    const attestations = x402ReceiptToExternalAttestations(
+      signedJwsX402Receipt(X402_SAMPLE_RECEIPT),
+      { expectedSigner: X402_FIXTURE_EXPECTED_SIGNER },
+    );
+    expect(attestations).toHaveLength(1);
+    expect(attestations[0]?.source).toBe(AGENT_RECEIPT_EXTERNAL_SOURCE_X402);
+    expect(attestations[0]?.reference_id).toBe(X402_SAMPLE_RECEIPT.resourceUrl);
+  });
+
+  it("x402ReceiptToExternalAttestations fails closed without a pin", () => {
+    expect(() =>
+      x402ReceiptToExternalAttestations(signedJwsX402Receipt(X402_SAMPLE_RECEIPT), {
+        expectedSigner: "",
+      }),
+    ).toThrow(/requires a non-empty expectedSigner/);
+  });
+
+  it("resolveExternalAttestations enforces the x402 issuer pin", () => {
+    const built = resolveExternalAttestations([
+      {
+        kind: "x402",
+        receipt: signedJwsX402Receipt(X402_SAMPLE_RECEIPT),
+        expectedSigner: X402_FIXTURE_EXPECTED_SIGNER,
+      },
+    ]);
+    expect(built).toHaveLength(1);
+    expect(built[0]?.source).toBe(AGENT_RECEIPT_EXTERNAL_SOURCE_X402);
+
+    expect(() =>
+      resolveExternalAttestations([
+        {
+          kind: "x402",
+          receipt: signedJwsX402Receipt(X402_SAMPLE_RECEIPT),
+          expectedSigner: "not-the-real-signer",
+        },
+      ]),
+    ).toThrow(/does not match expected signer/);
   });
 
   it("resolveExternalAttestations throws when sep2828 verification fails", () => {
