@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  GATEWAY_AUTH_RECOVERY_HINT,
+  formatGatewayAuthCliMessage,
   formatSdkHttpErrorMessage,
   resolveCliGatewayErrorMessage,
   summarizeGatewayHttpError,
@@ -111,6 +113,29 @@ describe("resolveCliGatewayErrorMessage", () => {
     const message = resolveCliGatewayErrorMessage(legacy);
     expect(message).toBe(
       "sandbox guardrail Harbor evidence rejected (gateway unavailable; check --result-body includes top-level status and cost_cents)",
+    );
+  });
+});
+
+describe("formatGatewayAuthCliMessage", () => {
+  it("includes login and doctor recovery guidance for HTTP 401", () => {
+    const body = JSON.stringify({
+      error: { code: "invalid_api_key", message: "API key invalid or revoked" },
+    });
+    const message = formatGatewayAuthCliMessage("gateway principal HTTP 401", 401, body);
+    expect(message).toBe(
+      `gateway authentication failed (HTTP 401): API key invalid or revoked; ${GATEWAY_AUTH_RECOVERY_HINT}`,
+    );
+  });
+
+  it("appends recovery guidance when status is missing", () => {
+    const message = formatGatewayAuthCliMessage(
+      "gateway principal JSON missing tenant_id",
+      undefined,
+      undefined,
+    );
+    expect(message).toBe(
+      `gateway principal JSON missing tenant_id; ${GATEWAY_AUTH_RECOVERY_HINT}`,
     );
   });
 });

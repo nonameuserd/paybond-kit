@@ -1,6 +1,11 @@
-import { HarborHttpError, SignalHttpError } from "../index.js";
+import { GatewayAuthError, HarborHttpError, SignalHttpError } from "../index.js";
 import { commandPath, createContext } from "./context.js";
-import { formatSdkHttpErrorMessage, summarizeGatewayHttpError } from "./http-error-message.js";
+import {
+  formatGatewayAuthCliMessage,
+  formatSdkHttpErrorMessage,
+  resolveCliGatewayErrorMessage,
+  summarizeGatewayHttpError,
+} from "./http-error-message.js";
 import {
   handleA2a,
   handleAuditExports,
@@ -53,7 +58,7 @@ import {
   handleSpendExplainPolicy,
 } from "./commands/workflows.js";
 import { failureEnvelope, prepareCommandOutput, successEnvelope, writeEnvelope, writeTableLines } from "./envelope.js";
-import { defaultGlobalOptions, parseCliArgv } from "./globals.js";
+import { cliDebugFromArgv, defaultGlobalOptions, parseCliArgv } from "./globals.js";
 import { deprecatedAliasWarning } from "./automation.js";
 import { helpForCommand } from "./help.js";
 import { generateRequestId } from "./request-id.js";
@@ -67,12 +72,15 @@ import {
 } from "./ux.js";
 import {
   CliError,
+  EXIT_AUTH,
+  EXIT_FAILURE,
   EXIT_SUCCESS,
   exitCodeForHttpStatus,
   type CliDependencies,
   type CliErrorShape,
   type CommandResult,
   type GlobalOptions,
+  type Writable,
 } from "./types.js";
 
 function isHelp(argv: string[]): boolean {
@@ -128,6 +136,43 @@ function sdkHttpErrorShape(
   };
 }
 
+function isGatewayAuthError(err: unknown): err is GatewayAuthError {
+  if (err instanceof GatewayAuthError) {
+    return true;
+  }
+  return err instanceof Error && err.name === "GatewayAuthError";
+}
+
+function gatewayAuthErrorShape(err: GatewayAuthError): { shape: CliErrorShape; exitCode: number } {
+  const message = formatGatewayAuthCliMessage(err.message, err.statusCode, err.bodyText);
+  if (err.statusCode === undefined) {
+    return {
+      shape: {
+        category: "auth",
+        code: "cli.auth.gateway_principal_invalid",
+        message,
+        details: {},
+      },
+      exitCode: EXIT_AUTH,
+    };
+  }
+  const mapped = exitCodeForHttpStatus(err.statusCode);
+  const summary = summarizeGatewayHttpError(err.statusCode, err.bodyText ?? "");
+  const gatewayCode =
+    typeof summary.details.gateway_code === "string"
+      ? summary.details.gateway_code
+      : undefined;
+  return {
+    shape: {
+      category: mapped.category,
+      code: gatewayCode || `cli.gateway.http_${err.statusCode}`,
+      message,
+      details: summary.details,
+    },
+    exitCode: mapped.exitCode,
+  };
+}
+
 function toErrorShape(err: unknown): { shape: CliErrorShape; exitCode: number } {
   if (err instanceof CliError) {
     if (err.message === "help") {
@@ -146,18 +191,35 @@ function toErrorShape(err: unknown): { shape: CliErrorShape; exitCode: number } 
       exitCode: err.exitCode,
     };
   }
+  if (isGatewayAuthError(err)) {
+    return gatewayAuthErrorShape(err);
+  }
   if (isSdkHttpError(err)) {
     return sdkHttpErrorShape(err);
   }
+  // Unexpected/unconverted throwable: sanitize the message and attach a doctor
+  // recovery hint, mirroring the Python catch-all boundary.
+  const base = resolveCliGatewayErrorMessage(err) || "unexpected internal error";
+  const hint = "run paybond doctor";
+  const message = base.includes(hint) ? base : `${base}; ${hint}`;
   return {
     shape: {
       category: "internal",
       code: "cli.internal",
-      message: err instanceof Error ? err.message : String(err),
+      message,
       details: {},
     },
-    exitCode: 1,
+    exitCode: EXIT_FAILURE,
   };
+}
+
+/** Emit an error's stack trace to stderr when debug diagnostics are enabled. */
+function writeDebugStackTrace(stderr: Writable, enabled: boolean, err: unknown): void {
+  if (!enabled) {
+    return;
+  }
+  const trace = err instanceof Error && err.stack ? err.stack : String(err);
+  stderr.write(`${trace}\n`);
 }
 
 function outputFormatFromArgv(argv: string[]): "table" | "json" {
@@ -199,6 +261,7 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
       stdout.write(`${helpForCommand("")}\n`);
       return EXIT_SUCCESS;
     }
+    writeDebugStackTrace(stderr, cliDebugFromArgv(argv), err);
     if (outputFormatFromArgv(argv) === "json") {
       writeEnvelope(
         stdout,
@@ -470,6 +533,7 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
       ctx.stdout.write(`${text}\n`);
       return EXIT_SUCCESS;
     }
+    writeDebugStackTrace(ctx.stderr, globals.debug, err);
     if (globals.format === "json") {
       writeEnvelope(ctx.stdout, failureEnvelope(canonical || helpPath || "paybond", globals, shape));
     } else {

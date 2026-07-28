@@ -64,7 +64,35 @@ const GLOBAL_FLAGS = new Set([
   "--no-open",
   "--color",
   "--no-color",
+  "--debug",
 ]);
+
+export const CLI_DEBUG_ENV = "PAYBOND_CLI_DEBUG";
+
+function isTruthyFlagValue(value: string): boolean {
+  return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+}
+
+/** Return true when PAYBOND_CLI_DEBUG requests stack-trace diagnostics. */
+export function cliDebugEnabledFromEnv(): boolean {
+  return isTruthyFlagValue(process.env[CLI_DEBUG_ENV] ?? "");
+}
+
+/** Resolve --debug/PAYBOND_CLI_DEBUG before globals are parsed (argv errors). */
+export function cliDebugFromArgv(argv: string[]): boolean {
+  if (cliDebugEnabledFromEnv()) {
+    return true;
+  }
+  for (const arg of argv) {
+    if (arg === "--debug") {
+      return true;
+    }
+    if (arg.startsWith("--debug=")) {
+      return isTruthyFlagValue(arg.slice("--debug=".length));
+    }
+  }
+  return false;
+}
 
 export function defaultGlobalOptions(): GlobalOptions {
   return {
@@ -75,6 +103,7 @@ export function defaultGlobalOptions(): GlobalOptions {
     requestId: generateRequestId(),
     yes: false,
     noOpen: false,
+    debug: cliDebugEnabledFromEnv(),
   };
 }
 
@@ -129,6 +158,16 @@ export function parseCliArgv(argv: string[]): ParsedCliArgv {
     }
     if (arg === "--no-open") {
       globals.noOpen = true;
+      i += 1;
+      continue;
+    }
+    if (arg === "--debug") {
+      globals.debug = true;
+      i += 1;
+      continue;
+    }
+    if (arg.startsWith("--debug=")) {
+      globals.debug = isTruthyFlagValue(arg.slice("--debug=".length));
       i += 1;
       continue;
     }

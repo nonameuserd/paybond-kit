@@ -12,6 +12,7 @@ import {
   AGENT_SMOKE_INTENT,
   ATTACH_INTENT_ID,
   createAgentGatewayFetch,
+  jsonResponse,
   LIVE_RAW_KEY,
   PRODUCTION_ATTACH_SEEDS,
   SANDBOX_RAW_KEY,
@@ -563,6 +564,51 @@ tools:
     );
     expect(code).toBe(0);
     expect(payload.data.ok).toBe(true);
+  });
+
+  it("agent run bind principal 401 returns json auth error with login guidance", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-agent-auth-"));
+    const fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (input.toString().endsWith("/v1/auth/principal")) {
+        return jsonResponse(
+          {
+            error: {
+              code: "invalid_api_key",
+              message: "API key invalid or revoked",
+            },
+          },
+          401,
+        );
+      }
+      return jsonResponse({ error: "unexpected" }, 500);
+    });
+
+    const { code, payload } = await runAgentCli(
+      [
+        "agent",
+        "run",
+        "bind",
+        "--sandbox",
+        "--operation",
+        "travel.book_hotel",
+        "--requested-spend-cents",
+        "20000",
+        "--completion-preset",
+        "cost_and_completion",
+      ],
+      { cwd, fetch: fetch as typeof fetch },
+    );
+
+    expect(code).toBe(2);
+    expect(payload.ok).toBe(false);
+    expect(payload.error.category).toBe("auth");
+    expect(payload.error.code).toBe("invalid_api_key");
+    expect(payload.error.details.gateway_status).toBe(401);
+    const message = payload.error.message as string;
+    expect(message).toContain("invalid or revoked");
+    expect(message).toContain("paybond login");
+    expect(message).toContain("paybond doctor");
+    expect(message).not.toContain("GatewayAuthError");
   });
 
   it("agent run bind, status, tool execute, and validate share run store", async () => {

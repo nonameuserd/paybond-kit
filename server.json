@@ -8,7 +8,7 @@
     "url": "https://github.com/nonameuserd/paybond-kit",
     "source": "github"
   },
-  "version": "0.12.12",
+  "version": "0.12.13",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "paybond": {
@@ -39,7 +39,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@paybond/kit",
-      "version": "0.12.12",
+      "version": "0.12.13",
       "transport": {
         "type": "stdio"
       },
@@ -71,7 +71,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "paybond-kit",
-      "version": "0.12.12",
+      "version": "0.12.13",
       "transport": {
         "type": "stdio"
       },

@@ -121,7 +121,8 @@ export const GLOBAL_FLAG_NAMES: string[] = [
   "--yes",
   "--no-open",
   "--color",
-  "--no-color"
+  "--no-color",
+  "--debug"
 ];
 
 export const COMMAND_EXAMPLES: Record<string, string[]> = {

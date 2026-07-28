@@ -43,6 +43,8 @@ export type GlobalOptions = {
   requestId: string;
   yes: boolean;
   noOpen: boolean;
+  /** Print error stack traces to stderr for diagnostics (`--debug`/`PAYBOND_CLI_DEBUG`). */
+  debug: boolean;
   /** Comma-separated field names for automation output (`--json`). */
   jsonFields?: string;
   /** jq-style filter expression (`--jq`). */

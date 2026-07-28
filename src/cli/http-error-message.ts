@@ -169,6 +169,35 @@ export function formatSdkHttpErrorMessage(
   return `${operation} HTTP ${statusCode}: ${summary.message}`;
 }
 
+/** Shared recovery guidance for GatewayAuthError CLI surfaces. */
+export const GATEWAY_AUTH_RECOVERY_HINT =
+  "run paybond login, then paybond doctor (or paybond doctor --agent)";
+
+/**
+ * Operator-facing message for GatewayAuthError with login/doctor recovery guidance.
+ */
+export function formatGatewayAuthCliMessage(
+  rawMessage: string,
+  statusCode: number | undefined,
+  bodyText: string | undefined,
+): string {
+  const hint = GATEWAY_AUTH_RECOVERY_HINT;
+  if (statusCode === undefined) {
+    const base = rawMessage.trim() || "gateway authentication failed";
+    if (base.includes(hint)) {
+      return base;
+    }
+    return `${base}; ${hint}`;
+  }
+
+  const summary = summarizeGatewayHttpError(statusCode, bodyText ?? "");
+  const base =
+    summary.message === `Gateway HTTP ${statusCode}`
+      ? `gateway authentication failed (HTTP ${statusCode})`
+      : `gateway authentication failed (HTTP ${statusCode}): ${summary.message}`;
+  return `${base}; ${hint}`;
+}
+
 type SdkHttpErrorLike = {
   message: string;
   statusCode: number;
