@@ -113,7 +113,7 @@ export function warnOnUnguardedClaudeBuiltinTools(
     `[paybond/claude-agents] Unguarded Claude Agent SDK built-in tools remain enabled (${unguarded.join(", ")}). ` +
       "Paybond governs only custom tools registered via tool() in the Paybond MCP server. " +
       "Remove built-ins from allowedTools or restrict the agent to mcp__paybond__* tools. " +
-      "See https://docs.paybond.ai/kit/claude-agents#built-in-sdk-tools",
+      "See https://paybond.ai/docs/kit/claude-agents#built-in-sdk-tools",
   );
 }
 

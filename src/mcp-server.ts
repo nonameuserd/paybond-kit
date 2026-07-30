@@ -72,7 +72,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.13";
+const SERVER_VERSION = "0.12.14";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -2987,18 +2987,17 @@ export class PaybondMCPServer {
   }
 }
 
-export function settingsFromEnv(
+/**
+ * Operator-controlled MCP settings that do not carry a tenant identity: gateway
+ * target, retry/tool-policy/evidence-policy knobs, and the optional local policy
+ * file. Shared by the stdio CLI (one process, one `PAYBOND_API_KEY`) and the
+ * Streamable HTTP transport (one process, many callers — each request supplies
+ * its own `apiKey` as a Bearer token; see mcp-http-server.ts).
+ */
+export function mcpOperatorSettingsFromEnv(
   env: Record<string, string | undefined> = process.env,
-): PaybondMCPSettings {
+): Omit<PaybondMCPSettings, "apiKey"> {
   const envFile = optionalEnv(env.PAYBOND_ENV_FILE) ?? DEFAULT_ENV_FILE;
-  const apiKey = String(
-    env.PAYBOND_API_KEY ?? readEnvFileValue(envFile, "PAYBOND_API_KEY") ?? "",
-  ).trim();
-  if (!apiKey) {
-    throw new Error(
-      "PAYBOND_API_KEY is required; run paybond login or configure your MCP host environment",
-    );
-  }
   return {
     gatewayBaseUrl: requireSecureGatewayUrl(
       optionalEnv(env.PAYBOND_GATEWAY_URL) ??
@@ -3007,7 +3006,6 @@ export function settingsFromEnv(
         readEnvFileValue(envFile, "PAYBOND_GATEWAY_BASE_URL") ??
         DEFAULT_PAYBOND_GATEWAY_BASE_URL,
     ),
-    apiKey,
     principalPath:
       optionalEnv(env.PAYBOND_PRINCIPAL_PATH) ?? DEFAULT_PRINCIPAL_PATH,
     maxRetries: optionalEnv(env.PAYBOND_MCP_MAX_RETRIES)
@@ -3026,6 +3024,21 @@ export function settingsFromEnv(
     policyReload: parseMcpPolicyReloadConfig(env),
     capabilityTokenCache: parseMcpCapabilityTokenCacheConfig(env),
   };
+}
+
+export function settingsFromEnv(
+  env: Record<string, string | undefined> = process.env,
+): PaybondMCPSettings {
+  const envFile = optionalEnv(env.PAYBOND_ENV_FILE) ?? DEFAULT_ENV_FILE;
+  const apiKey = String(
+    env.PAYBOND_API_KEY ?? readEnvFileValue(envFile, "PAYBOND_API_KEY") ?? "",
+  ).trim();
+  if (!apiKey) {
+    throw new Error(
+      "PAYBOND_API_KEY is required; run paybond login or configure your MCP host environment",
+    );
+  }
+  return { ...mcpOperatorSettingsFromEnv(env), apiKey };
 }
 
 export function main(argv: string[] = process.argv.slice(2)): number {

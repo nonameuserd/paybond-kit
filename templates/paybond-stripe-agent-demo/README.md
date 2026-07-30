@@ -45,6 +45,6 @@ paybond policy init --preset stripe-commerce --out paybond.policy.yaml
 
 ## Docs
 
-- [Agent quickstart](https://docs.paybond.ai/kit/quickstart-agent)
-- [Agent middleware](https://docs.paybond.ai/kit/agent-middleware)
-- [Protect Stripe payments from agents](https://docs.paybond.ai/guides/protect-stripe-payments-from-agents)
+- [Agent quickstart](https://paybond.ai/docs/kit/quickstart-agent)
+- [Agent middleware](https://paybond.ai/docs/kit/agent-middleware)
+- [Protect Stripe payments from agents](https://paybond.ai/guides/protect-stripe-payments-from-agents)

@@ -43,10 +43,10 @@ Local `paybond.policy.yaml` is yours to edit. Bundled intent budget: **$250**.
 
 ## Docs
 
-- [Agent quickstart](https://docs.paybond.ai/kit/quickstart-agent)
-- [Agent middleware](https://docs.paybond.ai/kit/agent-middleware)
-- [CrewAI adapter](https://docs.paybond.ai/kit/crewai)
-- [CrewAI spend controls guide](https://docs.paybond.ai/guides/crewai-spend-controls)
+- [Agent quickstart](https://paybond.ai/docs/kit/quickstart-agent)
+- [Agent middleware](https://paybond.ai/docs/kit/agent-middleware)
+- [CrewAI adapter](https://paybond.ai/docs/kit/crewai)
+- [CrewAI spend controls guide](https://paybond.ai/guides/crewai-spend-controls)
 
 ## License
 

@@ -241,7 +241,7 @@ export function buildPlaidDoctorChecks(
     ok: true,
     message:
       "link/manage banks in Console → Configuration → Settlement; " +
-      "guide: https://docs.paybond.ai/guides/configure-plaid-bank-verification",
+      "guide: https://paybond.ai/guides/configure-plaid-bank-verification",
     details: {
       console_path: "/console/configuration/settlement",
       guide_path: "/guides/configure-plaid-bank-verification",
@@ -421,7 +421,7 @@ export async function handlePlaidDoctor(
       checklist_lines: formatPlaidChecklist(checks, useColor, "plaid doctor"),
       next_steps: [
         "Console: https://paybond.ai/console/configuration/settlement",
-        "Docs: https://docs.paybond.ai/guides/configure-plaid-bank-verification",
+        "Docs: https://paybond.ai/guides/configure-plaid-bank-verification",
         "Sandbox smoke: make plaid-auth-sandbox-smoke",
         "Ready: paybond plaid ready",
       ],

@@ -415,7 +415,7 @@ export async function handlePaystackDoctor(
       checklist_lines: formatPaystackDoctorChecklist(checks, useColor, "paystack doctor"),
       next_steps: [
         "Console destination upsert: https://paybond.ai/console/configuration/settlement",
-        "Docs: https://docs.paybond.ai/guides/configure-paystack-settlement",
+        "Docs: https://paybond.ai/guides/configure-paystack-settlement",
         "Ready: paybond paystack ready",
       ],
     },

@@ -30,6 +30,60 @@ describe("mcp serve sync entrypoint", () => {
     });
     expect(code).toBe(0);
     expect(stdout.chunks.join("")).toContain("paybond mcp serve");
+    expect(stdout.chunks.join("")).toContain("--transport");
+  });
+
+  // These deliberately stop before actually launching a transport: stdio
+  // blocks reading stdin forever and --transport http binds a real OS
+  // socket, so only the argument-validation branches that return early are
+  // exercised here.
+
+  it("rejects an invalid --transport value", () => {
+    const stderr = {
+      chunks: [] as string[],
+      write(chunk: string): boolean {
+        this.chunks.push(chunk);
+        return true;
+      },
+    };
+    const code = runMcpServeCommandSync(["mcp", "serve", "--transport", "carrier-pigeon"], {
+      stdout: { write: () => true },
+      stderr,
+    });
+    expect(code).toBe(2);
+    expect(stderr.chunks.join("")).toContain("invalid --transport");
+  });
+
+  it("rejects unexpected arguments after --transport", () => {
+    const stderr = {
+      chunks: [] as string[],
+      write(chunk: string): boolean {
+        this.chunks.push(chunk);
+        return true;
+      },
+    };
+    const code = runMcpServeCommandSync(["mcp", "serve", "--transport", "http", "extra"], {
+      stdout: { write: () => true },
+      stderr,
+    });
+    expect(code).toBe(2);
+    expect(stderr.chunks.join("")).toContain("unexpected arguments");
+  });
+
+  it("rejects legacy unexpected arguments", () => {
+    const stderr = {
+      chunks: [] as string[],
+      write(chunk: string): boolean {
+        this.chunks.push(chunk);
+        return true;
+      },
+    };
+    const code = runMcpServeCommandSync(["mcp", "serve", "extra"], {
+      stdout: { write: () => true },
+      stderr,
+    });
+    expect(code).toBe(2);
+    expect(stderr.chunks.join("")).toContain("unexpected arguments");
   });
 
   it("forbids async dispatcher handling", async () => {

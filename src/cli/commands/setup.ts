@@ -37,6 +37,7 @@ import {
 import { parseArgs as parseLoginArgs, runLogin, type LoginOptions, type LoginResult } from "../../login.js";
 import { main as runMcpServerMain } from "../../mcp-server.js";
 import { PaybondMCPServer } from "../../mcp-server.js";
+import { main as runMcpHttpServerMain } from "../../mcp-http-server.js";
 import { runShopifyDoctorChecks } from "./shopify.js";
 
 declare const process: {
@@ -255,7 +256,7 @@ function isMcpServeHelpCommand(command: string[]): boolean {
   return command.length === 0 || command.includes("--help") || command.includes("-h");
 }
 
-/** Run the blocking MCP stdio server. Must not run through the async CLI dispatcher. */
+/** Run the blocking MCP server (stdio or Streamable HTTP). Must not run through the async CLI dispatcher. */
 export function runMcpServeCommandSync(
   argv: string[],
   writers: {
@@ -264,24 +265,42 @@ export function runMcpServeCommandSync(
   },
 ): number {
   let command: string[];
+  let transport: "stdio" | "http" = "stdio";
   try {
     ({ command } = parseCliArgv(argv));
+
+    if (isMcpServeHelpCommand(command)) {
+      const helpPath = command.filter((part) => part !== "--help" && part !== "-h").join(" ") || "mcp serve";
+      writers.stdout.write(`${helpForCommand(helpPath)}\n`);
+      return 0;
+    }
+
+    const rest = command.slice(2);
+    const transportFlag = consumeFlag(rest, "--transport");
+    if (transportFlag.present) {
+      const value = transportFlag.value?.trim().toLowerCase();
+      if (value !== "stdio" && value !== "http") {
+        writers.stderr.write(`invalid --transport (expected stdio|http): ${transportFlag.value ?? ""}\n`);
+        return 2;
+      }
+      transport = value;
+    }
+    const remaining = transportFlag.rest;
+    if (remaining.length > 0 && remaining[0] !== "--help" && remaining[0] !== "-h") {
+      writers.stderr.write(`unexpected arguments: ${remaining.join(" ")}\n`);
+      return 2;
+    }
   } catch (err) {
     const message = err instanceof CliError ? err.message : String(err);
     writers.stderr.write(`${message}\n`);
     return err instanceof CliError ? err.exitCode : 1;
   }
 
-  if (isMcpServeHelpCommand(command)) {
-    const helpPath = command.filter((part) => part !== "--help" && part !== "-h").join(" ") || "mcp serve";
-    writers.stdout.write(`${helpForCommand(helpPath)}\n`);
-    return 0;
-  }
-
-  const rest = command.slice(2);
-  if (rest.length > 0 && rest[0] !== "--help" && rest[0] !== "-h") {
-    writers.stderr.write(`unexpected arguments: ${rest.join(" ")}\n`);
-    return 2;
+  if (transport === "http") {
+    writers.stderr.write(
+      "Starting Paybond MCP Streamable HTTP server (POST /mcp; see PAYBOND_MCP_HTTP_* env vars).\n",
+    );
+    return runMcpHttpServerMain([]);
   }
 
   writers.stderr.write("Starting Paybond MCP stdio server (stdout is reserved for MCP JSON-RPC).\n");

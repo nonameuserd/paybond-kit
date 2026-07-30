@@ -426,7 +426,7 @@ export async function handleFlutterwaveDoctor(
       checklist_lines: formatFlutterwaveDoctorChecklist(checks, useColor, "flutterwave doctor"),
       next_steps: [
         "Console destination upsert: https://paybond.ai/console/configuration/settlement",
-        "Docs: https://docs.paybond.ai/guides/configure-flutterwave-settlement",
+        "Docs: https://paybond.ai/guides/configure-flutterwave-settlement",
         "Ready: paybond flutterwave ready",
       ],
     },

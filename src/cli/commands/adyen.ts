@@ -435,7 +435,7 @@ export async function handleAdyenDoctor(ctx: CliContext, argv: string[]): Promis
       checklist_lines: formatAdyenDoctorChecklist(checks, useColor, "adyen doctor"),
       next_steps: [
         "Console destination upsert: https://paybond.ai/console/configuration/settlement",
-        "Docs: https://docs.paybond.ai/guides/configure-adyen-settlement",
+        "Docs: https://paybond.ai/guides/configure-adyen-settlement",
         "Ready: paybond adyen ready",
       ],
     },

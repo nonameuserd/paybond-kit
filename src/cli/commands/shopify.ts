@@ -140,7 +140,7 @@ export function buildShopifyNextStepsBanner(shopDomain?: string): string[] {
     "  Terminal 2: cd examples/shopify-dev-loop && shopify app dev",
     `  Smoke: paybond shopify checkout smoke --shop ${shop}`,
     "  Doctor: paybond shopify doctor",
-    "  Docs: https://docs.paybond.ai/kit/shopify-cli",
+    "  Docs: https://paybond.ai/docs/kit/shopify-cli",
   ];
 }
 
@@ -235,7 +235,7 @@ export function buildShopifyPaymentsNextStepsBanner(shopDomain?: string): string
     "  Terminal 2: cd apps/shopify-payments && shopify app dev",
     `  Smoke: paybond shopify payments smoke --shop ${shop}`,
     "  Doctor: paybond shopify payments doctor",
-    "  Docs: https://docs.paybond.ai/guides/configure-shopify-settlement",
+    "  Docs: https://paybond.ai/guides/configure-shopify-settlement",
   ];
 }
 

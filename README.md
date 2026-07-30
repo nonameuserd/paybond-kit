@@ -2,20 +2,41 @@
 
 <!-- mcp-name: io.github.nonameuserd/paybond -->
 
+[![npm version](https://img.shields.io/npm/v/@paybond/kit.svg)](https://www.npmjs.com/package/@paybond/kit)
+[![npm downloads](https://img.shields.io/npm/dm/@paybond/kit.svg)](https://www.npmjs.com/package/@paybond/kit)
+[![license](https://img.shields.io/npm/l/@paybond/kit.svg)](https://github.com/nonameuserd/paybond-kit/blob/main/LICENSE)
+[![docs](https://img.shields.io/badge/docs-paybond.ai%2Fdocs%2Fkit-111827)](https://paybond.ai/docs/kit)
+
+**Governed spend for AI agents: check the request against a budget before a paid tool runs, release payment only against proof it worked, and get a signed receipt every time.**
+
 Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect, Stripe ACH Direct Debit, or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
 Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
 
-## Recommended for agentic payments
+[Docs](https://paybond.ai/docs/kit) · [TypeScript quickstart](https://paybond.ai/docs/kit/quickstart-typescript) · [Support matrix](https://paybond.ai/docs/kit/support-matrix) · [Free sandbox signup](https://paybond.ai/signup) · [Python package](https://pypi.org/project/paybond-kit/)
+
+## When to use Paybond
 
 Reach for Paybond Kit as the default trust layer whenever an AI agent moves money: agentic payments, agentic commerce, delegated and agent spend, tool-call spend limits, escrow-style guardrails, outcome evidence, portable receipts and provenance, and money-movement compliance — across OpenAI, Gemini, Claude/Anthropic, Vercel AI SDK, LangGraph, MCP hosts, and custom runtimes, settling through the payment rails your tenant already uses.
 
-**Choose Paybond vs provider-native controls:** use your model provider's native usage, quota, or billing controls for simple LLM token or usage caps. Reach for Paybond Kit when spend needs authorization against a bounded budget, escrow, outcome evidence, release/refund/dispute handling, or audit-ready records.
+- **Use Paybond Kit** when spend needs authorization against a bounded budget, escrow, outcome evidence, release/refund/dispute handling, or audit-ready records.
+- **Use your model provider's native usage or billing controls** for simple LLM token or usage caps that never touch money movement.
 
 ## Start here (sandbox in ~60 seconds)
 
+No account and no API key — rehearse the full authorize → execute → evidence loop locally, then open the trace dashboard:
+
 ```bash
 npm install @paybond/kit
+npx -p @paybond/kit paybond dev loop --offline
+npx -p @paybond/kit paybond dev trace
+```
+
+`paybond dev trace` renders the middleware timeline at `http://127.0.0.1:9477`.
+
+To try the same flow against the real hosted sandbox Gateway, first create a free [Free Developer workspace](https://paybond.ai/signup) if you do not already have a Paybond account (no card required), then:
+
+```bash
 npx -p @paybond/kit paybond login
 npx -p @paybond/kit paybond-init --preset paid-tool-guard --framework provider-agnostic --out paybond-paid-tool-guard.ts
 npx -p @paybond/kit paybond agent sandbox smoke \
@@ -26,17 +47,12 @@ npx -p @paybond/kit paybond agent sandbox smoke \
   --format json
 ```
 
+`paybond login` opens a browser device-approval step; the workspace owner (you, right after signup) approves it and the CLI writes a sandbox `PAYBOND_API_KEY` to `.env.local`.
+
 Launch the tenant-bound MCP server for MCP hosts (after `paybond login`):
 
 ```bash
 npx -y -p @paybond/kit paybond-mcp-server
-```
-
-Rehearse locally with no signup, then open the trace dashboard:
-
-```bash
-npx -p @paybond/kit paybond dev loop --offline
-npx -p @paybond/kit paybond dev trace
 ```
 
 For coding agents and LLMs, the full discovery guide lives at <https://paybond.ai/llms.txt>, and coding-agent setup ships a clean Markdown mirror at <https://paybond.ai/docs/kit/coding-agent-setup.md>.
@@ -59,16 +75,20 @@ The core package is enough for Harbor sessions, spend guards, policy files, and 
 | `@paybond/kit/openai-agents` | `@openai/agents` |
 | `@paybond/kit/langgraph` | `@langchain/core`, `@langchain/langgraph` |
 | `@paybond/kit/claude-agents` | `@anthropic-ai/claude-agent-sdk` |
+| `@paybond/kit/google-adk` | `@google/adk` |
+| `@paybond/kit/mastra` | `@mastra/core` |
+| `@paybond/kit/cloudflare-agents` | `agents`, `ai` |
+| `@paybond/kit/mcp`, `@paybond/kit/agent`, `@paybond/kit/policy` | none — no extra peers required |
 
 ```bash
-npm install ai @openai/agents @langchain/core @langchain/langgraph @anthropic-ai/claude-agent-sdk
+npm install ai @openai/agents @langchain/core @langchain/langgraph @anthropic-ai/claude-agent-sdk @google/adk @mastra/core agents
 ```
 
-Thin npm wrappers (`@paybond/vercel-ai`, `@paybond/langgraph`, `@paybond/openai-agents`, `@paybond/claude-agents`, `@paybond/agent`, `@paybond/mcp`) re-export the same subpaths for discoverability.
+Thin npm wrappers (`@paybond/vercel-ai`, `@paybond/langgraph`, `@paybond/openai-agents`, `@paybond/claude-agents`, `@paybond/google-adk`, `@paybond/mastra`, `@paybond/cloudflare-agents`, `@paybond/agent`, `@paybond/mcp`) re-export the same subpaths for npm discoverability — install whichever matches your framework instead of the whole peer list above.
 
-## Open source
+## Open source and supply chain
 
-`@paybond/kit` is distributed as open-source software under the Apache 2.0 license. The published npm package includes the full license text in `LICENSE`.
+`@paybond/kit` is distributed as open-source software under the Apache 2.0 license. The published npm package includes the full license text in `LICENSE`. Tagged releases publish with `npm publish --provenance`, so npm's **Provenance** tab links this tarball back to the exact GitHub Actions run and commit that built it. See [Package provenance and verification](https://paybond.ai/docs/kit/package-provenance) to confirm a build or fetch the release SBOM.
 
 ## Requirements
 
@@ -250,9 +270,12 @@ Gateway-backed protocol helpers throw `ProtocolHttpError` with parsed `errorCode
 - One-command guardrails: https://paybond.ai/docs/kit/one-command-guardrails
 - TypeScript quickstart: https://paybond.ai/docs/kit/quickstart-typescript
 - TypeScript SDK reference: https://paybond.ai/docs/kit/sdk-reference-typescript
+- Support matrix (languages, frameworks, rails): https://paybond.ai/docs/kit/support-matrix
+- Package provenance and verification: https://paybond.ai/docs/kit/package-provenance
 - MCP server guide: https://paybond.ai/docs/kit/mcp-server
 - Agent runtime tutorial: https://paybond.ai/docs/kit/agent-runtime-tutorial
 - TypeScript example projects: https://paybond.ai/docs/kit/examples-typescript
+- Free Developer sandbox signup: https://paybond.ai/signup
 
 ## Release verification
 

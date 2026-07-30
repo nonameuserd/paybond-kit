@@ -774,12 +774,12 @@ Local \`paybond.policy.yaml\` is yours to edit. Bundled preset: **${entry.preset
 
 ## Docs
 
-- [Agent quickstart](https://docs.paybond.ai/kit/quickstart-agent)
-- [Agent middleware](https://docs.paybond.ai/kit/agent-middleware)
+- [Agent quickstart](https://paybond.ai/docs/kit/quickstart-agent)
+- [Agent middleware](https://paybond.ai/docs/kit/agent-middleware)
 ${
     entry.framework === "crewai"
-      ? `- [CrewAI adapter](https://docs.paybond.ai/kit/crewai)
-- [CrewAI spend controls guide](https://docs.paybond.ai/guides/crewai-spend-controls)
+      ? `- [CrewAI adapter](https://paybond.ai/docs/kit/crewai)
+- [CrewAI spend controls guide](https://paybond.ai/guides/crewai-spend-controls)
 `
       : ""
   }`;

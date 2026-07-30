@@ -25,5 +25,5 @@ Local `paybond.policy.yaml` is yours to edit. Bundled preset: **travel**.
 
 ## Docs
 
-- [Agent quickstart](https://docs.paybond.ai/kit/quickstart-agent)
-- [Agent middleware](https://docs.paybond.ai/kit/agent-middleware)
+- [Agent quickstart](https://paybond.ai/docs/kit/quickstart-agent)
+- [Agent middleware](https://paybond.ai/docs/kit/agent-middleware)
