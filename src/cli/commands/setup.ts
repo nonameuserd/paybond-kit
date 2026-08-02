@@ -4,9 +4,15 @@ import path from "node:path";
 import { readJsonBody } from "../automation.js";
 import { listConfigEntries, resolveConfigValue, setConfigValue, unsetConfigValue } from "../config.js";
 import { commandPath, type CliContext, withGateway } from "../context.js";
-import { assertApiKeyShape, resolveApiKey, resolvedDefaultsForDoctor } from "../credentials.js";
+import {
+  assertApiKeyShape,
+  detectEnvFileApiKeyKind,
+  resolveApiKey,
+  resolvedDefaultsForDoctor,
+} from "../credentials.js";
 import { runAgentMiddlewareDoctorCheck } from "../doctor-agent-middleware.js";
 import { packageVersion, runAgentMcpChecks } from "../doctor-agent.js";
+import { runMcpDoctorChecks } from "../doctor-mcp.js";
 import { runCompletionCatalogDoctorChecks } from "../../doctor-completion.js";
 import { consumeBooleanFlag, consumeFlag, parseCliArgv } from "../globals.js";
 import { helpForCommand } from "../help.js";
@@ -18,6 +24,7 @@ import {
   resolveMcpToolPolicy,
 } from "../mcp-policy.js";
 import {
+  assertToolPolicyAllowedForKeyKind,
   parseMcpInstallFormat,
   parseMcpInstallHost,
   parseMcpInstallScope,
@@ -374,6 +381,44 @@ export async function handleMcpTools(ctx: CliContext): Promise<CommandResult> {
   return { data: { tools } };
 }
 
+/**
+ * Prints the canonical MCP scope catalog for restricted-key authors.
+ *
+ * Offline — does not call the gateway. Agent authors and Console operators use
+ * this to see which tools each `mcp.*` scope unlocks and which presets exist.
+ */
+export async function handleMcpScopesList(_ctx: CliContext): Promise<CommandResult> {
+  const { MCP_SCOPE_CATALOG_VERSION, MCP_SCOPE_DEFINITIONS, MCP_SCOPE_PRESETS, MCP_TOOL_SCOPES, formatMcpScope, toolsForMcpScope } =
+    await import("../../mcp/scope-catalog.js");
+  const scopes = MCP_SCOPE_DEFINITIONS.map((definition) => ({
+    id: definition.id,
+    title: definition.title,
+    max_level: definition.maxLevel,
+    description: definition.description,
+    tools: toolsForMcpScope(definition.id),
+  }));
+  const presets = MCP_SCOPE_PRESETS.map((preset) => ({
+    id: preset.id,
+    title: preset.title,
+    description: preset.description,
+    scopes: preset.scopes.map((scope) => formatMcpScope(scope)),
+  }));
+  const tools = Object.entries(MCP_TOOL_SCOPES)
+    .map(([name, required]) => ({
+      name,
+      scope: formatMcpScope(required),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  return {
+    data: {
+      version: MCP_SCOPE_CATALOG_VERSION,
+      scopes,
+      presets,
+      tools,
+    },
+  };
+}
+
 export async function handleMcpInstall(ctx: CliContext, argv: string[]): Promise<CommandResult> {
   const hostFlag = consumeFlag(argv, "--host");
   const formatFlag = consumeFlag(argv, "--format");
@@ -386,10 +431,16 @@ export async function handleMcpInstall(ctx: CliContext, argv: string[]): Promise
   let scope: ReturnType<typeof parseMcpInstallScope>;
   let installHost: ReturnType<typeof parseMcpInstallHost>;
   let toolPolicy: ReturnType<typeof mergeMcpToolPolicy>;
+  const envFile = envFileFlag.value ?? ctx.globals.envFile;
+  const keyKind = await detectEnvFileApiKeyKind(envFile, ctx.cwd);
   try {
     installHost = parseMcpInstallHost(hostFlag.value);
     format = parseMcpInstallFormat(formatFlag.value, installHost);
     scope = parseMcpInstallScope(scopeFlag.value);
+    assertToolPolicyAllowedForKeyKind(
+      keyKind,
+      Boolean(toolPolicyFlag.value?.trim() || toolAllowlistFlag.value?.trim()),
+    );
     toolPolicy = mergeMcpToolPolicy(
       parseMcpToolPolicy(toolPolicyFlag.value),
       parseMcpToolAllowlist(toolAllowlistFlag.value),
@@ -404,11 +455,12 @@ export async function handleMcpInstall(ctx: CliContext, argv: string[]): Promise
     host: installHost,
     scope,
     format,
-    envFile: envFileFlag.value ?? ctx.globals.envFile,
+    envFile,
     out: outFlag.value,
     cwd: ctx.cwd,
     home: process.env.HOME ?? process.env.USERPROFILE ?? ctx.cwd,
     toolPolicy: resolveMcpToolPolicy(toolPolicy),
+    keyKind,
   });
   if (plan.printed) {
     if (ctx.globals.format !== "json") {
@@ -427,6 +479,7 @@ export async function handleMcpInstall(ctx: CliContext, argv: string[]): Promise
     config_path: plan.configPath,
     server_command: plan.serverCommand.join(" "),
     printed: plan.printed,
+    key_kind: plan.keyKind,
   };
   if (plan.toolPolicy?.policy) {
     data.tool_policy = plan.toolPolicy.policy;
@@ -479,8 +532,10 @@ export async function handleMcpVerifyConfig(ctx: CliContext, argv: string[]): Pr
 
 export async function handleDoctor(ctx: CliContext, argv: string[]): Promise<CommandResult> {
   const agentFlag = consumeBooleanFlag(argv, "--agent");
-  const shopifyFlag = consumeBooleanFlag(agentFlag.rest, "--shopify");
+  const mcpFlag = consumeBooleanFlag(agentFlag.rest, "--mcp");
+  const shopifyFlag = consumeBooleanFlag(mcpFlag.rest, "--shopify");
   const hostFlag = consumeFlag(shopifyFlag.rest, "--host");
+  const mcpConfigFlag = consumeFlag(hostFlag.rest, "--config");
   const checks: Array<{ name: string; ok: boolean; message: string; details?: Record<string, unknown> }> = [];
   const defaults = resolvedDefaultsForDoctor(ctx.globals);
   checks.push({
@@ -561,6 +616,27 @@ export async function handleDoctor(ctx: CliContext, argv: string[]): Promise<Com
         message: "skipped (missing API key)",
       });
     }
+  }
+
+  if (mcpFlag.present) {
+    let mcpHost: ReturnType<typeof parseMcpInstallHost>;
+    try {
+      mcpHost = parseMcpInstallHost(hostFlag.value ?? "generic");
+    } catch (err) {
+      throw new CliError(err instanceof Error ? err.message : String(err), {
+        category: "usage",
+        code: "cli.usage.invalid_doctor_mcp_host",
+      });
+    }
+    checks.push(
+      ...(await runMcpDoctorChecks({
+        envFile: defaults.envFile,
+        cwd: ctx.cwd,
+        home: process.env.HOME ?? process.env.USERPROFILE ?? ctx.cwd,
+        host: mcpHost,
+        configPath: mcpConfigFlag.value,
+      })),
+    );
   }
 
   if (shopifyFlag.present) {

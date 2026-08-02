@@ -22,6 +22,98 @@ import { withPaybondCli } from "../paybond.js";
 import { consumeFlag, parseOptionalNonNegativeInt, parseRequiredNonNegativeInt } from "../globals.js";
 import { maskApiKey, redactSensitiveFields } from "../redact.js";
 import { CliError, type CommandResult } from "../types.js";
+import {
+  MCP_SCOPE_PRESETS,
+  formatMcpScope,
+  normalizeMcpScopes,
+  parseMcpScopeToken,
+  parseMcpScopes,
+  presetScopes,
+  type McpScope,
+} from "../../mcp/scope-catalog.js";
+
+function consumeAllFlags(argv: string[], flag: string): { values: string[]; rest: string[] } {
+  const values: string[] = [];
+  let rest = argv;
+  while (true) {
+    const next = consumeFlag(rest, flag);
+    if (!next.present) {
+      return { values, rest: next.rest };
+    }
+    if (next.value?.trim()) {
+      values.push(next.value.trim());
+    }
+    rest = next.rest;
+  }
+}
+
+/**
+ * Resolve the MCP scope grant for `keys create --kind restricted`.
+ *
+ * Restricted keys require either `--preset` or one or more `--scope` tokens
+ * (`mcp.spend:write`). Presets never include settlement; callers that need
+ * live-money settlement must pass `--scope mcp.settlement:write` explicitly.
+ */
+export function resolveRestrictedKeyScopes(input: {
+  kind: string;
+  preset: string | undefined;
+  scopeTokens: readonly string[];
+}): McpScope[] {
+  const kind = (input.kind || "standard").trim().toLowerCase();
+  if (kind !== "restricted" && kind !== "standard") {
+    throw new CliError("invalid --kind (expected standard|restricted)", {
+      category: "usage",
+      code: "cli.usage.invalid_key_kind",
+    });
+  }
+  const preset = input.preset?.trim() ?? "";
+  const tokens = input.scopeTokens.flatMap((token) =>
+    token
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean),
+  );
+  if (kind === "standard") {
+    if (preset || tokens.length > 0) {
+      throw new CliError("--preset/--scope require --kind restricted", {
+        category: "usage",
+        code: "cli.usage.scopes_require_restricted",
+      });
+    }
+    return [];
+  }
+  if (preset && tokens.length > 0) {
+    throw new CliError("use either --preset or --scope, not both", {
+      category: "usage",
+      code: "cli.usage.conflicting_scope_flags",
+    });
+  }
+  if (preset) {
+    const scopes = presetScopes(preset);
+    if (scopes === null) {
+      const known = MCP_SCOPE_PRESETS.map((entry) => entry.id).join(", ");
+      throw new CliError(`unknown --preset ${preset} (expected one of ${known})`, {
+        category: "usage",
+        code: "cli.usage.unknown_mcp_preset",
+      });
+    }
+    return scopes;
+  }
+  if (tokens.length === 0) {
+    throw new CliError(
+      "keys create --kind restricted requires --preset <id> or --scope <scope:level>",
+      { category: "usage", code: "cli.usage.missing_mcp_scopes" },
+    );
+  }
+  try {
+    return normalizeMcpScopes(tokens.map((token) => parseMcpScopeToken(token)));
+  } catch (err) {
+    throw new CliError(err instanceof Error ? err.message : String(err), {
+      category: "usage",
+      code: "cli.usage.invalid_mcp_scope",
+    });
+  }
+}
 
 export async function handleKeys(ctx: CliContext, subcommand: string, argv: string[]): Promise<CommandResult> {
   return withGateway(ctx, async (gateway) => {
@@ -33,10 +125,20 @@ export async function handleKeys(ctx: CliContext, subcommand: string, argv: stri
       const items = Array.isArray(body.items) ? body.items : [];
       const keys = items.map((item) => {
         const row = item as Record<string, unknown>;
+        const keyKind =
+          typeof row.key_kind === "string" && row.key_kind.trim()
+            ? row.key_kind.trim().toLowerCase()
+            : "standard";
+        const prefix = keyKind === "restricted" ? "paybond_rk" : "paybond_sk";
+        const scopes = parseMcpScopes(row.mcp_scopes).map(formatMcpScope);
         return {
           key_id: String(row.key_id ?? row.id ?? ""),
-          key_masked: maskApiKey(`paybond_sk_${String(row.environment ?? "sandbox")}_${String(row.key_id ?? "redacted")}_redacted`),
+          key_masked: maskApiKey(
+            `${prefix}_${String(row.environment ?? "sandbox")}_${String(row.key_id ?? "redacted")}_redacted`,
+          ),
           role: String(row.service_account_role ?? ""),
+          key_kind: keyKind,
+          mcp_scopes: scopes,
           created_at: String(row.created_at ?? ""),
           expires_at: row.expires_at ? String(row.expires_at) : null,
           status: row.revoked_at ? "revoked" : "active",
@@ -52,22 +154,46 @@ export async function handleKeys(ctx: CliContext, subcommand: string, argv: stri
     }
     if (subcommand === "create") {
       const nameFlag = consumeFlag(argv, "--name");
-      const roleFlag = consumeFlag(argv, "--role");
-      const labelFlag = consumeFlag(argv, "--label");
+      const roleFlag = consumeFlag(nameFlag.rest, "--role");
+      const labelFlag = consumeFlag(roleFlag.rest, "--label");
+      const kindFlag = consumeFlag(labelFlag.rest, "--kind");
+      const presetFlag = consumeFlag(kindFlag.rest, "--preset");
+      const scopeFlags = consumeAllFlags(presetFlag.rest, "--scope");
       if (!nameFlag.value || !roleFlag.value) {
         throw new CliError("keys create requires --name and --role", { category: "usage", code: "cli.usage.missing_args" });
       }
+      if (scopeFlags.rest.length > 0) {
+        throw new CliError(`unexpected arguments: ${scopeFlags.rest.join(" ")}`, {
+          category: "usage",
+          code: "cli.usage.unexpected_args",
+        });
+      }
+      const keyKind = (kindFlag.value ?? "standard").trim().toLowerCase() || "standard";
+      const mcpScopes = resolveRestrictedKeyScopes({
+        kind: keyKind,
+        preset: presetFlag.value,
+        scopeTokens: scopeFlags.values,
+      });
       const body = await gateway.postJson("/v1/admin/api-keys", {
         service_account_name: nameFlag.value,
         service_account_role: roleFlag.value,
         label: labelFlag.value ?? "",
+        key_kind: keyKind,
+        mcp_scopes: mcpScopes,
       });
       const item = (body.item ?? {}) as Record<string, unknown>;
       const rawApiKey = typeof body.api_key === "string" ? body.api_key : "";
+      const responseKind =
+        typeof item.key_kind === "string" && item.key_kind.trim()
+          ? item.key_kind.trim().toLowerCase()
+          : keyKind;
+      const responseScopes = parseMcpScopes(item.mcp_scopes ?? mcpScopes).map(formatMcpScope);
       const data: Record<string, unknown> = {
         key_id: String(item.key_id ?? item.id ?? ""),
         key_masked: rawApiKey ? maskApiKey(rawApiKey) : maskApiKey(""),
         role: String(item.service_account_role ?? roleFlag.value),
+        key_kind: responseKind,
+        mcp_scopes: responseScopes,
         created_at: String(item.created_at ?? ""),
         status: "active",
       };

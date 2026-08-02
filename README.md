@@ -7,7 +7,7 @@
 [![license](https://img.shields.io/npm/l/@paybond/kit.svg)](https://github.com/nonameuserd/paybond-kit/blob/main/LICENSE)
 [![docs](https://img.shields.io/badge/docs-paybond.ai%2Fdocs%2Fkit-111827)](https://paybond.ai/docs/kit)
 
-**Payments decide whether an agent _can_ pay; Paybond decides whether it _should_ — budget and policy checked before a paid tool runs, payment released only against proof the work was delivered, and a signed receipt every time.**
+**Your agents can spend. Funds don't release until the work is proven.**
 
 Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect, Stripe ACH Direct Debit, or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 

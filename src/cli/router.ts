@@ -23,6 +23,7 @@ import {
   handleInitWizard,
   handleLogin,
   handleMcpInstall,
+  handleMcpScopesList,
   handleMcpServe,
   handleMcpTools,
   handleMcpVerifyConfig,
@@ -345,6 +346,9 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "mcp" && second === "tools") {
       canonical = "mcp tools";
       result = await handleMcpTools(ctx);
+    } else if (head === "mcp" && second === "scopes" && third === "list") {
+      canonical = "mcp scopes list";
+      result = await handleMcpScopesList(ctx);
     } else if (head === "mcp" && second === "verify-config") {
       canonical = "mcp verify-config";
       result = await handleMcpVerifyConfig(ctx, command.slice(2));

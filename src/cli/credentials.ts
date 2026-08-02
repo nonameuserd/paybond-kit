@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
+import { classifyPaybondApiKey, type PaybondApiKeyKind } from "../mcp/scope-catalog.js";
 import { resolveConfigValue } from "./config.js";
 import { CLI_WARN_ENV_FALLBACK, formatWarning } from "./automation.js";
 import { DEFAULT_ENV_FILE, DEFAULT_GATEWAY, validateCliGateway } from "./globals.js";
@@ -109,6 +110,28 @@ export async function resolveApiKey(globals: GlobalOptions, cwd: string): Promis
   return resolved.apiKey;
 }
 
+/**
+ * Classifies the credential a generated MCP host config will actually use at
+ * runtime. The env file wins because `mcp install` writes `PAYBOND_ENV_FILE`;
+ * the process environment is only a fallback. Unreadable or absent credentials
+ * classify as `"unknown"` so install stays usable before `paybond login`.
+ */
+export async function detectEnvFileApiKeyKind(
+  envFile: string,
+  cwd: string,
+): Promise<PaybondApiKeyKind> {
+  try {
+    const fromFile = await loadEnvFile(envFile, cwd);
+    if (fromFile) {
+      return classifyPaybondApiKey(fromFile);
+    }
+  } catch {
+    return "unknown";
+  }
+  const fromProcess = process.env.PAYBOND_API_KEY?.trim();
+  return fromProcess ? classifyPaybondApiKey(fromProcess) : "unknown";
+}
+
 export type CredentialSourceDescription = {
   source: "process_env" | "env_file" | "missing";
   env_file?: string;
@@ -154,8 +177,12 @@ export async function describeCredentialSource(
   };
 }
 
+/**
+ * Rejects credentials that are neither a standard (`paybond_sk_`) nor a
+ * restricted (`paybond_rk_`) Paybond API key. Never echoes key material.
+ */
 export function assertApiKeyShape(apiKey: string): void {
-  if (!apiKey.startsWith("paybond_sk_")) {
+  if (classifyPaybondApiKey(apiKey) === "unknown") {
     throw new CliError("PAYBOND_API_KEY has an unexpected shape", {
       category: "auth",
       code: "cli.auth.invalid_api_key_shape",

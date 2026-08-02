@@ -1,6 +1,15 @@
 import { fileURLToPath } from "node:url";
 
+import type { PaybondApiKeyKind } from "../mcp/scope-catalog.js";
 import { type McpToolPolicyConfig, mcpToolPolicyEnv, resolveMcpToolPolicy } from "./mcp-policy.js";
+
+/**
+ * Error surfaced when a caller pairs an env-policy flag with a restricted key.
+ * Restricted keys carry their own MCP scopes, so a host-side allowlist would
+ * only narrow the surface in a way the key already describes.
+ */
+export const RESTRICTED_KEY_TOOL_POLICY_ERROR =
+  "--tool-policy/--tool-allowlist are not supported for restricted paybond_rk_ keys: MCP tool scopes come from the key (paybond keys create --kind restricted --preset ...)";
 
 export type McpInstallFormat = "json" | "toml";
 export type McpInstallScope = "local" | "project" | "user";
@@ -24,7 +33,21 @@ export type McpInstallPlan = {
   payload: string;
   printed: boolean;
   toolPolicy?: McpToolPolicyConfig | null;
+  keyKind: PaybondApiKeyKind;
 };
+
+/**
+ * Rejects env tool-policy flags when the credential is a restricted key.
+ * @throws Error with {@link RESTRICTED_KEY_TOOL_POLICY_ERROR} when incompatible.
+ */
+export function assertToolPolicyAllowedForKeyKind(
+  keyKind: PaybondApiKeyKind,
+  toolPolicyRequested: boolean,
+): void {
+  if (keyKind === "restricted" && toolPolicyRequested) {
+    throw new Error(RESTRICTED_KEY_TOOL_POLICY_ERROR);
+  }
+}
 
 export function resolvePackageLocalMcpServerCommand(): string[] {
   const mcpServerJs = fileURLToPath(new URL("../mcp-server.js", import.meta.url));
@@ -39,11 +62,16 @@ export function buildMcpServerEntry(
   envFile: string,
   serverCommand: string[],
   toolPolicy?: McpToolPolicyConfig | null,
+  keyKind: PaybondApiKeyKind = "unknown",
 ): McpServerEntry {
+  const policyEnv =
+    keyKind === "restricted"
+      ? {}
+      : mcpToolPolicyEnv(resolveMcpToolPolicy(toolPolicy ?? { policy: null, allowlist: [] }));
   return {
     command: serverCommand[0]!,
     args: serverCommand.slice(1),
-    env: { PAYBOND_ENV_FILE: envFile, ...mcpToolPolicyEnv(resolveMcpToolPolicy(toolPolicy ?? { policy: null, allowlist: [] })) },
+    env: { PAYBOND_ENV_FILE: envFile, ...policyEnv },
   };
 }
 
@@ -104,9 +132,11 @@ export function planMcpInstall(input: {
   home: string;
   serverCommand?: string[];
   toolPolicy?: McpToolPolicyConfig | null;
+  keyKind?: PaybondApiKeyKind;
 }): McpInstallPlan {
   const serverCommand = input.serverCommand ?? defaultMcpServerCommand();
-  const entry = buildMcpServerEntry(input.envFile, serverCommand, input.toolPolicy);
+  const keyKind: PaybondApiKeyKind = input.keyKind ?? "unknown";
+  const entry = buildMcpServerEntry(input.envFile, serverCommand, input.toolPolicy, keyKind);
   const payload = serializeMcpInstallPayload(input.format, entry);
   const configPath = resolveMcpInstallPath(input.scope, input.format, input.out, input.cwd, input.home);
   return {
@@ -118,7 +148,8 @@ export function planMcpInstall(input: {
     serverCommand,
     payload,
     printed: configPath === null,
-    toolPolicy: input.toolPolicy ?? null,
+    toolPolicy: keyKind === "restricted" ? null : (input.toolPolicy ?? null),
+    keyKind,
   };
 }
 

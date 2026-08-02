@@ -9,12 +9,16 @@
  * Unlike the stdio transport (`mcp-server.ts`), this transport is designed to be
  * reachable over the network and multi-tenant: the process holds no baked-in
  * `PAYBOND_API_KEY`. Every `POST /mcp` request supplies its own Paybond
- * service-account key as `Authorization: Bearer <paybond_sk_...>`, and tenant
- * scope is derived from that key alone — never from a client-supplied
- * `tenant_id` or other request field. Each request is handled by a fresh,
- * short-lived `PaybondMCPServer` instance scoped to the presented key; nothing
- * is cached or shared across requests, so a compromised or misbehaving caller
- * can never observe another tenant's state.
+ * credential as `Authorization: Bearer <paybond_rk_...|paybond_sk_...|paybond_oat_...>`,
+ * and tenant scope is derived from that credential alone — never from a
+ * client-supplied `tenant_id` or other request field. Each request is handled by
+ * a fresh, short-lived `PaybondMCPServer` instance scoped to the presented
+ * credential; nothing is cached or shared across requests, so a compromised or
+ * misbehaving caller can never observe another tenant's state. That per-request
+ * instance is also what keeps restricted (`paybond_rk_*`) keys and user-scoped
+ * MCP OAuth (`paybond_oat_*`) tokens correct here: each request resolves its own
+ * principal and therefore its own `mcp_scopes`, so two credentials hitting this
+ * process see two different tool surfaces and no scope grant is ever reused.
  *
  * This statelessness has one deliberate trade-off versus stdio: the in-memory
  * capability-token convenience cache (see mcp-capability-token-cache.ts) and
@@ -34,10 +38,20 @@ import {
   PaybondMCPServer,
   type PaybondMCPSettings,
 } from "./mcp-server.js";
+import {
+  MCP_OAUTH_ACCESS_TOKEN_PREFIX,
+  RESTRICTED_API_KEY_PREFIX,
+  STANDARD_API_KEY_PREFIX,
+} from "./mcp/scope-catalog.js";
 
 const MCP_PATH = "/mcp";
 const HEALTHZ_PATH = "/healthz";
-const API_KEY_PREFIX = "paybond_sk_";
+/** Restricted keys, standard keys, and MCP OAuth access tokens are accepted. */
+const API_KEY_PREFIXES: readonly string[] = [
+  STANDARD_API_KEY_PREFIX,
+  RESTRICTED_API_KEY_PREFIX,
+  MCP_OAUTH_ACCESS_TOKEN_PREFIX,
+];
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
 const DEFAULT_ADDR = "0.0.0.0:8080";
@@ -208,7 +222,9 @@ function extractBearerToken(header: string | undefined): string | null {
 }
 
 function looksLikeApiKey(value: string): boolean {
-  return value.startsWith(API_KEY_PREFIX) && value.length >= API_KEY_PREFIX.length + 8;
+  return API_KEY_PREFIXES.some(
+    (prefix) => value.startsWith(prefix) && value.length >= prefix.length + 8,
+  );
 }
 
 function originAllowed(origin: string | undefined, allowedOrigins: readonly string[]): boolean {
@@ -371,7 +387,8 @@ async function handleMcpRequest(
     res.setHeader("www-authenticate", 'Bearer realm="paybond-mcp", error="invalid_token"');
     sendJson(res, 401, {
       error: "unauthorized",
-      message: "Authorization: Bearer <paybond_sk_...> is required",
+      message:
+        "Authorization: Bearer <paybond_rk_..., paybond_sk_..., or paybond_oat_...> is required",
     });
     logAccess({ path, method, status: 401, ip });
     return;

@@ -34,7 +34,7 @@ describe("paybond cli", () => {
     expect(output).toContain("mcp serve|install|verify-config|tools");
     expect(output).toContain("tools MCP server");
     expect(output).toContain("never Colorize");
-    expect(output).toContain("audit exports list|get|verify|delete");
+    expect(output).toContain("audit exports create|list|get|verify|delete");
     expect(output).toContain("keys list|create|rotate|revoke");
   });
 

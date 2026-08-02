@@ -8,7 +8,7 @@
     "url": "https://github.com/nonameuserd/paybond-kit",
     "source": "github"
   },
-  "version": "0.12.15",
+  "version": "0.12.16",
   "_meta": {
     "io.modelcontextprotocol.registry/publisher-provided": {
       "paybond": {
@@ -30,6 +30,112 @@
           "llmsTxt": "https://paybond.ai/llms.txt",
           "codingAgentSetup": "https://paybond.ai/docs/kit/coding-agent-setup.md",
           "docs": "https://paybond.ai/docs/kit/mcp-server"
+        },
+        "hostedEndpoint": {
+          "url": "https://mcp.paybond.ai/mcp",
+          "transport": "streamable-http",
+          "credentials": [
+            "paybond_rk_* restricted API key (scopes on the key are the permission model)",
+            "paybond_sk_* standard API key (full role entitlements; not scope-capped)",
+            "paybond_oat_* MCP OAuth access token (user-scoped consent grant)"
+          ]
+        },
+        "authorization": {
+          "type": "oauth2",
+          "grantTypes": ["authorization_code", "refresh_token"],
+          "pkce": "S256",
+          "authorizationUrl": "https://api.paybond.ai/v1/oauth/authorize",
+          "tokenUrl": "https://api.paybond.ai/v1/oauth/token",
+          "revocationUrl": "https://api.paybond.ai/v1/oauth/revoke",
+          "consentUrl": "https://paybond.ai/console/authorize/mcp",
+          "sessionManagementUrl": "https://paybond.ai/console/configuration/machine-access/mcp",
+          "notes": "A human tenant_admin approves each grant in Console and may narrow the requested scopes. Live grants that include mcp.settlement:write require MFA step-up. Tenant admins can disable MCP per environment, which blocks new grants and rejects existing paybond_oat_* bearers."
+        },
+        "scopeCatalog": {
+          "version": 1,
+          "source": "https://paybond.ai/docs/kit/mcp-server",
+          "levels": ["read", "write"],
+          "notes": "Canonical catalog lives at kit/mcp-scopes/catalog.json and is enforced by the gateway on both restricted keys and OAuth tokens. A scope grant caps the MCP tool surface and the underlying HTTP routes.",
+          "scopes": [
+            {
+              "id": "mcp.discovery",
+              "title": "Discovery",
+              "maxLevel": "read",
+              "description": "Principal identity, Harbor intent reads, and side-effect-free spend policy dry-runs."
+            },
+            {
+              "id": "mcp.signal",
+              "title": "Signal standing",
+              "maxLevel": "read",
+              "description": "Reputation receipts, portfolio artifacts, and fraud review reads."
+            },
+            {
+              "id": "mcp.compliance",
+              "title": "Compliance exports",
+              "maxLevel": "read",
+              "description": "Audit export listing and retrieval."
+            },
+            {
+              "id": "mcp.a2a",
+              "title": "A2A and mandates",
+              "maxLevel": "write",
+              "description": "Agent card, task contracts, and mandate verification (read); mandate import (write)."
+            },
+            {
+              "id": "mcp.receipts",
+              "title": "Receipts",
+              "maxLevel": "read",
+              "description": "Settlement, protocol, and agent receipt retrieval plus verification."
+            },
+            {
+              "id": "mcp.evidence",
+              "title": "Completion evidence",
+              "maxLevel": "write",
+              "description": "Local evidence validation (read); Harbor completion evidence submission (write)."
+            },
+            {
+              "id": "mcp.spend",
+              "title": "Spend authorization",
+              "maxLevel": "write",
+              "description": "Intent creation, capability verification, and agent spend authorization."
+            },
+            {
+              "id": "mcp.settlement",
+              "title": "Settlement (live money)",
+              "maxLevel": "write",
+              "description": "Funding intents and confirming settlement. Never included in a preset; must be chosen explicitly."
+            },
+            {
+              "id": "mcp.sandbox",
+              "title": "Sandbox guardrails",
+              "maxLevel": "write",
+              "description": "Sandbox guardrail bootstrap and sandbox guardrail evidence."
+            }
+          ],
+          "presets": [
+            {
+              "id": "mcp-readonly",
+              "title": "MCP Readonly Discovery",
+              "scopes": ["mcp.discovery:read", "mcp.signal:read", "mcp.compliance:read", "mcp.receipts:read"]
+            },
+            {
+              "id": "mcp-spend-operator",
+              "title": "MCP Spend Operator",
+              "scopes": [
+                "mcp.discovery:read",
+                "mcp.signal:read",
+                "mcp.compliance:read",
+                "mcp.receipts:read",
+                "mcp.spend:write",
+                "mcp.evidence:write"
+              ]
+            },
+            {
+              "id": "mcp-sandbox-agent",
+              "title": "MCP Sandbox Agent",
+              "scopes": ["mcp.discovery:read", "mcp.sandbox:write", "mcp.spend:write"]
+            }
+          ]
         }
       }
     }
@@ -39,7 +145,7 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@paybond/kit",
-      "version": "0.12.15",
+      "version": "0.12.16",
       "transport": {
         "type": "stdio"
       },
@@ -71,7 +177,7 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "paybond-kit",
-      "version": "0.12.15",
+      "version": "0.12.16",
       "transport": {
         "type": "stdio"
       },

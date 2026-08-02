@@ -8,7 +8,7 @@
     "smoke": "paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation procurement.submit_po --requested-spend-cents 12000 --result-body '{\"status\":\"completed\",\"cost_cents\":12000}' --format json"
   },
   "dependencies": {
-    "@paybond/kit": "^0.12.10"
+    "@paybond/kit": "^0.12.15"
   },
   "devDependencies": {
     "@types/node": "^22.10.1",
@@ -16,5 +16,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "overrides": {
+    "fast-uri": "3.1.5",
+    "@hono/node-server": "2.0.12"
   }
 }

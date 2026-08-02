@@ -6,8 +6,17 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { requireSecureGatewayUrl } from "./gateway-url.js";
+import { isLocalGatewayHost, requireSecureGatewayUrl } from "./gateway-url.js";
 import { deprecatedAliasWarning } from "./cli/automation.js";
+import {
+  classifyPaybondApiKey,
+  formatMcpScope,
+  parseMcpScopes,
+  requiredScopeForTool,
+  RESTRICTED_API_KEY_PREFIX,
+  toolAllowedByScope,
+  type McpScope,
+} from "./mcp/scope-catalog.js";
 import { redactSensitiveFields } from "./cli/redact.js";
 import {
   MCP_TOOL_ALLOWLIST_ENV,
@@ -72,7 +81,7 @@ declare const process: {
 
 
 const SERVER_NAME = "Paybond MCP";
-const SERVER_VERSION = "0.12.15";
+const SERVER_VERSION = "0.12.16";
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const DEFAULT_PRINCIPAL_PATH = "/v1/auth/principal";
 const DEFAULT_RECOGNITION_VERIFIER_ID = "paybond-gateway";
@@ -1869,10 +1878,70 @@ export function formatMcpNdjsonFrame(response: JSONRPCResponse): string {
 
 type McpStdioFraming = "content-length" | "ndjson";
 
+/**
+ * Effective credential permission model for one MCP server instance.
+ *
+ * `restricted` is true when either the configured key carries the
+ * `paybond_rk_` prefix or the resolved principal reports
+ * `key_kind: "restricted"` (the principal always wins, so a re-issued key that
+ * looks standard but is stored as restricted is still enforced).
+ * `unresolvedReason` is set only for restricted credentials whose principal
+ * could not be resolved, which must fail closed.
+ */
+type McpScopeContext = {
+  restricted: boolean;
+  scopes: readonly McpScope[];
+  unresolvedReason: string | null;
+};
+
+/**
+ * Stripe-parity nudge: a standard `paybond_sk_` key against a remote gateway
+ * grants an MCP host the key's full role entitlements. Returns the warning text,
+ * or `null` when the credential/target combination needs no warning. Never
+ * includes key material.
+ */
+export function mcpStandardKeyWarning(
+  gatewayBaseUrl: string,
+  apiKey: string,
+): string | null {
+  if (classifyPaybondApiKey(apiKey) !== "standard") {
+    return null;
+  }
+  let hostname: string;
+  try {
+    hostname = new URL(gatewayBaseUrl).hostname;
+  } catch {
+    return null;
+  }
+  if (isLocalGatewayHost(hostname)) {
+    return null;
+  }
+  return (
+    `Paybond MCP: using a standard paybond_sk_ key against ${hostname}. ` +
+    `Create a restricted ${RESTRICTED_API_KEY_PREFIX} key (paybond keys create --kind restricted ` +
+    "--preset mcp-readonly) so the credential itself limits the exposed MCP tools."
+  );
+}
+
+/** Process-wide so the hosted HTTP transport does not repeat the nudge per request. */
+let standardKeyWarningEmitted = false;
+
+function emitStandardKeyWarningOnce(warning: string | null): void {
+  if (standardKeyWarningEmitted || warning === null) {
+    return;
+  }
+  standardKeyWarningEmitted = true;
+  // stderr only: stdout is reserved for the MCP JSON-RPC stream.
+  process.stderr.write(`${warning}\n`);
+}
+
 export class PaybondMCPServer {
   private readonly runtime: PaybondMCPRuntime;
   private readonly tools: MCPToolDefinition[];
   private readonly toolPolicy: McpToolPolicyConfig;
+  private readonly apiKeyKind: ReturnType<typeof classifyPaybondApiKey>;
+  private readonly standardKeyWarning: string | null;
+  private scopeContextPromise: Promise<McpScopeContext> | null = null;
   private initialized = false;
   /** Framing negotiated from the first successfully parsed stdin message. */
   private stdioFraming: McpStdioFraming = "content-length";
@@ -1883,6 +1952,11 @@ export class PaybondMCPServer {
     }
     this.toolPolicy = resolveMcpToolPolicy(
       settings.toolPolicy ?? { policy: null, allowlist: [] },
+    );
+    this.apiKeyKind = classifyPaybondApiKey(settings.apiKey);
+    this.standardKeyWarning = mcpStandardKeyWarning(
+      settings.gatewayBaseUrl ?? DEFAULT_PAYBOND_GATEWAY_BASE_URL,
+      settings.apiKey,
     );
     this.runtime = new PaybondMCPRuntime(settings);
     this.tools = this.buildTools(settings).filter((tool) =>
@@ -1923,19 +1997,37 @@ export class PaybondMCPServer {
     };
   }
 
+  /**
+   * Env-policy tool surface for this process, independent of the credential.
+   *
+   * Kept synchronous for the CLI (`paybond mcp tools`), the TS↔Python parity
+   * script, and local dev. Restricted `paybond_rk_` credentials must use
+   * {@link listToolsForPrincipal}, which intersects this surface with the
+   * scopes carried by the key.
+   */
   listTools(): Array<Record<string, unknown>> {
-    return this.tools.map((tool) => ({
-      name: tool.name,
-      title: tool.title,
-      description: tool.description,
-      inputSchema: tool.inputSchema,
-      ...(tool.outputSchema === undefined
-        ? {}
-        : { outputSchema: tool.outputSchema }),
-      ...(tool.annotations === undefined
-        ? {}
-        : { annotations: tool.annotations }),
-    }));
+    return this.toolDescriptors(this.tools);
+  }
+
+  /**
+   * Credential-aware tool surface used by the `tools/list` JSON-RPC handler.
+   *
+   * Standard keys keep the env-policy surface unchanged. Restricted keys get
+   * `env policy ∩ principal.mcp_scopes`, and an empty list when the principal
+   * (and therefore the scope grant) cannot be resolved — never a wider surface
+   * than the credential proves.
+   */
+  async listToolsForPrincipal(): Promise<Array<Record<string, unknown>>> {
+    const context = await this.scopeContext();
+    if (!context.restricted) {
+      return this.listTools();
+    }
+    if (context.unresolvedReason !== null) {
+      return [];
+    }
+    return this.toolDescriptors(
+      this.tools.filter((tool) => toolAllowedByScope(tool.name, context.scopes)),
+    );
   }
 
   async callTool(
@@ -1960,6 +2052,13 @@ export class PaybondMCPServer {
         isError: true,
       };
     }
+    const scopeDenial = await this.scopeDenialFor(name);
+    if (scopeDenial !== null) {
+      return {
+        content: [{ type: "text", text: scopeDenial }],
+        isError: true,
+      };
+    }
     try {
       await this.runtime.beginPolicyToolCall();
       try {
@@ -1979,6 +2078,91 @@ export class PaybondMCPServer {
         isError: true,
       };
     }
+  }
+
+  private toolDescriptors(
+    tools: readonly MCPToolDefinition[],
+  ): Array<Record<string, unknown>> {
+    return tools.map((tool) => ({
+      name: tool.name,
+      title: tool.title,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+      ...(tool.outputSchema === undefined
+        ? {}
+        : { outputSchema: tool.outputSchema }),
+      ...(tool.annotations === undefined
+        ? {}
+        : { annotations: tool.annotations }),
+    }));
+  }
+
+  /**
+   * Resolve (and cache) the credential permission model from the gateway principal.
+   *
+   * A principal failure is fatal only for restricted credentials: standard keys
+   * keep working exactly as before so a transient gateway error never silently
+   * empties an existing host's tool list.
+   */
+  private async scopeContext(): Promise<McpScopeContext> {
+    emitStandardKeyWarningOnce(this.standardKeyWarning);
+    this.scopeContextPromise ??= (async (): Promise<McpScopeContext> => {
+      let principal: Record<string, unknown>;
+      try {
+        principal = await this.runtime.principal();
+      } catch (err) {
+        if (this.apiKeyKind === "restricted") {
+          return { restricted: true, scopes: [], unresolvedReason: formatError(err) };
+        }
+        return { restricted: false, scopes: [], unresolvedReason: null };
+      }
+      const principalKeyKind =
+        typeof principal.key_kind === "string"
+          ? principal.key_kind.trim().toLowerCase()
+          : "";
+      const restricted =
+        principalKeyKind === "restricted" || this.apiKeyKind === "restricted";
+      return {
+        restricted,
+        scopes: parseMcpScopes(principal.mcp_scopes),
+        unresolvedReason: null,
+      };
+    })();
+    try {
+      return await this.scopeContextPromise;
+    } catch (err) {
+      // Never let an unexpected failure widen the surface for restricted keys.
+      this.scopeContextPromise = null;
+      if (this.apiKeyKind === "restricted") {
+        return { restricted: true, scopes: [], unresolvedReason: formatError(err) };
+      }
+      return { restricted: false, scopes: [], unresolvedReason: null };
+    }
+  }
+
+  /** Actionable denial message for a scope-gated tool call, or `null` when allowed. */
+  private async scopeDenialFor(name: string): Promise<string | null> {
+    const context = await this.scopeContext();
+    if (!context.restricted) {
+      return null;
+    }
+    if (context.unresolvedReason !== null) {
+      return (
+        `Restricted key scopes could not be resolved from the Paybond gateway principal: ${context.unresolvedReason}. ` +
+        `Refusing to run ${name} until the scope grant is readable.`
+      );
+    }
+    if (toolAllowedByScope(name, context.scopes)) {
+      return null;
+    }
+    const required = requiredScopeForTool(name);
+    if (required === null) {
+      return (
+        `Tool blocked by restricted key scopes: ${name} is not mapped to an MCP scope. ` +
+        "Use a standard key or upgrade @paybond/kit."
+      );
+    }
+    return `Tool blocked by restricted key scopes: ${name} requires ${formatMcpScope(required)}`;
   }
 
   async handleMessage(
@@ -2050,7 +2234,7 @@ export class PaybondMCPServer {
           jsonrpc: "2.0",
           id: message.id,
           result: {
-            tools: this.listTools(),
+            tools: await this.listToolsForPrincipal(),
           },
         };
       case "resources/list":

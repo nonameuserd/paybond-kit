@@ -8,7 +8,7 @@
     "smoke": "paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation travel.book_hotel --requested-spend-cents 18700 --result-body '{\"status\":\"completed\",\"cost_cents\":18700}' --format json"
   },
   "dependencies": {
-    "@paybond/kit": "^0.12.10",
+    "@paybond/kit": "^0.12.15",
     "@anthropic-ai/claude-agent-sdk": "^0.2.100",
     "zod": "^4.2.0"
   },
@@ -18,5 +18,9 @@
   },
   "engines": {
     "node": ">=22"
+  },
+  "overrides": {
+    "fast-uri": "3.1.5",
+    "@hono/node-server": "2.0.12"
   }
 }
