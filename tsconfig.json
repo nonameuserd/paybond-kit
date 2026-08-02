@@ -8,8 +8,9 @@
     "rootDir": "src",
     "strict": true,
     "skipLibCheck": true,
+    "jsx": "react-jsx",
     "types": ["node"]
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
   "exclude": ["vitest.config.ts"]
 }

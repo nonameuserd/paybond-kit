@@ -70,6 +70,11 @@ import {
   handleHelpCommand,
   handleOnboarding,
 } from "./ux.js";
+import { handleStatus } from "./commands/status.js";
+import { handleOpen } from "./commands/open-resource.js";
+import { handleShell } from "./commands/shell.js";
+import { handleControl } from "./commands/control.js";
+import { formatHumanErrorLines } from "./next-actions.js";
 import {
   CliError,
   EXIT_AUTH,
@@ -268,7 +273,9 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
         failureEnvelope("paybond", { ...defaultGlobalOptions(), format: "json", requestId: requestIdFromArgv(argv) }, shape),
       );
     } else {
-      stderr.write(`${shape.message}\n`);
+      for (const line of formatHumanErrorLines(shape)) {
+        stderr.write(`${line}\n`);
+      }
     }
     return exitCode;
   }
@@ -305,6 +312,18 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     } else if (head === "login") {
       canonical = "login";
       result = await handleLogin(ctx, command.slice(1));
+    } else if (head === "status") {
+      canonical = "status";
+      result = await handleStatus(ctx, command.slice(1));
+    } else if (head === "open") {
+      canonical = "open";
+      result = await handleOpen(ctx, command.slice(1));
+    } else if (head === "shell") {
+      canonical = "shell";
+      result = await handleShell(ctx, command.slice(1));
+    } else if (head === "control") {
+      canonical = "control";
+      result = await handleControl(ctx, command.slice(1));
     } else if (head === "init" && second === "guardrail") {
       canonical = "init guardrail";
       result = await handleInitGuardrail(ctx, command.slice(2));
@@ -522,6 +541,19 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
           ctx.stderr.write(`${warning}\n`);
         }
       }
+    } else if (canonical === "status" && Array.isArray(result.data.next_commands)) {
+      const useColor = shouldUseColor(globals);
+      const lines = renderTable(canonical, result, globals);
+      lines.push(colorize("next:", "cyan", useColor));
+      for (const cmd of result.data.next_commands as string[]) {
+        lines.push(`  $ ${cmd}`);
+      }
+      writeTableLines(ctx.stdout, lines);
+    } else if (canonical === "shell" || canonical === "control") {
+      // Interactive commands already wrote to the terminal; only emit table for JSON/snapshot.
+      if (result.data.mode === "snapshot" || result.data.mode === "exec" || result.data.mode === "repl") {
+        writeTableLines(ctx.stdout, renderTable(canonical, result, globals));
+      }
     } else if (canonical !== "login" && canonical !== "mcp serve" && canonical !== "dev trace") {
       writeTableLines(ctx.stdout, renderTable(canonical, result, globals));
     }
@@ -537,7 +569,9 @@ export async function runCli(argv: string[], deps: CliDependencies = {}): Promis
     if (globals.format === "json") {
       writeEnvelope(ctx.stdout, failureEnvelope(canonical || helpPath || "paybond", globals, shape));
     } else {
-      ctx.stderr.write(`${shape.message}\n`);
+      for (const line of formatHumanErrorLines(shape)) {
+        ctx.stderr.write(`${line}\n`);
+      }
     }
     return exitCode;
   }

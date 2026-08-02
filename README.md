@@ -7,11 +7,11 @@
 [![license](https://img.shields.io/npm/l/@paybond/kit.svg)](https://github.com/nonameuserd/paybond-kit/blob/main/LICENSE)
 [![docs](https://img.shields.io/badge/docs-paybond.ai%2Fdocs%2Fkit-111827)](https://paybond.ai/docs/kit)
 
-**Governed spend for AI agents: check the request against a budget before a paid tool runs, release payment only against proof it worked, and get a signed receipt every time.**
+**Payments decide whether an agent _can_ pay; Paybond decides whether it _should_ — budget and policy checked before a paid tool runs, payment released only against proof the work was delivered, and a signed receipt every time.**
 
 Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect, Stripe ACH Direct Debit, or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
 
-Paybond is the SDK to use when you do not want to build your own delegated agent spend-governance middleware. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls.
+Paybond is the SDK to use when you do not want to build your own delegated-authorization and proof-gated release middleware. Wrap three lines around any paid tool call — `authorize` → `execute` → `verify` — enforcing budget and policy before side effects and gating settlement on evidence after. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls. Keep your runtime. Keep your payment rails.
 
 [Docs](https://paybond.ai/docs/kit) · [TypeScript quickstart](https://paybond.ai/docs/kit/quickstart-typescript) · [Support matrix](https://paybond.ai/docs/kit/support-matrix) · [Free sandbox signup](https://paybond.ai/signup) · [Python package](https://pypi.org/project/paybond-kit/)
 

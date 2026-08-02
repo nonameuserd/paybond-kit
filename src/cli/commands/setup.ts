@@ -25,6 +25,7 @@ import {
 } from "../mcp-install.js";
 import { verifyMcpInstallPlan } from "../mcp-verify-config.js";
 import { buildSupportDiagnostics, formatSupportDiagnosticsTable } from "../support-diagnostics.js";
+import { LOGIN_NEXT_COMMANDS, withNextActions } from "../next-actions.js";
 import { CliError, type CommandResult } from "../types.js";
 import { main as runInitMain } from "../../init.js";
 import { parseCompletionInitArgs, scaffoldCompletionInit } from "../../completion-init.js";
@@ -54,6 +55,7 @@ async function readJsonFile(filePath: string): Promise<Record<string, unknown>> 
 function loginResultData(result: LoginResult): Record<string, unknown> {
   const data: Record<string, unknown> = {
     env_file: result.envPath,
+    credentials_path: result.envPath,
     key_masked: result.keyMasked,
     key_written: result.keyWritten,
     environment: result.environment,
@@ -61,11 +63,61 @@ function loginResultData(result: LoginResult): Record<string, unknown> {
     tenant_uuid: result.tenantUuid,
     verification_uri: result.verificationUri,
     user_code: result.userCode,
+    next_commands: result.nextCommands.length > 0 ? result.nextCommands : [...LOGIN_NEXT_COMMANDS],
   };
   if (result.expiresAt) {
     data.expires_at = result.expiresAt;
   }
   return data;
+}
+
+function loginFailureError(err: unknown): CliError {
+  const message = err instanceof Error ? err.message : String(err);
+  const lowered = message.toLowerCase();
+  if (lowered.includes("denied")) {
+    return new CliError(message, {
+      category: "auth",
+      code: "cli.login.access_denied",
+      exitCode: 2,
+      details: withNextActions(undefined, {
+        what: "device login denied",
+        why: "the verification page rejected this device code",
+        next: "paybond login --no-open",
+      }),
+    });
+  }
+  if (lowered.includes("expired")) {
+    return new CliError(message, {
+      category: "auth",
+      code: "cli.login.expired",
+      exitCode: 2,
+      details: withNextActions(undefined, {
+        what: "device login expired",
+        why: "approval was not completed before the device code timed out",
+        next: "paybond login",
+      }),
+    });
+  }
+  if (lowered.includes("already exists")) {
+    return new CliError(message, {
+      category: "validation",
+      code: "cli.login.key_exists",
+      details: withNextActions(undefined, {
+        what: "credentials already present",
+        why: "the env file already has PAYBOND_API_KEY",
+        next: "paybond login --force",
+      }),
+    });
+  }
+  return new CliError(message, {
+    category: "validation",
+    code: "cli.login.failed",
+    details: withNextActions(undefined, {
+      what: "device login failed",
+      why: message,
+      next: "paybond login --no-open",
+    }),
+  });
 }
 
 export async function handleLogin(ctx: CliContext, argv: string[]): Promise<CommandResult> {
@@ -113,10 +165,7 @@ export async function handleLogin(ctx: CliContext, argv: string[]): Promise<Comm
       now: ctx.deps.now,
     });
   } catch (err) {
-    throw new CliError(err instanceof Error ? err.message : String(err), {
-      category: "validation",
-      code: "cli.login.failed",
-    });
+    throw loginFailureError(err);
   }
   return { data: loginResultData(result) };
 }

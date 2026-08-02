@@ -12,8 +12,10 @@ import {
   buildDevStartupBannerLines,
   DEV_DEFAULT_POLICY_FILE,
   DEV_DEFAULT_PRESET,
+  DEV_TRACE_DEFAULT_PORT,
   devTraceUrl,
   finalizeDevTraceCollector,
+  listDevTraceEvents,
   recordSmokeTraceEvent,
 } from "../../dev/trace-buffer.js";
 import { startDevTraceServer } from "../../dev/trace-server.js";
@@ -182,8 +184,10 @@ export async function handleDevTrace(ctx: CliContext, argv: string[]): Promise<C
     throw new CliError("help", { category: "usage", code: "cli.help" });
   }
   const portFlag = consumeFlag(argv, "--port");
-  if (portFlag.rest.length > 0) {
-    throw devCliError(`unexpected arguments: ${portFlag.rest.join(" ")}`, {
+  const watchFlag = consumeBooleanFlag(portFlag.rest, "--watch");
+  const onceFlag = consumeBooleanFlag(watchFlag.rest, "--once");
+  if (onceFlag.rest.length > 0) {
+    throw devCliError(`unexpected arguments: ${onceFlag.rest.join(" ")}`, {
       code: "cli.usage.unexpected_args",
       category: "usage",
     });
@@ -194,6 +198,61 @@ export async function handleDevTrace(ctx: CliContext, argv: string[]): Promise<C
       code: "cli.usage.invalid_port",
       category: "usage",
     });
+  }
+
+  // Terminal-native watch / JSON snapshot: stream or dump local events without hanging CI.
+  if (watchFlag.present || onceFlag.present || ctx.globals.format === "json") {
+    const events = listDevTraceEvents(ctx.cwd);
+    if (ctx.globals.format === "json" || onceFlag.present) {
+      return {
+        data: {
+          mode: onceFlag.present || ctx.globals.format === "json" ? "snapshot" : "watch",
+          trace_url: devTraceUrl(port),
+          port: port ?? DEV_TRACE_DEFAULT_PORT,
+          events: events.slice(-50),
+          event_count: events.length,
+        },
+      };
+    }
+    ctx.stderr.write(`Watching local trace events (Ctrl+C to stop). Dashboard: ${devTraceUrl(port)}\n`);
+    let seen = events.length;
+    for (const event of events.slice(-20)) {
+      ctx.stdout.write(
+        `${event.recorded_at}  ${event.authorized ? "allow" : "deny"}  ${event.operation}  run=${event.run_id ?? "-"}\n`,
+      );
+    }
+    const sleep = ctx.deps.sleep ?? ((ms: number) => new Promise((resolve) => setTimeout(resolve, ms)));
+    await new Promise<void>((resolvePromise) => {
+      let stopped = false;
+      const shutdown = () => {
+        stopped = true;
+        resolvePromise();
+      };
+      process.once("SIGINT", shutdown);
+      process.once("SIGTERM", shutdown);
+      void (async () => {
+        while (!stopped) {
+          await sleep(1000);
+          const latest = listDevTraceEvents(ctx.cwd);
+          if (latest.length > seen) {
+            for (const event of latest.slice(seen)) {
+              ctx.stdout.write(
+                `${event.recorded_at}  ${event.authorized ? "allow" : "deny"}  ${event.operation}  run=${event.run_id ?? "-"}\n`,
+              );
+            }
+            seen = latest.length;
+          }
+        }
+      })();
+    });
+    return {
+      data: {
+        mode: "watch",
+        trace_url: devTraceUrl(port),
+        port: port ?? DEV_TRACE_DEFAULT_PORT,
+        events: listDevTraceEvents(ctx.cwd).slice(-50),
+      },
+    };
   }
 
   const credentials = await describeCredentialSource(ctx.globals, ctx.cwd);
@@ -212,7 +271,7 @@ export async function handleDevTrace(ctx: CliContext, argv: string[]): Promise<C
     onListen(url) {
       traceUrl = url;
       ctx.stderr.write(`Paybond dev trace dashboard listening on ${url}\n`);
-      ctx.stderr.write("Press Ctrl+C to stop.\n");
+      ctx.stderr.write("Press Ctrl+C to stop. Tip: paybond dev trace --watch for terminal-native streaming.\n");
     },
   });
 
@@ -229,7 +288,7 @@ export async function handleDevTrace(ctx: CliContext, argv: string[]): Promise<C
   return {
     data: {
       trace_url: traceUrl,
-      port: port ?? devTraceUrl().match(/:(\d+)/)?.[1] ?? "9477",
+      port: port ?? DEV_TRACE_DEFAULT_PORT,
       events: [],
     },
   };

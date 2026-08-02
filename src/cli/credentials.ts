@@ -4,6 +4,7 @@ import path from "node:path";
 import { resolveConfigValue } from "./config.js";
 import { CLI_WARN_ENV_FALLBACK, formatWarning } from "./automation.js";
 import { DEFAULT_ENV_FILE, DEFAULT_GATEWAY, validateCliGateway } from "./globals.js";
+import { withNextActions } from "./next-actions.js";
 import { CliError, type GlobalOptions } from "./types.js";
 
 function resolvePath(cwd: string, envFile: string): string {
@@ -92,7 +93,14 @@ export async function resolveApiKeyWithMeta(globals: GlobalOptions, cwd: string)
     category: "auth",
     code: "cli.auth.missing_api_key",
     exitCode: 2,
-    details: { env_file: resolvePath(cwd, envFile) },
+    details: withNextActions(
+      { env_file: resolvePath(cwd, envFile) },
+      {
+        what: "missing API key",
+        why: "no PAYBOND_API_KEY in the process environment or env file",
+        next: "paybond login",
+      },
+    ),
   });
 }
 

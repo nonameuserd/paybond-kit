@@ -139,6 +139,11 @@ export function requireConfirmation(globals: GlobalOptions, action: string): voi
       category: "confirmation_required",
       code: "cli.confirmation.required",
       exitCode: 4,
+      details: {
+        what: "confirmation required",
+        why: `destructive action "${action}" needs an explicit --yes in non-interactive mode`,
+        next: `re-run with --yes to ${action}`,
+      },
     });
   }
 }

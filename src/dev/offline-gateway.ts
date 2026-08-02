@@ -147,6 +147,73 @@ export function createOfflineDevGatewayFetch(
     if (url.includes("/v1/spend/decisions/") && url.endsWith("/complete")) {
       return jsonResponse({ settlement_mode: "simulated" });
     }
+    if (url.includes("/harbor/operator/v1/intents") && method === "GET") {
+      return jsonResponse({
+        intents: [
+          {
+            intent_id: OFFLINE_DEV_INTENT_ID,
+            status: "funded",
+            amount_cents: 100,
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+      });
+    }
+    if (url.includes("/protocol/v2/agent-receipts") && method === "GET" && !url.includes("verify")) {
+      return jsonResponse({
+        items: [
+          {
+            receipt_id: "rcpt_offline_1",
+            scope: "intent_terminal",
+            intent_id: OFFLINE_DEV_INTENT_ID,
+            message_digest_sha256_hex: "00".repeat(32),
+            created_at: "2026-01-01T00:00:00Z",
+          },
+        ],
+        limit: 10,
+      });
+    }
+    if (url.includes("/v1/admin/spend-controls/decisions") && method === "GET") {
+      return jsonResponse({
+        items: [
+          {
+            id: "00000000-0000-4000-8000-000000000010",
+            intent_id: OFFLINE_DEV_INTENT_ID,
+            operation: "paid-tool",
+            amount_cents: 100,
+            currency: "USD",
+            outcome: "allow",
+            remaining_cents: 9900,
+            reason_codes: [],
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            id: "00000000-0000-4000-8000-000000000011",
+            intent_id: OFFLINE_DEV_INTENT_ID,
+            operation: "paid-tool",
+            amount_cents: 50000,
+            currency: "USD",
+            outcome: "deny",
+            remaining_cents: 9900,
+            reason_codes: ["max_spend_exceeded"],
+            created_at: "2026-01-01T00:01:00Z",
+          },
+        ],
+        limit: 10,
+        offset: 0,
+      });
+    }
+    if (url.includes("/v1/admin/spend-controls/policy") && method === "GET") {
+      return jsonResponse({
+        source: "offline",
+        configured: true,
+        mode: "enforce",
+        policy_version: 1,
+      });
+    }
+    if (url.includes("/v1/admin/spend-controls/reservations") && method === "GET") {
+      return jsonResponse({ items: [], limit: 10, offset: 0, status: "active" });
+    }
     return jsonResponse({}, 404);
   }) as typeof fetch;
 }

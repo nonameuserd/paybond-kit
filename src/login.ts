@@ -62,6 +62,8 @@ export type LoginResult = {
   expiresAt?: string;
   verificationUri: string;
   userCode: string;
+  /** Exact next Kit builder commands after a successful device login. */
+  nextCommands: string[];
 };
 
 type DeviceStartResponse = {
@@ -671,11 +673,13 @@ async function pollDeviceToken(
         continue;
       }
       if (err.code === "access_denied") {
-        throw new PaybondLoginError("Device authorization was denied.");
+        throw new PaybondLoginError(
+          "Device authorization was denied. Approve the code at the verification URL, or re-run paybond login.",
+        );
       }
       if (err.code === "expired_token") {
         throw new PaybondLoginError(
-          "Device authorization expired before approval.",
+          "Device authorization expired before approval. Re-run paybond login and approve promptly.",
         );
       }
       throw new PaybondLoginError(err.message);
@@ -759,8 +763,14 @@ export async function runLogin(
   await writeEnvFile(envPath, token.access_token, options.force);
 
   const keyMasked = maskAPIKey(token.access_token);
+  const nextCommands = [
+    "paybond init",
+    "paybond doctor",
+    "paybond status",
+  ];
   if (humanOutput) {
     stdout.write(`Wrote PAYBOND_API_KEY to ${envPath}\n`);
+    stdout.write(`Credentials written: ${envPath}\n`);
     stdout.write(`Key: ${keyMasked}\n`);
     stdout.write(
       `Target ${token.environment} tenant: ${token.tenant_id} (${token.tenant_uuid})\n`,
@@ -769,6 +779,10 @@ export async function runLogin(
       stdout.write(
         `This key auto-expires at ${token.expires_at}; re-run paybond login to mint a new one.\n`,
       );
+    }
+    stdout.write(`Next:\n`);
+    for (let i = 0; i < nextCommands.length; i += 1) {
+      stdout.write(`  ${i + 1}. ${nextCommands[i]}\n`);
     }
   }
   return {
@@ -781,6 +795,7 @@ export async function runLogin(
     expiresAt: token.expires_at || undefined,
     verificationUri: verificationUrl,
     userCode: start.user_code,
+    nextCommands,
   };
 }
 
