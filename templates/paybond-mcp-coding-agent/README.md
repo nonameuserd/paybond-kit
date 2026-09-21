@@ -10,7 +10,7 @@ cd paybond-mcp-coding-agent
 cp .env.example .env.local
 paybond login
 npm install
-npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation deploy.preview --requested-spend-cents 500 --result-body '{"status":"completed","cost_cents":500}' --format json
+npm run smoke
 ```
 
 ## Run the demo

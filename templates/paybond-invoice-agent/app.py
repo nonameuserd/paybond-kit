@@ -23,5 +23,10 @@ async def main() -> None:
         await paybond.aclose()
 
 
-if __name__ == "__main__":
+def cli_main() -> None:
+    """Console entry for the pyproject project script."""
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    cli_main()

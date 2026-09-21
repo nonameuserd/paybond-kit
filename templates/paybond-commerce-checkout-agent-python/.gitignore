@@ -1,0 +1,11 @@
+node_modules/
+dist/
+build/
+*.egg-info/
+.eggs/
+.env.local
+.paybond/
+__pycache__/
+*.pyc
+.venv/
+.python-version

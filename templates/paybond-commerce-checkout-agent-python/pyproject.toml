@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "paybond-commerce-checkout-agent"
+version = "0.1.0"
+description = "Multi-provider commerce.checkout agent (Shopify + Stripe + Zinc sandbox) with Paybond Kit"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+    "paybond-kit>=0.12.17",
+]
+
+[project.scripts]
+commerce-checkout-demo = "app:cli_main"
+
+[tool.setuptools]
+py-modules = ["app", "paybond_config"]

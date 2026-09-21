@@ -1,16 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  mockChargeCustomer,
+  mockStripeCharge,
   resolveSandboxStripeTestKey,
-} from "../../templates/paybond-stripe-agent-demo/src/charge-customer.js";
+} from "../../src/stripe-commerce/sandbox-key.js";
 
 const METADATA = {
   tenant_id: "tenant_demo",
   paybond_intent_id: "00000000-0000-0000-0000-000000000001",
 };
 
-describe("resolveSandboxStripeTestKey (stripe-agent-demo template)", () => {
+describe("resolveSandboxStripeTestKey", () => {
   const originalStripeKey = process.env.STRIPE_SECRET_KEY;
 
   afterEach(() => {
@@ -50,7 +50,11 @@ describe("resolveSandboxStripeTestKey (stripe-agent-demo template)", () => {
 
   it("mock charge path needs no Stripe secret", () => {
     delete process.env.STRIPE_SECRET_KEY;
-    const result = mockChargeCustomer(METADATA, { amountCents: 2500 }, "intent-demo");
+    const result = mockStripeCharge({
+      amountCents: 2500,
+      intentId: "intent-demo",
+      metadata: METADATA,
+    });
     expect(result.mode).toBe("mock");
     expect(result.payment_intent_id).toMatch(/^pi_mock_/);
     expect(result.metadata).toEqual(METADATA);

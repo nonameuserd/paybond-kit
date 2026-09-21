@@ -18,8 +18,9 @@ export type TemplateId =
   | "invoice-agent"
   | "crewai-procurement-agent"
   | "aws-operator"
-  | "stripe-agent-demo"
-  | "shopify-shopping-agent";
+  | "shopify-shopping-agent"
+  | "commerce-checkout-agent"
+  | "commerce-checkout-agent-python";
 
 export type TemplateManifestEntry = {
   id: TemplateId;
@@ -102,10 +103,29 @@ const TEMPLATE_ALIASES: Record<string, TemplateId> = {
   "paybond-crewai-procurement-agent": "crewai-procurement-agent",
   "aws-operator": "aws-operator",
   "paybond-aws-operator": "aws-operator",
-  "stripe-agent-demo": "stripe-agent-demo",
-  "paybond-stripe-agent-demo": "stripe-agent-demo",
   "shopify-shopping-agent": "shopify-shopping-agent",
   "paybond-shopify-shopping-agent": "shopify-shopping-agent",
+  "commerce-checkout-agent": "commerce-checkout-agent",
+  "paybond-commerce-checkout-agent": "commerce-checkout-agent",
+  "commerce-checkout-agent-python": "commerce-checkout-agent-python",
+  "paybond-commerce-checkout-agent-python": "commerce-checkout-agent-python",
+};
+
+/**
+ * Language twins share a product surface under different repos.
+ * TypeScript Kit defaults to the TypeScript twin when `--language` is omitted.
+ */
+const TEMPLATE_LANGUAGE_TWINS: Partial<
+  Record<TemplateId, Partial<Record<"typescript" | "python", TemplateId>>>
+> = {
+  "commerce-checkout-agent": {
+    typescript: "commerce-checkout-agent",
+    python: "commerce-checkout-agent-python",
+  },
+  "commerce-checkout-agent-python": {
+    typescript: "commerce-checkout-agent",
+    python: "commerce-checkout-agent-python",
+  },
 };
 
 function moduleDir(): string {
@@ -155,6 +175,22 @@ export function normalizeTemplateId(raw: string): TemplateId {
   return normalized;
 }
 
+/**
+ * Resolve a template id to its language twin when `--language` is set (or via default).
+ */
+export function resolveTemplateIdForLanguage(
+  templateId: TemplateId,
+  language?: "typescript" | "python",
+  defaultLanguage: "typescript" | "python" = "typescript",
+): TemplateId {
+  const twins = TEMPLATE_LANGUAGE_TWINS[templateId];
+  if (!twins) {
+    return templateId;
+  }
+  const resolved = twins[language ?? defaultLanguage];
+  return resolved ?? templateId;
+}
+
 /** List bundled starter templates for CLI and docs. */
 export async function listTemplateEntries(): Promise<TemplateManifestEntry[]> {
   const manifest = await loadTemplateManifest();
@@ -174,8 +210,15 @@ export async function resolveTemplateEntry(templateId: TemplateId): Promise<Temp
 export async function resolveTemplateForInit(input: {
   templateId: TemplateId;
   framework?: string;
+  language?: "typescript" | "python";
+  defaultLanguage?: "typescript" | "python";
 }): Promise<TemplateManifestEntry> {
-  const entry = await resolveTemplateEntry(input.templateId);
+  const templateId = resolveTemplateIdForLanguage(
+    input.templateId,
+    input.language,
+    input.defaultLanguage ?? "typescript",
+  );
+  const entry = await resolveTemplateEntry(templateId);
   if (input.framework) {
     const normalized = normalizeTemplateFramework(input.framework);
     if (frameworkForEntry(entry) !== normalized) {
@@ -204,6 +247,9 @@ export type CopyTemplateOptions = {
   cwd: string;
   templateId: TemplateId;
   framework?: string;
+  language?: "typescript" | "python";
+  /** Kit default when `--language` is omitted. TypeScript Kit defaults to typescript. */
+  defaultLanguage?: "typescript" | "python";
   force?: boolean;
   writeStdout?: (line: string) => void;
 };
@@ -228,6 +274,17 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+/** Local install / build artifacts that must never be copied into a scaffold. */
+const TEMPLATE_COPY_SKIP = new Set([
+  "node_modules",
+  ".venv",
+  "venv",
+  "dist",
+  "__pycache__",
+  ".pytest_cache",
+  ".paybond",
+]);
+
 /** Copy a bundled starter template tree into the target directory. */
 export async function copyTemplateToDirectory(
   options: CopyTemplateOptions,
@@ -235,6 +292,8 @@ export async function copyTemplateToDirectory(
   const entry = await resolveTemplateForInit({
     templateId: options.templateId,
     framework: options.framework,
+    language: options.language,
+    defaultLanguage: options.defaultLanguage ?? "typescript",
   });
   const templatesRoot = await firstExistingDir(resolveTemplatesRoots());
   const sourceDir = join(templatesRoot, entry.repo);
@@ -251,9 +310,12 @@ export async function copyTemplateToDirectory(
 
   for (const dirent of entries) {
     const relativePath = dirent.name;
+    if (TEMPLATE_COPY_SKIP.has(relativePath)) {
+      continue;
+    }
     const sourcePath = join(sourceDir, relativePath);
     const targetPath = join(options.cwd, relativePath);
-    if (await pathExists(targetPath) && !options.force) {
+    if ((await pathExists(targetPath)) && !options.force) {
       throw new Error(`${relativePath} already exists (pass --force to overwrite)`);
     }
     await cp(sourcePath, targetPath, {
@@ -290,13 +352,13 @@ export async function copyTemplateToDirectory(
 
 export function templateInitUsage(): string {
   return [
-    "Usage: paybond init [--template <id>|--repo <slug>] [--framework <name>] [--force]",
+    "Usage: paybond init [--template <id>|--repo <slug>] [--framework <name>] [--language typescript|python] [--force]",
     "       paybond init [--solution ...] [--framework ...]  (wizard scaffold)",
     "",
     "Templates:",
     "  travel-agent, mastra-travel-agent, vercel-shopping-agent, cloudflare-shopping-agent, openai-agents-demo, openai-shopping-agent,",
     "  claude-agents-demo, mcp-coding-agent, procurement-agent, invoice-agent, crewai-procurement-agent, aws-operator,",
-    "  stripe-agent-demo, shopify-shopping-agent",
+    "  shopify-shopping-agent, commerce-checkout-agent, commerce-checkout-agent-python",
     "",
     "Frameworks (with --template): generic|langgraph|vercel-ai|openai|openai-agents|claude-agents|mcp|mastra|crewai",
     "",
@@ -304,6 +366,7 @@ export function templateInitUsage(): string {
     "  paybond init --template travel-agent --framework langgraph",
     "  paybond init --template mastra-travel-agent --framework mastra",
     "  paybond init --template crewai-procurement-agent --framework crewai",
+    "  paybond init --template commerce-checkout-agent --language python",
     "  paybond init --template paybond-vercel-shopping-agent --force",
     "  paybond init --template paybond-cloudflare-shopping-agent --force",
     "  paybond init --solution travel --framework langgraph --non-interactive",

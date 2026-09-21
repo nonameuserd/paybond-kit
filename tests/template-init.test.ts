@@ -25,6 +25,14 @@ describe("paybond init --template", () => {
     expect(normalizeTemplateId("paybond-mastra-travel-agent")).toBe("mastra-travel-agent");
     expect(normalizeTemplateId("openai-shopping-agent")).toBe("openai-shopping-agent");
     expect(normalizeTemplateId("paybond-crewai-procurement-agent")).toBe("crewai-procurement-agent");
+    expect(normalizeTemplateId("commerce-checkout-agent")).toBe("commerce-checkout-agent");
+    expect(normalizeTemplateId("paybond-commerce-checkout-agent")).toBe("commerce-checkout-agent");
+    expect(normalizeTemplateId("commerce-checkout-agent-python")).toBe(
+      "commerce-checkout-agent-python",
+    );
+    expect(normalizeTemplateId("paybond-commerce-checkout-agent-python")).toBe(
+      "commerce-checkout-agent-python",
+    );
   });
 
   it("copies travel-agent template into an empty directory", async () => {
@@ -125,29 +133,52 @@ describe("paybond init --template", () => {
     expect(requirements).toContain("crewai");
   });
 
-  it("copies stripe-agent-demo template into an empty directory", async () => {
-    const cwd = await mkdtemp(join(tmpdir(), "paybond-template-stripe-"));
+  it("copies commerce-checkout-agent template into an empty directory", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-template-commerce-"));
     const result = await copyTemplateToDirectory({
       cwd,
-      templateId: "stripe-agent-demo",
+      templateId: "commerce-checkout-agent",
     });
 
-    expect(result.template_id).toBe("stripe-agent-demo");
-    expect(result.repo).toBe("paybond-stripe-agent-demo");
-    expect(result.preset).toBe("stripe-commerce");
-    expect(result.smoke_command).toContain("payments.charge_customer");
-    expect(result.smoke_command).toContain("stripe_charge");
+    expect(result.template_id).toBe("commerce-checkout-agent");
+    expect(result.repo).toBe("paybond-commerce-checkout-agent");
+    expect(result.language).toBe("typescript");
+    expect(result.preset).toBe("shopping");
+    expect(result.smoke_command).toContain("commerce.checkout");
 
     await access(join(cwd, "paybond.policy.yaml"), constants.F_OK);
-    await access(join(cwd, "src/charge-customer.ts"), constants.F_OK);
+    await access(join(cwd, "src/index.ts"), constants.F_OK);
 
     const indexSource = await readFile(join(cwd, "src/index.ts"), "utf8");
-    expect(indexSource).toContain("mapChargeEvidence");
+    expect(indexSource).toContain("instrumentCommerceCheckout");
+  });
 
-    const packageJson = JSON.parse(await readFile(join(cwd, "package.json"), "utf8")) as {
-      scripts: { smoke: string };
-    };
-    expect(packageJson.scripts.smoke).toContain("payments.charge_customer");
+  it("copies commerce-checkout-agent Python twin with --language python", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "paybond-template-commerce-py-"));
+    const result = await copyTemplateToDirectory({
+      cwd,
+      templateId: "commerce-checkout-agent",
+      language: "python",
+    });
+
+    expect(result.template_id).toBe("commerce-checkout-agent-python");
+    expect(result.repo).toBe("paybond-commerce-checkout-agent-python");
+    expect(result.language).toBe("python");
+    expect(result.smoke_command).toContain("commerce.checkout");
+
+    await access(join(cwd, "app.py"), constants.F_OK);
+    await access(join(cwd, "paybond_config.py"), constants.F_OK);
+    await access(join(cwd, "pyproject.toml"), constants.F_OK);
+    await access(join(cwd, "paybond.policy.yaml"), constants.F_OK);
+
+    const pyproject = await readFile(join(cwd, "pyproject.toml"), "utf8");
+    expect(pyproject).toContain("paybond-kit>=");
+    expect(pyproject).toContain("commerce-checkout-demo");
+
+    const appSource = await readFile(join(cwd, "app.py"), "utf8");
+    expect(appSource).toContain("instrument_commerce_checkout");
+    expect(appSource).toContain("paybond_kit.commerce");
+    expect(appSource).toContain("def cli_main");
   });
 
   it("CLI init --template writes scaffold files", async () => {

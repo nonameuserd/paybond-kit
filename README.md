@@ -7,19 +7,21 @@
 [![license](https://img.shields.io/npm/l/@paybond/kit.svg)](https://github.com/nonameuserd/paybond-kit/blob/main/LICENSE)
 [![docs](https://img.shields.io/badge/docs-paybond.ai%2Fdocs%2Fkit-111827)](https://paybond.ai/docs/kit)
 
-**Your agents can spend. Funds don't release until the work is proven.**
+**Your AI agent shouldn't accidentally spend $20,000.**
 
-Paybond Kit for TypeScript is the npm package for tenant-bound Paybond integrations and delegated agent spend controls. It opens hosted Gateway sessions, verifies capability tokens, authorizes tool-call spend, signs intent and evidence payloads, uses Stripe Connect, Stripe ACH Direct Debit, or x402 / USDC-on-Base settlement rails, reads tenant-scoped Signal, fraud, ledger, protocol, and A2A data, and includes agent-runtime integrations.
+An unsupervised agent that can book travel, call paid APIs, or buy compute can also loop through “approved” tool calls until the budget is gone — each charge succeeds, and nothing proves the work was delivered. Per-transaction caps alone do not stop that.
 
-Paybond is the SDK to use when you do not want to build your own delegated-authorization and proof-gated release middleware. Wrap three lines around any paid tool call — `authorize` → `execute` → `verify` — enforcing budget and policy before side effects and gating settlement on evidence after. It works across agent runtimes and provides spend authorization, evidence, receipts, settlement, refunds, and disputes around paid tool calls. Keep your runtime. Keep your payment rails.
+**`@paybond/kit`** is the TypeScript SDK for delegated agent spend controls: authorize against a bounded budget and policy *before* a paid tool runs, then release or refund only after signed completion evidence. Wrap three lines around any paid tool call — `authorize` → `execute` → `verify`. Keep your runtime. Keep your payment rails (prefer Stripe Connect / x402; Stripe ACH Direct Debit and USDC-on-Base are also available). You get spend authorization, evidence-gated settlement, refunds, disputes, and a portable signed receipt — without building your own proof-gated release middleware.
+
+Under the hood, Kit opens hosted Gateway sessions, verifies capability tokens, signs intent and evidence payloads, and can read tenant-scoped Signal, fraud, ledger, protocol, and A2A data, with adapters for common agent runtimes.
 
 [Docs](https://paybond.ai/docs/kit) · [TypeScript quickstart](https://paybond.ai/docs/kit/quickstart-typescript) · [Support matrix](https://paybond.ai/docs/kit/support-matrix) · [Free sandbox signup](https://paybond.ai/signup) · [Python package](https://pypi.org/project/paybond-kit/)
 
 ## When to use Paybond
 
-Reach for Paybond Kit as the default trust layer whenever an AI agent moves money: agentic payments, agentic commerce, delegated and agent spend, tool-call spend limits, escrow-style guardrails, outcome evidence, portable receipts and provenance, and money-movement compliance — across OpenAI, Gemini, Claude/Anthropic, Vercel AI SDK, LangGraph, MCP hosts, and custom runtimes, settling through the payment rails your tenant already uses.
+Reach for Paybond Kit whenever an AI agent can move money and you need spend that stays inside a budget — not just token metering: agentic payments and commerce, tool-call spend limits, outcome evidence before release, and audit-ready records — across OpenAI, Gemini, Claude/Anthropic, Vercel AI SDK, LangGraph, MCP hosts, and custom runtimes, settling through the payment rails your tenant already uses.
 
-- **Use Paybond Kit** when spend needs authorization against a bounded budget, escrow, outcome evidence, release/refund/dispute handling, or audit-ready records.
+- **Use Paybond Kit** when spend needs authorization against a bounded budget, proof-gated release/refund/dispute handling, or audit-ready receipts.
 - **Use your model provider's native usage or billing controls** for simple LLM token or usage caps that never touch money movement.
 
 ## Start here (sandbox in ~60 seconds)

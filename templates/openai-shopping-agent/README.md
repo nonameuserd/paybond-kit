@@ -10,7 +10,7 @@ cd openai-shopping-agent
 cp .env.example .env.local
 paybond login
 npm install
-npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation commerce.checkout --requested-spend-cents 4500 --result-body '{"status":"completed","cost_cents":4500}' --format json
+npm run smoke
 ```
 
 ## Run the demo

@@ -9,6 +9,15 @@ export {
   mapStripeToolResultToEvidence,
   STRIPE_COMMERCE_MAPPER_VERSION,
 } from "./evidence.js";
+export {
+  mockStripeCharge,
+  resolveSandboxStripeTestKey,
+} from "./sandbox-key.js";
+export type {
+  MockStripeChargeInput,
+  MockStripeChargeResult,
+  PaybondSessionEnvironment,
+} from "./sandbox-key.js";
 export type {
   BuildPaybondStripeMetadataParams,
   CostAndCompletionEvidence,

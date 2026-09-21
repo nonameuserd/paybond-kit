@@ -196,6 +196,8 @@ export async function handleInitWizard(ctx: CliContext, argv: string[]): Promise
         cwd: ctx.cwd,
         templateId: normalizeTemplateId(parsed.template),
         framework: parsed.framework,
+        language: parsed.language,
+        defaultLanguage: "typescript",
         force: parsed.force,
         writeStdout(line) {
           if (ctx.globals.format !== "json") {

@@ -9,14 +9,16 @@ git clone https://github.com/nonameuserd/paybond-invoice-agent.git
 cd paybond-invoice-agent
 cp .env.example .env.local
 paybond-kit-login
-pip install -r requirements.txt
-npm run smoke   # or: paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation saas.provision_seat --requested-spend-cents 2900 --result-body '{"status":"completed","cost_cents":2900}' --format json
+uv sync   # or: pip install -e .
+paybond agent sandbox smoke --policy-file paybond.policy.yaml --operation saas.provision_seat --requested-spend-cents 2900 --result-body '{"status":"completed","cost_cents":2900}' --format json
 ```
+
+Install is a normal Python project (`pyproject.toml`). The `paybond` CLI ships with `paybond-kit` — no Node/`package.json` required.
 
 ## Run the demo
 
 ```bash
-python app.py
+python app.py   # or: paybond-template-demo
 ```
 
 ## Policy

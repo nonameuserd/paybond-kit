@@ -1,0 +1,28 @@
+name: smoke
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project (editable) + paybond-kit
+        run: pip install -e .
+      - name: Sandbox smoke (Kit CLI)
+        run: >-
+          paybond agent sandbox smoke
+          --policy-file paybond.policy.yaml
+          --operation commerce.checkout
+          --requested-spend-cents 4500
+          --evidence-preset cost_and_completion
+          --result-body '{"status":"completed","cost_cents":4500,"provider":"zinc","order_id":"zinc_sandbox_ord_amazon_B00SMOKE"}'
+          --format json
+        env:
+          PAYBOND_API_KEY: ${{ secrets.PAYBOND_SANDBOX_API_KEY }}

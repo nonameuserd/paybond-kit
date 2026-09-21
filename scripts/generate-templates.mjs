@@ -198,15 +198,60 @@ jobs:
   smoke:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: actions/checkout@v4
-      - run: pip install -r requirements.txt
-      - run: ${smokeCommand}
+      - name: Install project (editable) + paybond-kit
+        run: pip install -e .
+      - name: Sandbox smoke (Kit CLI)
+        run: ${smokeCommand}
         env:
           PAYBOND_API_KEY: \${{ secrets.PAYBOND_SANDBOX_API_KEY }}
 `;
+
+/**
+ * Build a minimal installable pyproject.toml for a Python starter template.
+ * @param {{ repo: string, title: string, python_dependencies?: Record<string, string> }} entry
+ * @param {string} kitVersion
+ */
+function pythonPyprojectToml(entry, kitVersion) {
+  const pythonDependencies = Object.fromEntries(
+    Object.entries(entry.python_dependencies ?? { "paybond-kit": `>=${kitVersion}` }).map(
+      ([pkg, ver]) => {
+        if (pkg === "paybond-kit" || pkg.startsWith("paybond-kit[")) {
+          return [pkg, `>=${kitVersion}`];
+        }
+        return [pkg, ver.startsWith(">=") || ver.startsWith("==") ? ver : `>=${ver}`];
+      },
+    ),
+  );
+  const deps = Object.entries(pythonDependencies)
+    .map(([pkg, ver]) => `    "${pkg}${ver}",`)
+    .join("\n");
+  const modules = entry.framework === "crewai" ? '"app", "paybond_config", "crew"' : '"app", "paybond_config"';
+  return `[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "${entry.repo}"
+version = "0.1.0"
+description = ${JSON.stringify(entry.title)}
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache-2.0" }
+dependencies = [
+${deps}
+]
+
+[project.scripts]
+paybond-template-demo = "app:cli_main"
+
+[tool.setuptools]
+py-modules = [${modules}]
+`;
+}
 
 function smokeCommand(entry) {
   const resultBody = JSON.stringify(entry.smoke_result_body);
@@ -680,12 +725,13 @@ if __name__ == "__main__":
 }
 
 function readme(entry, smoke) {
-  const install =
-    entry.language === "python"
-      ? "pip install -r requirements.txt"
-      : "npm install";
-  const run = entry.language === "python" ? "python app.py" : "npm start";
-  const login = entry.language === "python" ? "paybond-kit-login" : "paybond login";
+  const isPy = entry.language === "python";
+  const install = isPy
+    ? "uv sync   # or: pip install -e ."
+    : "npm install";
+  const run = isPy ? "python app.py   # or: paybond-template-demo" : "npm start";
+  const login = isPy ? "paybond-kit-login" : "paybond login";
+  const smokeLine = isPy ? smoke : "npm run smoke";
   const mcpBlock =
     entry.framework === "mcp"
       ? `
@@ -759,9 +805,15 @@ cd ${entry.repo}
 cp .env.example .env.local
 ${login}
 ${install}
-npm run smoke   # or: ${smoke}
+${smokeLine}
 \`\`\`
-
+${
+    isPy
+      ? `
+Install is a normal Python project (\`pyproject.toml\`). The \`paybond\` CLI ships with \`paybond-kit\` — no Node/\`package.json\` required.
+`
+      : ""
+  }
 ## Run the demo
 
 \`\`\`bash
@@ -888,22 +940,48 @@ async function refreshTemplatePackageLock(dir, consumerPackageJson) {
 
 /** Templates with custom sources that must not be wiped by scaffold regeneration. */
 const HAND_MAINTAINED_TEMPLATE_IDS = new Set([
-  "stripe-agent-demo",
   // Custom Workers/DO getTools scaffold in src/agent.ts
   "cloudflare-shopping-agent",
   // Catalog-backed spend (SKU×qty); function middleware sample for MAF
   "microsoft-agent-framework-procurement-agent",
   // Catalog-backed spend (SKU×qty); CrewAI @tool wrap
   "crewai-procurement-agent",
+  // Multi-provider commerce.checkout (custom TS instrument + Python twin)
+  "commerce-checkout-agent",
+  "commerce-checkout-agent-python",
 ]);
 
 /**
  * Refresh pins for hand-maintained templates without deleting custom sources.
- * Keeps @paybond/kit + typescript aligned with the monorepo kit toolchain.
- * @param {{ id: string, repo: string }} entry
+ * Keeps @paybond/kit + typescript (TS) or paybond-kit (Python pyproject) aligned.
+ * @param {{ id: string, repo: string, language?: string }} entry
  */
 async function refreshHandMaintainedTemplate(entry) {
   const dir = join(TEMPLATES_DIR, entry.repo);
+
+  // Python twin: pin paybond-kit* lower bounds in pyproject.toml only.
+  if (entry.language === "python" || entry.id.endsWith("-python")) {
+    const pyprojectPath = join(dir, "pyproject.toml");
+    let body;
+    try {
+      body = await readFile(pyprojectPath, "utf8");
+    } catch {
+      console.log(`skip ${entry.repo} (hand-maintained python; no pyproject.toml yet)`);
+      return;
+    }
+    const next = body.replace(
+      /("paybond-kit(?:\[[^\]]+\])?)>=[\d.]+"/g,
+      `$1>=${KIT_VERSION}"`,
+    );
+    if (next !== body) {
+      await writeFile(pyprojectPath, next);
+    }
+    console.log(
+      `skip ${entry.repo} sources (hand-maintained); refreshed paybond-kit>=${KIT_VERSION} in pyproject.toml`,
+    );
+    return;
+  }
+
   const packageJsonPath = join(dir, "package.json");
   const existing = JSON.parse(await readFile(packageJsonPath, "utf8"));
   let changed = false;
@@ -953,33 +1031,33 @@ async function writeTemplate(entry) {
   await cp(join(REPO_ROOT, "kit/ts/LICENSE"), join(dir, "LICENSE"));
 
   if (entry.language === "python") {
-    await mkdir(join(dir, "src"), { recursive: true }).catch(() => {});
     await writeFile(join(dir, "paybond_config.py"), PAYBOND_CONFIG_PY);
-    await writeFile(join(dir, "app.py"), pythonApp(entry));
+    let appBody = pythonApp(entry);
+    // Ensure a sync console-script entry exists for [project.scripts].
+    if (!appBody.includes("def cli_main")) {
+      appBody = appBody.replace(
+        /if __name__ == "__main__":\n    asyncio\.run\(main\(\)\)\n?$/,
+        [
+          'def cli_main() -> None:',
+          '    """Console entry for the pyproject project script."""',
+          "    asyncio.run(main())",
+          "",
+          "",
+          'if __name__ == "__main__":',
+          "    cli_main()",
+          "",
+        ].join("\n"),
+      );
+    }
+    await writeFile(join(dir, "app.py"), appBody);
     if (entry.framework === "crewai") {
       await writeFile(join(dir, "crew.py"), crewaiCrew(entry));
     }
-    // Pin paybond-kit to the monorepo kit version so requirements stay in sync
-    // with published releases (avoids CI drift against stale lower bounds).
-    const pythonDependencies = Object.fromEntries(
-      Object.entries(entry.python_dependencies).map(([pkg, ver]) => {
-        if (pkg === "paybond-kit" || pkg.startsWith("paybond-kit[")) {
-          return [pkg, `>=${KIT_VERSION}`];
-        }
-        return [pkg, ver];
-      }),
-    );
-    const deps = Object.entries(pythonDependencies)
-      .map(([pkg, ver]) => `${pkg}${ver.startsWith(">=") ? ver : `>=${ver}`}`)
-      .join("\n");
-    await writeFile(join(dir, "requirements.txt"), `${deps}\n`);
+    // Pin paybond-kit to the monorepo kit version via pyproject.toml.
+    await writeFile(join(dir, "pyproject.toml"), pythonPyprojectToml(entry, KIT_VERSION));
     await writeFile(
       join(dir, ".github/workflows/smoke.yml"),
-      CI_WORKFLOW_PY(smoke.replace("npm run smoke", smoke)),
-    );
-    await writeFile(
-      join(dir, "package.json"),
-      `${JSON.stringify({ private: true, scripts: { smoke } }, null, 2)}\n`,
+      CI_WORKFLOW_PY(smoke),
     );
     return;
   }

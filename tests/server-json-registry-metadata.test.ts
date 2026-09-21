@@ -45,20 +45,36 @@ function loadCanonicalCatalog(): CanonicalCatalog {
   return JSON.parse(readFileSync(join(REPO_ROOT, "kit", "mcp-scopes", "catalog.json"), "utf8")) as CanonicalCatalog;
 }
 
-function loadRegistryMeta(): RegistryPaybondMeta {
+const PUBLISHER_EXTENSION_KEY = "io.modelcontextprotocol.registry/publisher-provided";
+
+/** The registry rejects a publish whose publisher-provided extension exceeds 4KB minified. */
+const PUBLISHER_EXTENSION_LIMIT_BYTES = 4096;
+
+function loadPublisherExtension(): { paybond: RegistryPaybondMeta } {
   const server = JSON.parse(readFileSync(join(REPO_ROOT, "server.json"), "utf8")) as {
     _meta: Record<string, { paybond: RegistryPaybondMeta }>;
   };
-  const publisher = server._meta["io.modelcontextprotocol.registry/publisher-provided"];
+  const publisher = server._meta[PUBLISHER_EXTENSION_KEY];
   if (!publisher?.paybond) {
     throw new Error("server.json is missing publisher-provided paybond metadata");
   }
-  return publisher.paybond;
+  return publisher;
+}
+
+function loadRegistryMeta(): RegistryPaybondMeta {
+  return loadPublisherExtension().paybond;
 }
 
 describe("server.json registry metadata", () => {
   const canonical = loadCanonicalCatalog();
   const meta = loadRegistryMeta();
+
+  // The registry measures the minified extension, so growth here (a new scope,
+  // a longer description) fails the publish rather than any local build.
+  it("keeps the publisher-provided extension under the registry 4KB limit", () => {
+    const bytes = Buffer.byteLength(JSON.stringify(loadPublisherExtension()), "utf8");
+    expect(bytes).toBeLessThanOrEqual(PUBLISHER_EXTENSION_LIMIT_BYTES);
+  });
 
   it("documents the MCP OAuth endpoints the gateway actually serves", () => {
     expect(meta.authorization.type).toBe("oauth2");
